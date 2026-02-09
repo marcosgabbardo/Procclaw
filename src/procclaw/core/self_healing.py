@@ -354,6 +354,9 @@ async def spawn_healer_session(
 ) -> HealingResult:
     """Spawn an OpenClaw session to analyze and fix the failure.
     
+    Writes a healing request to a trigger file for the main session to pick up.
+    This avoids long-running subprocess issues.
+    
     Args:
         context: The healing context
         prompt: The healing prompt
@@ -367,89 +370,40 @@ async def spawn_healer_session(
     logger.info(f"Spawning healer session for job '{job_id}' run {run_id}")
     
     try:
-        # Use openclaw agent to run the healing session
-        cmd = [
-            "openclaw", "agent",
-            "--message", prompt,
-            "--timeout", "300",  # 5 min timeout
-        ]
+        # Write healing request to session triggers file for main session pickup
+        from procclaw.openclaw import send_to_session
         
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        healing_msg = f"""🔧 **Self-Healing Request for job '{job_id}'**
+
+{prompt}
+
+**Instructions:**
+1. Analyze the logs and error above
+2. Attempt to fix the issue if possible
+3. Report your findings
+
+When done, respond with one of:
+- "HEALING_FIXED: <summary>" if you applied a fix
+- "HEALING_MANUAL: <reason>" if human intervention is needed
+- "HEALING_GAVE_UP: <reason>" if you couldn't determine the issue
+"""
         
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=330.0,  # 5.5 min overall timeout
-        )
+        # Send to main session with immediate wake
+        await send_to_session("main", healing_msg, immediate=True)
         
-        output = stdout.decode() if stdout else ""
-        error_output = stderr.decode() if stderr else ""
+        # For now, we return "in_progress" and let the human/agent handle it
+        # In a more sophisticated implementation, we'd poll for a response
+        logger.info(f"Healing request sent to main session for job '{job_id}'")
         
-        if process.returncode != 0:
-            logger.warning(f"Healer session failed: {error_output}")
-            return HealingResult(
-                status=HealingStatus.GAVE_UP,
-                root_cause="Healer session failed to run",
-                details=error_output,
-                summary="Failed to analyze - healer session error",
-            )
-        
-        # Parse the response to determine outcome
-        # For now, we'll do a simple heuristic based on the output
-        # In the future, this could use structured output
-        
-        output_lower = output.lower()
-        
-        # Check if it found a fix
-        if any(phrase in output_lower for phrase in ["fixed", "applied fix", "changed", "edited", "updated"]):
-            return HealingResult(
-                status=HealingStatus.FIXED,
-                root_cause="See healer output",
-                confidence="medium",
-                fixable=True,
-                should_retry=True,
-                summary="Fix applied - will retry job",
-                details=output,
-            )
-        
-        # Check if it needs human intervention
-        if any(phrase in output_lower for phrase in ["human intervention", "cannot fix", "need help", "manual"]):
-            return HealingResult(
-                status=HealingStatus.GAVE_UP,
-                root_cause="See healer output",
-                fixable=False,
-                human_intervention_needed=True,
-                human_intervention_reason="Healer determined fix requires human action",
-                summary="Needs human intervention",
-                details=output,
-            )
-        
-        # Default: gave up
         return HealingResult(
-            status=HealingStatus.GAVE_UP,
-            root_cause="See healer output",
-            fixable=False,
-            summary="Could not determine fix",
-            details=output,
+            status=HealingStatus.GAVE_UP,  # Mark as gave_up since we can't wait for response
+            root_cause="Healing request sent to main session",
+            fixable=True,
+            human_intervention_needed=True,
+            human_intervention_reason="Review the healing request in main session and take action",
+            summary="Healing request sent - awaiting human/agent review",
         )
         
-    except asyncio.TimeoutError:
-        logger.warning(f"Healer session timed out for job '{job_id}'")
-        return HealingResult(
-            status=HealingStatus.GAVE_UP,
-            root_cause="Healer session timed out",
-            summary="Analysis timed out",
-        )
-    except FileNotFoundError:
-        logger.error("OpenClaw CLI not found - cannot run healer")
-        return HealingResult(
-            status=HealingStatus.GAVE_UP,
-            root_cause="OpenClaw CLI not found",
-            summary="Cannot heal - OpenClaw not available",
-        )
     except Exception as e:
         logger.error(f"Healer session error: {e}")
         return HealingResult(
