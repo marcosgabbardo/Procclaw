@@ -2402,7 +2402,15 @@
                     try {
                         const res = await this.api(`/runs/${run.id}/session`);
                         this.sessionRun = run;
-                        this.sessionMessages = res.messages || [];
+                        // Transform JSONL format: filter to type="message" and flatten nested structure
+                        this.sessionMessages = (res.messages || [])
+                            .filter(m => m.type === 'message' && m.message)
+                            .map(m => ({
+                                role: m.message.role,
+                                content: m.message.content,
+                                model: m.message.model,
+                                usage: m.message.usage
+                            }));
                         this.showSessionModal = true;
                         this.selectedRun = null;
                     } catch (e) {
