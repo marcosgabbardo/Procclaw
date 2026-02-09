@@ -756,6 +756,45 @@ class Supervisor:
         except Exception as e:
             logger.error(f"Error saving logs for run {run_id}: {e}")
 
+    def _extract_session_info(self, job_id: str, run: "JobRun") -> None:
+        """Extract OpenClaw session info from job logs.
+        
+        Looks for SESSION_KEY= and SESSION_TRANSCRIPT= lines in the log output
+        and updates the run record with the session info.
+        """
+        from procclaw.models import JobRun
+        
+        try:
+            job = self.jobs.get_job(job_id)
+            if not job:
+                return
+            
+            log_path = job.get_log_stdout_path(DEFAULT_LOGS_DIR, job_id)
+            if not log_path.exists():
+                return
+            
+            session_key = None
+            session_transcript = None
+            
+            # Read log file and look for session markers
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("SESSION_KEY="):
+                        session_key = line.split("=", 1)[1]
+                    elif line.startswith("SESSION_TRANSCRIPT="):
+                        session_transcript = line.split("=", 1)[1]
+            
+            # Update run if we found session info
+            if session_key or session_transcript:
+                run.session_key = session_key
+                run.session_transcript = session_transcript
+                self.db.update_run(run)
+                logger.debug(f"Extracted session info for job '{job_id}': key={session_key}")
+                
+        except Exception as e:
+            logger.error(f"Error extracting session info for job '{job_id}': {e}")
+
     def add_job_tag(self, job_id: str, tag: str) -> bool:
         """Add a tag to a job.
         
@@ -1147,6 +1186,10 @@ class Supervisor:
             
             # Save logs to SQLite for this run
             self._save_run_logs(job_id, last_run.id, handle.started_at)
+            
+            # Extract OpenClaw session info for openclaw jobs
+            if job and job.type == JobType.OPENCLAW:
+                self._extract_session_info(job_id, last_run)
 
         # Remove from active processes
         if job_id in self._processes:

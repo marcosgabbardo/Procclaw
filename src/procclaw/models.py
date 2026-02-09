@@ -364,6 +364,8 @@ class JobRun(BaseModel):
     trigger: str = "manual"  # manual, scheduled, restart, dependency
     error: str | None = None
     composite_id: str | None = None  # workflow ID if run as part of chain/group/chord
+    session_key: str | None = None  # OpenClaw session key (for openclaw jobs)
+    session_transcript: str | None = None  # Path to OpenClaw session transcript
 
 
 class FileLogMode(str, Enum):

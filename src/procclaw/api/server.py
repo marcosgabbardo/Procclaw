@@ -123,6 +123,8 @@ class RunSummary(BaseModel):
     error: str | None = None
     cmd: str | None = None
     composite_id: str | None = None  # workflow ID if part of chain/group/chord
+    session_key: str | None = None  # OpenClaw session key
+    has_transcript: bool = False  # Whether session transcript is available
 
 
 class RunListResponse(BaseModel):
@@ -396,6 +398,8 @@ def create_app() -> FastAPI:
                 error=run.error,
                 cmd=job.cmd if job else None,
                 composite_id=run.composite_id,
+                session_key=run.session_key,
+                has_transcript=bool(run.session_transcript),
             ))
         
         return RunListResponse(runs=result, total=len(result))
@@ -426,6 +430,51 @@ def create_app() -> FastAPI:
             "run_id": run_id,
             "lines": [log["line"] for log in logs],
             "total": len(logs),
+        }
+
+    @app.get("/api/v1/runs/{run_id}/session")
+    async def get_run_session(
+        run_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get OpenClaw session transcript for a job run."""
+        import json
+        from pathlib import Path
+        
+        supervisor = get_supervisor()
+        
+        # Find the run
+        runs = supervisor.db.get_runs(limit=1000)
+        run = next((r for r in runs if r.id == run_id), None)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        
+        if not run.session_transcript:
+            raise HTTPException(status_code=404, detail="No session transcript available for this run")
+        
+        transcript_path = Path(run.session_transcript)
+        if not transcript_path.exists():
+            raise HTTPException(status_code=404, detail=f"Transcript file not found: {run.session_transcript}")
+        
+        # Read and parse the JSONL transcript
+        messages = []
+        try:
+            with open(transcript_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        msg = json.loads(line)
+                        messages.append(msg)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error reading transcript: {e}")
+        
+        return {
+            "run_id": run_id,
+            "job_id": run.job_id,
+            "session_key": run.session_key,
+            "transcript_path": str(transcript_path),
+            "messages": messages,
+            "message_count": len(messages),
         }
 
     @app.get("/api/v1/jobs/{job_id}", response_model=JobDetail)

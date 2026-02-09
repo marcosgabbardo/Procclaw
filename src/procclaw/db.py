@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS job_runs (
     error TEXT,
     fingerprint TEXT,
     idempotency_key TEXT,
-    composite_id TEXT
+    composite_id TEXT,
+    session_key TEXT,
+    session_transcript TEXT
 );
 
 -- Metrics (for historical queries)
@@ -330,6 +332,18 @@ class Database:
             except sqlite3.OperationalError:
                 pass  # Column already exists
         
+        if from_version < 6 and to_version >= 6:
+            # Migration to version 6: Add session_key and session_transcript for OpenClaw integration
+            logger.info("Migrating to version 6: Adding session_key and session_transcript to job_runs")
+            try:
+                conn.execute("ALTER TABLE job_runs ADD COLUMN session_key TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE job_runs ADD COLUMN session_transcript TEXT")
+            except sqlite3.OperationalError:
+                pass
+        
         conn.execute("UPDATE schema_version SET version = ?", (to_version,))
 
     @contextmanager
@@ -453,7 +467,9 @@ class Database:
                     finished_at = ?,
                     exit_code = ?,
                     duration_seconds = ?,
-                    error = ?
+                    error = ?,
+                    session_key = ?,
+                    session_transcript = ?
                 WHERE id = ?
                 """,
                 (
@@ -461,6 +477,8 @@ class Database:
                     run.exit_code,
                     run.duration_seconds,
                     run.error,
+                    run.session_key,
+                    run.session_transcript,
                     run.id,
                 ),
             )
@@ -499,6 +517,7 @@ class Database:
 
     def _row_to_run(self, row: sqlite3.Row) -> JobRun:
         """Convert a database row to a JobRun."""
+        keys = row.keys()
         return JobRun(
             id=row["id"],
             job_id=row["job_id"],
@@ -508,7 +527,9 @@ class Database:
             duration_seconds=row["duration_seconds"],
             trigger=row["trigger"],
             error=row["error"],
-            composite_id=row["composite_id"] if "composite_id" in row.keys() else None,
+            composite_id=row["composite_id"] if "composite_id" in keys else None,
+            session_key=row["session_key"] if "session_key" in keys else None,
+            session_transcript=row["session_transcript"] if "session_transcript" in keys else None,
         )
 
     # Log Methods
