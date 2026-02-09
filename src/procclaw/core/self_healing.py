@@ -523,14 +523,25 @@ class SelfHealer:
         )
     
     async def process_queue(self) -> None:
-        """Process the next healing request in the queue.
+        """Process the healing queue.
         
         This should be called periodically (e.g., every 30 seconds).
-        Only one healing runs at a time.
-        """
-        if self._queue.is_processing:
-            return  # Already processing
+        Only one healing runs at a time. Event-based: waits for response.
         
+        Flow:
+        1. If waiting for response, check for response or timeout
+        2. If not processing, dequeue next request and send
+        """
+        # First, check if we're waiting for a response
+        if self._queue.is_waiting_response:
+            await self._check_healing_response()
+            return
+        
+        # Check if already processing (shouldn't happen, but safety)
+        if self._queue.is_processing:
+            return
+        
+        # Dequeue next request
         request = await self._queue.dequeue()
         if not request:
             return  # Queue empty
@@ -546,27 +557,67 @@ class SelfHealer:
             from procclaw.openclaw import send_to_session
             await send_to_session("main", prompt, immediate=False)
             
-            # Mark as completed (we sent the request, human/agent will handle it)
-            result = {
-                "status": "sent_to_session",
-                "summary": "Healing request sent to main session for review",
-                "previous_attempts_count": len(request.previous_attempts),
-            }
-            await self._queue.complete(request.id, result, success=True)
+            # Mark as sent and waiting for response (NOT complete!)
+            await self._queue.mark_sent(request.id)
             
-            # Update run
+            # Update run to show waiting status
             run = self._get_run(request.run_id)
             if run:
-                run.healing_status = HealingStatus.GAVE_UP.value  # Awaiting human review
+                run.healing_status = "waiting_response"
                 run.healing_attempts = 1
-                run.healing_result = result
                 self.db.update_run(run)
             
-            logger.info(f"Healing request '{request.id}' sent to main session")
+            logger.info(f"Healing request '{request.id}' sent, waiting for response")
             
         except Exception as e:
             logger.error(f"Error processing healing request '{request.id}': {e}")
             await self._queue.complete(request.id, {"error": str(e)}, success=False)
+    
+    async def _check_healing_response(self) -> None:
+        """Check for healing response or timeout.
+        
+        Called when waiting for a response.
+        """
+        current = self._queue.current
+        if not current:
+            return
+        
+        # Check for response file
+        has_response, parsed = self._queue.check_response()
+        if has_response and parsed:
+            # Got a response!
+            success = parsed.get("success", False)
+            status = parsed.get("status", "unknown")
+            
+            logger.info(f"Received healing response for '{current.id}': {status}")
+            
+            # Update run with result
+            run = self._get_run(current.run_id)
+            if run:
+                if status == "fixed":
+                    run.healing_status = HealingStatus.SUCCESS.value
+                elif status == "manual":
+                    run.healing_status = HealingStatus.GAVE_UP.value
+                else:
+                    run.healing_status = HealingStatus.FAILURE.value
+                run.healing_result = parsed
+                self.db.update_run(run)
+            
+            # Complete the request
+            await self._queue.complete(current.id, parsed, success=success)
+            return
+        
+        # Check for timeout
+        if self._queue.check_timeout():
+            # Timed out, mark and move on
+            run = self._get_run(current.run_id)
+            if run:
+                run.healing_status = "timeout"
+                run.healing_result = {"status": "timeout", "message": "No response received"}
+                self.db.update_run(run)
+            
+            await self._queue.timeout_current()
+            return
     
     def _get_run(self, run_id: int) -> JobRun | None:
         """Get a run by ID."""
@@ -575,7 +626,7 @@ class SelfHealer:
     
     def _build_queue_prompt(self, request) -> str:
         """Build healing prompt from a queue request."""
-        from procclaw.core.healing_queue import HealingRequest
+        from procclaw.core.healing_queue import HealingRequest, HEALING_RESPONSE_DIR
         req: HealingRequest = request
         
         # Build previous attempts section
@@ -590,6 +641,8 @@ class SelfHealer:
                 if result.get("summary"):
                     prev_attempts_text += f"- Summary: {result.get('summary')}\n"
                 prev_attempts_text += "\n"
+        
+        response_file = HEALING_RESPONSE_DIR / f"{req.id}.response"
         
         prompt = f"""🔧 **Self-Healing Request** (Queue ID: {req.id})
 
@@ -620,10 +673,33 @@ class SelfHealer:
 1. **Analyze** the failure
 2. **If you already tried before** (see Previous Attempts above), try a DIFFERENT approach
 3. **Apply fix** if possible
-4. Report with: HEALING_FIXED, HEALING_MANUAL, or HEALING_GAVE_UP
+4. **WRITE YOUR RESPONSE TO FILE** (required for queue to proceed)
+
+## ⚠️ REQUIRED: Write Response File
+
+After analyzing/fixing, you **MUST** write your response to:
+```
+{response_file}
+```
+
+**Response format (one of these):**
+- `HEALING_FIXED: <summary of what you fixed>`
+- `HEALING_MANUAL: <reason human intervention is needed>`
+- `HEALING_GAVE_UP: <reason you couldn't fix it>`
+
+**Example:**
+```bash
+echo "HEALING_FIXED: Updated timeout in job config from 300s to 600s" > "{response_file}"
+```
+
+The healing queue is **blocked until you write this file**. Other healing requests are waiting.
+
+---
 
 **If this is a repeat failure with no new approach possible, respond:**
-HEALING_GAVE_UP: No new approach available
+```bash
+echo "HEALING_GAVE_UP: No new approach available" > "{response_file}"
+```
 """
         return prompt
     
