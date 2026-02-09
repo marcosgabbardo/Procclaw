@@ -108,3 +108,17 @@ jobs:
     type: manual
     enabled: false
     tags: [test, disabled]
+
+  # Job with dependency (depends on test-success)
+  test-dependent:
+    name: Test Dependent Job
+    description: A job that depends on test-success completing first
+    cmd: python3 tests/mock_jobs/success_job.py 2
+    cwd: ~/.openclaw/workspace/projects/procclaw
+    type: manual
+    enabled: true
+    depends_on:
+      - job: test-success
+        condition: after_complete
+        timeout: 60
+    tags: [test, dependency]

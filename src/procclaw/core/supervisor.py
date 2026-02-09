@@ -25,6 +25,7 @@ from procclaw.models import (
     JobType,
     ProcClawConfig,
 )
+from procclaw.core.dependencies import DependencyManager, DependencyStatus
 from procclaw.core.health import HealthChecker, HealthCheckResult
 from procclaw.core.retry import RetryManager
 from procclaw.core.scheduler import Scheduler
@@ -118,6 +119,13 @@ class Supervisor:
             on_max_retries=self._on_max_retries,
         )
 
+        # Initialize dependency manager
+        self._dependency_manager = DependencyManager(
+            is_job_running=self.is_job_running,
+            get_job_status=lambda job_id: self.db.get_state(job_id).status.value if self.db.get_state(job_id) else None,
+            get_last_run=self._get_last_run_info,
+        )
+
         # Ensure directories exist
         ensure_config_dir()
 
@@ -126,6 +134,13 @@ class Supervisor:
         self.jobs = load_jobs()
         self._scheduler.update_jobs(self.jobs.get_enabled_jobs())
         logger.info(f"Reloaded {len(self.jobs.jobs)} jobs")
+
+    def _get_last_run_info(self, job_id: str) -> tuple[datetime | None, int | None] | None:
+        """Get last run info for dependency checking."""
+        last_run = self.db.get_last_run(job_id)
+        if last_run:
+            return (last_run.finished_at, last_run.exit_code)
+        return None
 
     # Process Management
 
@@ -143,6 +158,18 @@ class Supervisor:
         if job_id in self._processes and self._processes[job_id].is_running():
             logger.warning(f"Job '{job_id}' is already running")
             return False
+
+        # Check dependencies (sync check, not async wait)
+        if job.depends_on:
+            satisfied, results = self._dependency_manager.check_all_dependencies(job_id, job)
+            if not satisfied:
+                for result in results:
+                    if result.status == DependencyStatus.FAILED:
+                        logger.error(f"Cannot start '{job_id}': {result.message}")
+                        return False
+                    elif result.status == DependencyStatus.WAITING:
+                        logger.warning(f"Cannot start '{job_id}': {result.message}")
+                        return False
 
         try:
             handle = self._spawn_process(job_id, job)
@@ -173,6 +200,9 @@ class Supervisor:
 
             # Cancel any pending retry
             self._retry_manager.cancel_retry(job_id)
+
+            # Record start for dependency tracking
+            self._dependency_manager.record_job_start(job_id)
 
             return True
 
@@ -385,6 +415,9 @@ class Supervisor:
 
         # Unregister from health checker
         self._health_checker.unregister_job(job_id)
+
+        # Record completion for dependency tracking
+        self._dependency_manager.record_job_complete(job_id)
 
         # Update state
         state = self.db.get_state(job_id) or JobState(job_id=job_id)
