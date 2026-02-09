@@ -690,6 +690,8 @@ class Supervisor:
     def delete_job(self, job_id: str) -> bool:
         """Delete a job from the configuration.
         
+        Also stops any running processes and finalizes pending runs.
+        
         Args:
             job_id: The job to delete
             
@@ -706,6 +708,9 @@ class Supervisor:
         # Stop if running
         if self.is_job_running(job_id):
             self.stop_job(job_id, force=True)
+        
+        # Finalize any pending runs for this job
+        self._finalize_job_runs(job_id)
         
         # Remove from jobs config
         jobs_file = DEFAULT_JOBS_FILE
@@ -2056,7 +2061,30 @@ class Supervisor:
         """Get the last result for a job."""
         return self._result_collector.get_last_result(job_id)
 
-    # Zombie Cleanup
+    # Run Cleanup
+
+    def _finalize_job_runs(self, job_id: str) -> int:
+        """Finalize all pending runs for a job.
+        
+        Used when deleting a job to clean up any runs that are still
+        marked as running.
+        
+        Returns:
+            Number of runs finalized
+        """
+        running_runs = self.db.get_running_runs()
+        finalized = 0
+        
+        for run in running_runs:
+            if run.job_id == job_id:
+                logger.info(f"Finalizing run {run.id} for deleted job '{job_id}'")
+                run.finished_at = datetime.now()
+                run.exit_code = -15  # SIGTERM
+                run.error = "Job deleted"
+                self.db.update_run(run)
+                finalized += 1
+        
+        return finalized
 
     def _cleanup_zombie_runs(self) -> None:
         """Clean up zombie runs from previous daemon sessions.
