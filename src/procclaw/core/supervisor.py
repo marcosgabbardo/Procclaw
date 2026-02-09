@@ -602,7 +602,7 @@ class Supervisor:
         # Allowed fields to update
         allowed_fields = {
             "name", "description", "tags", "cmd", "cwd", "env", "enabled",
-            "schedule", "timezone", "type", "priority"
+            "schedule", "run_at", "timezone", "type", "priority"
         }
         
         try:
@@ -634,6 +634,20 @@ class Supervisor:
         except Exception as e:
             logger.error(f"Failed to update job '{job_id}': {e}")
             return False
+
+    def _disable_oneshot_job(self, job_id: str) -> None:
+        """Disable a oneshot job after it has been executed.
+        
+        This is called automatically when a oneshot job completes successfully.
+        """
+        try:
+            success = self.update_job(job_id, {"enabled": False})
+            if success:
+                logger.info(f"Oneshot job '{job_id}' auto-disabled after execution")
+            else:
+                logger.warning(f"Failed to auto-disable oneshot job '{job_id}'")
+        except Exception as e:
+            logger.error(f"Error disabling oneshot job '{job_id}': {e}")
 
     def add_job_tag(self, job_id: str, tag: str) -> bool:
         """Add a tag to a job.
@@ -824,12 +838,22 @@ class Supervisor:
         except Exception:
             pass
         
+        # Compute display status
+        display_status = state.status.value
+        if not job.enabled:
+            display_status = JobStatus.DISABLED.value
+        elif state.status == JobStatus.RUNNING:
+            display_status = JobStatus.RUNNING.value
+        elif (job.schedule and next_run) or (job.run_at and next_run):
+            # Scheduled or oneshot job with future run = PLANNED
+            display_status = JobStatus.PLANNED.value
+        
         return {
             "id": job_id,
             "name": job.name,
             "description": job.description,
             "type": job.type.value,
-            "status": state.status.value,
+            "status": display_status,
             "enabled": job.enabled,
             "pid": state.pid,
             "started_at": state.started_at.isoformat() if state.started_at else None,
@@ -853,6 +877,7 @@ class Supervisor:
             "cmd": job.cmd,
             "cwd": job.cwd,
             "schedule": job.schedule,
+            "run_at": job.run_at.isoformat() if job.run_at else None,
             "max_retries": job.retry.max_attempts if job.retry else 0,
             "timeout_seconds": job.shutdown.grace_period if job.shutdown else 60,
             # Dependencies
@@ -1018,6 +1043,11 @@ class Supervisor:
         status = "completed" if exit_code == 0 else "failed"
         logger.info(f"Job '{job_id}' {status} (exit code: {exit_code}, duration: {duration:.1f}s)")
         self._audit_log(job_id, status, f"exit_code: {exit_code}, duration: {duration:.1f}s")
+
+        # Auto-disable oneshot jobs after completion
+        if job and job.type == JobType.ONESHOT and exit_code == 0:
+            logger.info(f"Oneshot job '{job_id}' completed - auto-disabling")
+            self._disable_oneshot_job(job_id)
 
         # Notify OpenClaw
         if exit_code == 0:

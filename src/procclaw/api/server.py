@@ -95,12 +95,32 @@ class JobDetail(JobSummary):
     cmd: str | None = None
     cwd: str | None = None
     schedule: str | None = None
+    run_at: str | None = None  # ISO datetime for oneshot jobs
     max_retries: int | None = None
     timeout_seconds: int | None = None
 
 
 class JobListResponse(BaseModel):
     jobs: list[JobSummary]
+    total: int
+
+
+class RunSummary(BaseModel):
+    id: int
+    job_id: str
+    job_name: str | None = None
+    started_at: str
+    finished_at: str | None = None
+    exit_code: int | None = None
+    duration_seconds: float | None = None
+    trigger: str
+    status: str  # running, success, failed
+    error: str | None = None
+    cmd: str | None = None
+
+
+class RunListResponse(BaseModel):
+    runs: list[RunSummary]
     total: int
 
 
@@ -209,6 +229,57 @@ def create_app() -> FastAPI:
             total=len(jobs),
         )
 
+    @app.get("/api/v1/runs", response_model=RunListResponse)
+    async def list_runs(
+        job_id: str | None = Query(None, description="Filter by job ID"),
+        status: str | None = Query(None, description="Filter by status (success/failed/running)"),
+        trigger: str | None = Query(None, description="Filter by trigger type"),
+        limit: int = Query(100, le=500, description="Max runs to return"),
+        _auth: bool = Depends(verify_token),
+    ):
+        """List job execution history."""
+        supervisor = get_supervisor()
+        
+        # Get runs from database
+        runs = supervisor.db.get_runs(job_id=job_id, limit=limit)
+        
+        # Enrich with job info and compute status
+        result = []
+        for run in runs:
+            job = supervisor.jobs.get_job(run.job_id)
+            
+            # Determine status
+            if run.finished_at is None:
+                run_status = "running"
+            elif run.exit_code == 0:
+                run_status = "success"
+            else:
+                run_status = "failed"
+            
+            # Filter by status if specified
+            if status and run_status != status:
+                continue
+            
+            # Filter by trigger if specified
+            if trigger and run.trigger != trigger:
+                continue
+            
+            result.append(RunSummary(
+                id=run.id,
+                job_id=run.job_id,
+                job_name=job.name if job else None,
+                started_at=run.started_at.isoformat(),
+                finished_at=run.finished_at.isoformat() if run.finished_at else None,
+                exit_code=run.exit_code,
+                duration_seconds=run.duration_seconds,
+                trigger=run.trigger,
+                status=run_status,
+                error=run.error,
+                cmd=job.cmd if job else None,
+            ))
+        
+        return RunListResponse(runs=result, total=len(result))
+
     @app.get("/api/v1/jobs/{job_id}", response_model=JobDetail)
     async def get_job(
         job_id: str,
@@ -242,6 +313,7 @@ def create_app() -> FastAPI:
             cmd=job_status.get("cmd"),
             cwd=job_status.get("cwd"),
             schedule=job_status.get("schedule"),
+            run_at=job_status.get("run_at"),
             max_retries=job_status.get("max_retries"),
             timeout_seconds=job_status.get("timeout_seconds"),
         )

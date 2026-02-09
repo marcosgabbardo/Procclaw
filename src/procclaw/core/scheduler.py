@@ -40,13 +40,17 @@ class Scheduler:
         self._operating_hours = OperatingHoursChecker(default_timezone=timezone)
 
     def add_job(self, job_id: str, job: JobConfig) -> None:
-        """Add a scheduled job."""
-        if job.type != JobType.SCHEDULED or not job.schedule:
-            return
-
-        self._jobs[job_id] = job
-        self._calculate_next_run(job_id)
-        logger.debug(f"Scheduled job '{job_id}' - next run: {self._next_runs.get(job_id)}")
+        """Add a scheduled or oneshot job."""
+        # Handle scheduled jobs (cron)
+        if job.type == JobType.SCHEDULED and job.schedule:
+            self._jobs[job_id] = job
+            self._calculate_next_run(job_id)
+            logger.debug(f"Scheduled job '{job_id}' - next run: {self._next_runs.get(job_id)}")
+        # Handle oneshot jobs (run_at datetime)
+        elif job.type == JobType.ONESHOT and job.run_at:
+            self._jobs[job_id] = job
+            self._calculate_next_run(job_id)
+            logger.debug(f"Oneshot job '{job_id}' - run at: {self._next_runs.get(job_id)}")
 
     def remove_job(self, job_id: str) -> None:
         """Remove a scheduled job."""
@@ -55,27 +59,44 @@ class Scheduler:
         self._queued.pop(job_id, None)
 
     def update_jobs(self, jobs: dict[str, JobConfig]) -> None:
-        """Update all scheduled jobs."""
+        """Update all scheduled and oneshot jobs."""
         # Remove jobs that no longer exist
         current_ids = set(self._jobs.keys())
-        new_ids = {jid for jid, j in jobs.items() if j.type == JobType.SCHEDULED and j.schedule}
+        new_ids = {
+            jid for jid, j in jobs.items() 
+            if (j.type == JobType.SCHEDULED and j.schedule) or (j.type == JobType.ONESHOT and j.run_at)
+        }
 
         for job_id in current_ids - new_ids:
             self.remove_job(job_id)
 
         # Add/update jobs
         for job_id, job in jobs.items():
-            if job.type == JobType.SCHEDULED and job.schedule and job.enabled:
-                self.add_job(job_id, job)
+            if job.enabled:
+                if (job.type == JobType.SCHEDULED and job.schedule) or (job.type == JobType.ONESHOT and job.run_at):
+                    self.add_job(job_id, job)
 
     def _calculate_next_run(self, job_id: str) -> None:
         """Calculate the next run time for a job."""
         job = self._jobs.get(job_id)
-        if not job or not job.schedule:
+        if not job:
             return
 
         tz = pytz.timezone(job.timezone or self._default_tz)
         now = datetime.now(tz)
+
+        # Oneshot jobs use run_at directly
+        if job.type == JobType.ONESHOT and job.run_at:
+            run_at = job.run_at
+            # Make timezone-aware if needed
+            if run_at.tzinfo is None:
+                run_at = tz.localize(run_at)
+            self._next_runs[job_id] = run_at
+            return
+
+        # Scheduled jobs use cron expression
+        if not job.schedule:
+            return
 
         try:
             cron = croniter(job.schedule, now)
@@ -156,11 +177,17 @@ class Scheduler:
                 # The supervisor should handle the kill
                 self._on_trigger(job_id, "scheduled")
         else:
-            logger.info(f"Triggering scheduled job '{job_id}'")
-            self._on_trigger(job_id, "scheduled")
+            trigger_type = "oneshot" if job.type == JobType.ONESHOT else "scheduled"
+            logger.info(f"Triggering {trigger_type} job '{job_id}'")
+            self._on_trigger(job_id, trigger_type)
 
-        # Calculate next run
-        self._calculate_next_run(job_id)
+        # For oneshot jobs, remove from scheduler after triggering
+        if job.type == JobType.ONESHOT:
+            logger.info(f"Oneshot job '{job_id}' triggered - removing from scheduler")
+            self.remove_job(job_id)
+        else:
+            # Calculate next run for recurring jobs
+            self._calculate_next_run(job_id)
 
     def stop(self) -> None:
         """Stop the scheduler."""

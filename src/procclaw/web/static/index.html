@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ProcClaw</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%2310b981'/%3E%3Cstop offset='100%25' stop-color='%2306b6d4'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='20' fill='%231a1a2e'/%3E%3Cpath d='M30 65 Q25 45 35 35 Q45 25 50 40 L50 60 Q50 70 40 70 Q30 70 30 65' fill='url(%23g)'/%3E%3Cpath d='M70 65 Q75 45 65 35 Q55 25 50 40 L50 60 Q50 70 60 70 Q70 70 70 65' fill='url(%23g)'/%3E%3Ccircle cx='50' cy='32' r='8' fill='url(%23g)'/%3E%3C/svg%3E">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -126,6 +127,11 @@
                     class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
                     ⚙️ Jobs
                 </button>
+                <button @click="currentTab = 'runs'; loadRuns()" 
+                    :class="currentTab === 'runs' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
+                    class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
+                    📊 Runs
+                </button>
                 <button @click="currentTab = 'dependencies'" 
                     :class="currentTab === 'dependencies' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
                     class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
@@ -165,12 +171,14 @@
                         <option value="">All Types</option>
                         <option value="continuous">Continuous</option>
                         <option value="scheduled">Scheduled</option>
+                        <option value="oneshot">One-shot</option>
                         <option value="manual">Manual</option>
                         <option value="openclaw">OpenClaw</option>
                     </select>
                     <select x-model="filters.status" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
                         <option value="">All Status</option>
                         <option value="running">Running</option>
+                        <option value="planned">Planned</option>
                         <option value="stopped">Stopped</option>
                         <option value="failed">Failed</option>
                     </select>
@@ -204,7 +212,14 @@
                         <thead class="bg-dark-700">
                             <tr>
                                 <template x-for="col in visibleColumns" :key="col.id">
-                                    <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3" x-text="col.label"></th>
+                                    <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3 select-none"
+                                        :class="col.sortable !== false && 'cursor-pointer hover:text-dark-200'"
+                                        @click="col.sortable !== false && toggleSort(col.id)">
+                                        <span class="flex items-center gap-1">
+                                            <span x-text="col.label"></span>
+                                            <span x-show="isSortedBy(col.id)" class="text-accent-400" x-text="sortDir === 'asc' ? '↑' : '↓'"></span>
+                                        </span>
+                                    </th>
                                 </template>
                                 <th class="text-right text-xs font-medium text-dark-400 uppercase px-4 py-3">Actions</th>
                             </tr>
@@ -236,7 +251,7 @@
                                             <template x-if="col.id === 'status'">
                                                 <div class="flex items-center gap-2">
                                                     <span class="w-2 h-2 rounded-full"
-                                                        :class="job.status === 'running' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : 'bg-dark-500'">
+                                                        :class="job.status === 'running' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : 'bg-dark-500'">
                                                     </span>
                                                     <span class="text-sm" :class="!job.enabled && 'text-dark-500'" x-text="job.enabled ? job.status : 'disabled'"></span>
                                                 </div>
@@ -293,24 +308,17 @@
                                     </template>
                                     <!-- Actions -->
                                     <td class="px-4 py-3 text-right" @click.stop>
-                                        <div class="flex justify-end gap-1">
-                                            <button @click="toggleJob(job.id, job.enabled)" 
-                                                class="p-1.5 hover:bg-dark-600 rounded" 
-                                                :class="job.enabled ? 'text-green-400 hover:text-red-400' : 'text-dark-500 hover:text-green-400'"
-                                                :title="job.enabled ? 'Disable' : 'Enable'">
-                                                <span x-show="job.enabled">✅</span>
-                                                <span x-show="!job.enabled">⭕</span>
-                                            </button>
+                                        <div class="flex justify-end gap-0.5">
                                             <button @click="startJob(job.id)" x-show="job.status !== 'running'" 
-                                                class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-green-400" title="Start">▶️</button>
+                                                class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Start">▶</button>
                                             <button @click="stopJob(job.id)" x-show="job.status === 'running'" 
-                                                class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-red-400" title="Stop">⏹️</button>
-                                            <button @click="restartJob(job.id)" 
-                                                class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-yellow-400" title="Restart">🔄</button>
+                                                class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Stop">◼</button>
+                                            <button @click="forceRunJob(job.id)" x-show="job.schedule && job.status !== 'running'" 
+                                                class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Run Now">⚡</button>
                                             <button @click="viewLogs(job.id)" 
-                                                class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-blue-400" title="Logs">📜</button>
+                                                class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="Logs">📋</button>
                                             <button @click="deleteJob(job.id)" 
-                                                class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-red-400" title="Delete">🗑️</button>
+                                                class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Delete">✕</button>
                                         </div>
                                     </td>
                                 </tr>
@@ -333,7 +341,7 @@
                                 <div class="text-xs text-dark-400" x-text="job.name"></div>
                             </div>
                             <div class="flex items-center gap-2">
-                                <span class="w-2 h-2 rounded-full" :class="job.status === 'running' ? 'bg-green-500 animate-pulse-slow' : job.status === 'failed' ? 'bg-red-500' : 'bg-dark-500'"></span>
+                                <span class="w-2 h-2 rounded-full" :class="job.status === 'running' ? 'bg-green-500 animate-pulse-slow' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : 'bg-dark-500'"></span>
                                 <span class="text-xs px-2 py-1 rounded-full" :class="getTypeClass(job.type)" x-text="job.type"></span>
                             </div>
                         </div>
@@ -355,15 +363,158 @@
                                 <span x-show="job.depends_on?.length > 0" class="text-blue-400">⬅️ <span x-text="job.depends_on?.length"></span></span>
                                 <span x-show="job.dependents?.length > 0" class="text-green-400">➡️ <span x-text="job.dependents?.length"></span></span>
                             </div>
-                            <div class="flex gap-1">
-                                <button @click="startJob(job.id)" x-show="job.status !== 'running'" class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-green-400">▶️</button>
-                                <button @click="stopJob(job.id)" x-show="job.status === 'running'" class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-red-400">⏹️</button>
-                                <button @click="restartJob(job.id)" class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-yellow-400">🔄</button>
-                                <button @click="deleteJob(job.id)" class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-red-400">🗑️</button>
+                            <div class="flex gap-0.5">
+                                <button @click="startJob(job.id)" x-show="job.status !== 'running'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Start">▶</button>
+                                <button @click="stopJob(job.id)" x-show="job.status === 'running'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Stop">◼</button>
+                                <button @click="forceRunJob(job.id)" x-show="job.schedule && job.status !== 'running'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Run Now">⚡</button>
+                                <button @click="viewLogs(job.id)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="Logs">📋</button>
+                                <button @click="deleteJob(job.id)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Delete">✕</button>
                             </div>
                         </div>
                     </div>
                 </template>
+            </div>
+        </div>
+
+        <!-- Runs Tab -->
+        <div x-show="currentTab === 'runs'" x-cloak>
+            <div class="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+                <!-- Filters -->
+                <div class="p-4 border-b border-dark-600 flex flex-wrap gap-4 items-center">
+                    <select x-model="runsFilter.job_id" @change="loadRuns()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                        <option value="">All Jobs</option>
+                        <template x-for="job in jobs" :key="job.id">
+                            <option :value="job.id" x-text="job.id"></option>
+                        </template>
+                    </select>
+                    <select x-model="runsFilter.status" @change="loadRuns()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                        <option value="">All Status</option>
+                        <option value="success">Success</option>
+                        <option value="failed">Failed</option>
+                        <option value="running">Running</option>
+                    </select>
+                    <select x-model="runsFilter.trigger" @change="loadRuns()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                        <option value="">All Triggers</option>
+                        <option value="manual">Manual</option>
+                        <option value="scheduled">Scheduled</option>
+                        <option value="oneshot">One-shot</option>
+                        <option value="restart">Restart</option>
+                        <option value="dependency">Dependency</option>
+                        <option value="api">API</option>
+                    </select>
+                    <button @click="loadRuns()" class="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm">🔄 Refresh</button>
+                    <span class="text-sm text-dark-400">Total: <span class="text-dark-200" x-text="runs.length"></span> runs</span>
+                </div>
+                
+                <!-- Table -->
+                <table class="w-full">
+                    <thead class="bg-dark-700">
+                        <tr>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Job</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Status</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Trigger</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Started</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Duration</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Exit Code</th>
+                            <th class="text-right text-xs font-medium text-dark-400 uppercase px-4 py-3">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-dark-700">
+                        <template x-for="run in runs" :key="run.id">
+                            <tr class="hover:bg-dark-750 transition cursor-pointer" @click="selectRun(run)">
+                                <td class="px-4 py-3">
+                                    <div class="font-medium text-dark-100" x-text="run.job_id"></div>
+                                    <div class="text-xs text-dark-400" x-text="run.job_name || ''"></div>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <div class="flex items-center gap-2">
+                                        <span class="w-2 h-2 rounded-full"
+                                            :class="run.status === 'success' ? 'bg-green-500' : run.status === 'failed' ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'">
+                                        </span>
+                                        <span class="text-sm" x-text="run.status"></span>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span class="text-xs px-2 py-1 rounded-full bg-dark-600 text-dark-300" x-text="run.trigger"></span>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span class="text-sm text-dark-300" x-text="formatDateFull(run.started_at)"></span>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span class="text-sm text-dark-400" x-text="run.duration_seconds ? formatDuration(run.duration_seconds) : '-'"></span>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span class="font-mono text-sm" :class="run.exit_code === 0 ? 'text-green-400' : run.exit_code ? 'text-red-400' : 'text-dark-400'" x-text="run.exit_code ?? '-'"></span>
+                                </td>
+                                <td class="px-4 py-3 text-right">
+                                    <button @click.stop="viewRunLogs(run)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="View Logs">📋</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                
+                <div x-show="runs.length === 0" class="text-center py-8 text-dark-400">
+                    No runs found
+                </div>
+            </div>
+        </div>
+
+        <!-- Run Detail Modal -->
+        <div x-show="selectedRun" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="selectedRun = null">
+            <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-2xl" @click.stop>
+                <div class="p-4 border-b border-dark-600 flex items-center justify-between">
+                    <div>
+                        <h2 class="text-lg font-medium" x-text="'Run #' + selectedRun?.id"></h2>
+                        <p class="text-sm text-dark-400" x-text="selectedRun?.job_id"></p>
+                    </div>
+                    <button @click="selectedRun = null" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
+                </div>
+                <div class="p-4 space-y-4">
+                    <div class="grid grid-cols-3 gap-4">
+                        <div class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">Status</div>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2 h-2 rounded-full" :class="selectedRun?.status === 'success' ? 'bg-green-500' : selectedRun?.status === 'failed' ? 'bg-red-500' : 'bg-yellow-500'"></span>
+                                <span x-text="selectedRun?.status"></span>
+                            </div>
+                        </div>
+                        <div class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">Trigger</div>
+                            <span x-text="selectedRun?.trigger"></span>
+                        </div>
+                        <div class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">Exit Code</div>
+                            <span class="font-mono" :class="selectedRun?.exit_code === 0 ? 'text-green-400' : 'text-red-400'" x-text="selectedRun?.exit_code ?? '-'"></span>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">Started</div>
+                            <span x-text="selectedRun?.started_at ? formatDateFull(selectedRun.started_at) : '-'"></span>
+                        </div>
+                        <div class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">Finished</div>
+                            <span x-text="selectedRun?.finished_at ? formatDateFull(selectedRun.finished_at) : '-'"></span>
+                        </div>
+                    </div>
+                    <div class="bg-dark-700 rounded-lg p-3">
+                        <div class="text-xs text-dark-400 mb-1">Duration</div>
+                        <span x-text="selectedRun?.duration_seconds ? formatDuration(selectedRun.duration_seconds) : '-'"></span>
+                    </div>
+                    <div x-show="selectedRun?.cmd" class="bg-dark-700 rounded-lg p-3">
+                        <div class="text-xs text-dark-400 mb-1">Command</div>
+                        <div class="font-mono text-sm text-dark-200 break-all" x-text="selectedRun?.cmd"></div>
+                    </div>
+                    <div x-show="selectedRun?.error" class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                        <div class="text-xs text-red-400 mb-1">Error</div>
+                        <div class="text-sm text-red-300" x-text="selectedRun?.error"></div>
+                    </div>
+                    <div class="flex gap-2 pt-4 border-t border-dark-700">
+                        <button @click="viewRunLogs(selectedRun)" class="flex-1 py-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition">📋 View Logs</button>
+                        <button @click="selectedRun = null" class="flex-1 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg transition">Close</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -380,7 +531,7 @@
                                 <template x-for="(node, idx) in chain.nodes" :key="node.id">
                                     <div class="flex items-center gap-2">
                                         <div class="dep-node cursor-pointer hover:border-accent-500 transition" @click="selectJobById(node.id)"
-                                            :class="{'border-green-500': getJobStatus(node.id) === 'running', 'border-red-500': getJobStatus(node.id) === 'failed'}">
+                                            :class="{'border-green-500': getJobStatus(node.id) === 'running', 'border-red-500': getJobStatus(node.id) === 'failed', 'border-cyan-500': getJobStatus(node.id) === 'planned'}">
                                             <div class="font-medium text-sm" x-text="node.id"></div>
                                             <div class="text-xs text-dark-400" x-text="node.type"></div>
                                         </div>
@@ -396,7 +547,7 @@
                         <div class="flex flex-wrap gap-3">
                             <template x-for="job in independentJobs" :key="job.id">
                                 <div class="dep-node cursor-pointer hover:border-accent-500 transition" @click="selectJobById(job.id)"
-                                    :class="{'border-green-500': job.status === 'running', 'border-red-500': job.status === 'failed'}">
+                                    :class="{'border-green-500': job.status === 'running', 'border-red-500': job.status === 'failed', 'border-cyan-500': job.status === 'planned'}">
                                     <div class="font-medium text-sm" x-text="job.id"></div>
                                     <div class="text-xs text-dark-400" x-text="job.type"></div>
                                 </div>
@@ -580,7 +731,7 @@
                             <div class="bg-dark-700 rounded-lg p-3">
                                 <div class="text-xs text-dark-400 mb-1">Status</div>
                                 <div class="flex items-center gap-2">
-                                    <span class="w-2 h-2 rounded-full" :class="selectedJob.status === 'running' ? 'bg-green-500' : selectedJob.status === 'failed' ? 'bg-red-500' : 'bg-dark-500'"></span>
+                                    <span class="w-2 h-2 rounded-full" :class="selectedJob.status === 'running' ? 'bg-green-500' : selectedJob.status === 'failed' ? 'bg-red-500' : selectedJob.status === 'planned' ? 'bg-cyan-500' : 'bg-dark-500'"></span>
                                     <span x-text="selectedJob.status"></span>
                                 </div>
                             </div>
@@ -657,22 +808,34 @@
                             <div class="font-mono text-sm text-dark-200 break-all" x-text="selectedJob.cmd || '-'"></div>
                         </div>
 
+                        <div x-show="selectedJob.cwd" class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">Working Directory</div>
+                            <div class="font-mono text-sm text-dark-200 break-all" x-text="selectedJob.cwd"></div>
+                        </div>
+
                         <div x-show="selectedJob.schedule" class="bg-dark-700 rounded-lg p-3">
                             <div class="text-xs text-dark-400 mb-1">Schedule</div>
                             <div class="font-mono text-sm text-dark-200" x-text="selectedJob.schedule"></div>
                         </div>
 
-                        <div class="flex gap-2 pt-4 border-t border-dark-700">
+                        <div x-show="selectedJob.run_at" class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">Run At (One-shot)</div>
+                            <div class="font-mono text-sm text-dark-200" x-text="formatDateFull(selectedJob.run_at)"></div>
+                        </div>
+
+                        <div class="flex flex-wrap gap-2 pt-4 border-t border-dark-700">
                             <button @click="startJob(selectedJob.id)" x-show="selectedJob.status !== 'running'"
-                                class="flex-1 py-2 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-lg transition">▶️ Start</button>
+                                class="flex-1 min-w-[80px] py-2 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-lg transition">▶️ Start</button>
                             <button @click="stopJob(selectedJob.id)" x-show="selectedJob.status === 'running'"
-                                class="flex-1 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">⏹️ Stop</button>
+                                class="flex-1 min-w-[80px] py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">⏹️ Stop</button>
+                            <button @click="forceRunJob(selectedJob.id)" x-show="(selectedJob.schedule || selectedJob.run_at) && selectedJob.status !== 'running'"
+                                class="flex-1 min-w-[80px] py-2 bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 rounded-lg transition" title="Force immediate execution">⚡ Run Now</button>
                             <button @click="restartJob(selectedJob.id)"
-                                class="flex-1 py-2 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded-lg transition">🔄 Restart</button>
+                                class="flex-1 min-w-[80px] py-2 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded-lg transition">🔄 Restart</button>
                             <button @click="viewLogs(selectedJob.id); selectedJob = null"
-                                class="flex-1 py-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition">📜 Logs</button>
+                                class="flex-1 min-w-[80px] py-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition">📜 Logs</button>
                             <button @click="deleteJob(selectedJob.id)"
-                                class="flex-1 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">🗑️ Delete</button>
+                                class="flex-1 min-w-[80px] py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">🗑️ Delete</button>
                         </div>
                     </div>
                 </template>
@@ -711,12 +874,17 @@
                             <option value="manual">Manual</option>
                             <option value="continuous">Continuous</option>
                             <option value="scheduled">Scheduled</option>
+                            <option value="oneshot">One-shot</option>
                             <option value="openclaw">OpenClaw</option>
                         </select>
                     </div>
                     <div x-show="editJob.type === 'scheduled'">
                         <label class="block text-sm text-dark-400 mb-1">Schedule (cron)</label>
                         <input type="text" x-model="editJob.schedule" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="0 * * * *">
+                    </div>
+                    <div x-show="editJob.type === 'oneshot'">
+                        <label class="block text-sm text-dark-400 mb-1">Run At</label>
+                        <input type="datetime-local" x-model="editJob.run_at" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
                     </div>
                 </div>
                 <div>
@@ -762,12 +930,17 @@
                             <option value="manual">Manual</option>
                             <option value="continuous">Continuous</option>
                             <option value="scheduled">Scheduled</option>
+                            <option value="oneshot">One-shot</option>
                             <option value="openclaw">OpenClaw</option>
                         </select>
                     </div>
                     <div x-show="newJob.type === 'scheduled'">
                         <label class="block text-sm text-dark-400 mb-1">Schedule (cron)</label>
                         <input type="text" x-model="newJob.schedule" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="0 * * * *">
+                    </div>
+                    <div x-show="newJob.type === 'oneshot'">
+                        <label class="block text-sm text-dark-400 mb-1">Run At</label>
+                        <input type="datetime-local" x-model="newJob.run_at" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
                     </div>
                 </div>
                 <div>
@@ -851,17 +1024,17 @@
         function app() {
             // Default columns configuration
             const defaultColumns = [
-                { id: 'id', label: 'Job', visible: true },
-                { id: 'type', label: 'Type', visible: true },
-                { id: 'status', label: 'Status', visible: true },
-                { id: 'last_run', label: 'Last Run', visible: true },
-                { id: 'next_run', label: 'Next Run', visible: true },
-                { id: 'tags', label: 'Tags', visible: true },
-                { id: 'deps', label: 'Deps', visible: true },
-                { id: 'schedule', label: 'Schedule', visible: false },
-                { id: 'restarts', label: 'Restarts', visible: false },
-                { id: 'created', label: 'Created', visible: false },
-                { id: 'modified', label: 'Modified', visible: false },
+                { id: 'id', label: 'Job', visible: true, sortKey: 'id' },
+                { id: 'type', label: 'Type', visible: true, sortKey: 'type' },
+                { id: 'status', label: 'Status', visible: true, sortKey: 'status' },
+                { id: 'last_run', label: 'Last Run', visible: true, sortKey: 'started_at' },
+                { id: 'next_run', label: 'Next Run', visible: true, sortKey: 'next_run' },
+                { id: 'tags', label: 'Tags', visible: true, sortable: false },
+                { id: 'deps', label: 'Deps', visible: true, sortable: false },
+                { id: 'schedule', label: 'Schedule', visible: false, sortKey: 'schedule' },
+                { id: 'restarts', label: 'Restarts', visible: false, sortKey: 'restart_count' },
+                { id: 'created', label: 'Created', visible: false, sortKey: 'created_at' },
+                { id: 'modified', label: 'Modified', visible: false, sortKey: 'updated_at' },
             ];
 
             // Load saved columns from localStorage
@@ -880,6 +1053,9 @@
                 stats: { total: 0, running: 0, failed: 0 },
                 dlqStats: { pending: 0, total: 0 },
                 dlqEntries: [],
+                runs: [],
+                runsFilter: { job_id: '', status: '', trigger: '' },
+                selectedRun: null,
                 logContent: [],
                 logLoadedAt: null,
                 selectedJob: null,
@@ -895,8 +1071,10 @@
                 // Columns
                 allColumns: columns,
                 
-                // Filters
+                // Filters & Sort
                 filters: { search: '', type: '', status: '', tag: '' },
+                sortBy: 'id',
+                sortDir: 'asc',
                 selectedLogJob: 'daemon',
                 logType: 'stdout',
                 logLines: 100,
@@ -904,8 +1082,8 @@
                 autoRefreshLogs: false,
                 
                 // Forms
-                newJob: { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', tags: '' },
-                editJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: '', schedule: '', tagsStr: '' },
+                newJob: { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '' },
+                editJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: '', schedule: '', run_at: '', tagsStr: '' },
                 
                 // Computed
                 get visibleColumns() {
@@ -913,7 +1091,7 @@
                 },
 
                 get filteredJobs() {
-                    return this.jobs.filter(job => {
+                    let result = this.jobs.filter(job => {
                         if (this.filters.search && !job.id.toLowerCase().includes(this.filters.search.toLowerCase()) && 
                             !job.name?.toLowerCase().includes(this.filters.search.toLowerCase())) return false;
                         if (this.filters.type && job.type !== this.filters.type) return false;
@@ -921,6 +1099,32 @@
                         if (this.filters.tag && !(job.tags || []).includes(this.filters.tag)) return false;
                         return true;
                     });
+                    
+                    // Sort
+                    if (this.sortBy) {
+                        const dateFields = ['started_at', 'next_run', 'created_at', 'updated_at'];
+                        result = result.sort((a, b) => {
+                            let aVal = a[this.sortBy];
+                            let bVal = b[this.sortBy];
+                            
+                            // Handle dates
+                            if (dateFields.includes(this.sortBy)) {
+                                aVal = aVal ? new Date(aVal).getTime() : (this.sortDir === 'asc' ? Infinity : 0);
+                                bVal = bVal ? new Date(bVal).getTime() : (this.sortDir === 'asc' ? Infinity : 0);
+                            } else {
+                                // Handle nulls for non-dates
+                                if (aVal == null) aVal = '';
+                                if (bVal == null) bVal = '';
+                            }
+                            
+                            // Compare
+                            if (aVal < bVal) return this.sortDir === 'asc' ? -1 : 1;
+                            if (aVal > bVal) return this.sortDir === 'asc' ? 1 : -1;
+                            return 0;
+                        });
+                    }
+                    
+                    return result;
                 },
                 
                 get allTags() {
@@ -1010,6 +1214,7 @@
                     switch (type) {
                         case 'continuous': return 'bg-green-500/20 text-green-400';
                         case 'scheduled': return 'bg-blue-500/20 text-blue-400';
+                        case 'oneshot': return 'bg-pink-500/20 text-pink-400';
                         case 'manual': return 'bg-purple-500/20 text-purple-400';
                         case 'openclaw': return 'bg-orange-500/20 text-orange-400';
                         default: return 'bg-dark-600 text-dark-300';
@@ -1101,6 +1306,31 @@
                     this.loading = false;
                 },
 
+                // Sorting
+                toggleSort(colId) {
+                    const col = this.allColumns.find(c => c.id === colId);
+                    if (!col || col.sortable === false) return;
+                    const sortKey = col.sortKey || colId;
+                    
+                    if (this.sortBy === sortKey) {
+                        this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        this.sortBy = sortKey;
+                        this.sortDir = 'asc';
+                    }
+                },
+                
+                getSortKey(colId) {
+                    const col = this.allColumns.find(c => c.id === colId);
+                    return col?.sortKey || colId;
+                },
+                
+                isSortedBy(colId) {
+                    const col = this.allColumns.find(c => c.id === colId);
+                    const sortKey = col?.sortKey || colId;
+                    return this.sortBy === sortKey;
+                },
+
                 // Jobs
                 async startJob(id) {
                     const res = await this.api(`/jobs/${id}/start`, 'POST');
@@ -1120,11 +1350,23 @@
                     await this.refresh();
                 },
 
+                async forceRunJob(id) {
+                    const res = await this.api(`/jobs/${id}/start`, 'POST');
+                    this.toast(res.success ? `⚡ Force started ${id}` : `Failed: ${res.message}`, res.success ? 'success' : 'error');
+                    await this.refresh();
+                },
+
                 selectJob(job) {
                     this.selectedJob = job;
                 },
 
                 openEditModal(job) {
+                    // Format run_at for datetime-local input (YYYY-MM-DDTHH:mm)
+                    let runAtFormatted = '';
+                    if (job.run_at) {
+                        const d = new Date(job.run_at);
+                        runAtFormatted = d.toISOString().slice(0, 16);
+                    }
                     this.editJob = {
                         id: job.id,
                         name: job.name || '',
@@ -1133,6 +1375,7 @@
                         cwd: job.cwd || '',
                         type: job.type || 'manual',
                         schedule: job.schedule || '',
+                        run_at: runAtFormatted,
                         tagsStr: (job.tags || []).join(', ')
                     };
                     this.showEditModal = true;
@@ -1145,7 +1388,8 @@
                         cmd: this.editJob.cmd,
                         cwd: this.editJob.cwd || null,
                         type: this.editJob.type,
-                        schedule: this.editJob.schedule || null,
+                        schedule: this.editJob.type === 'scheduled' ? (this.editJob.schedule || null) : null,
+                        run_at: this.editJob.type === 'oneshot' ? (this.editJob.run_at || null) : null,
                         tags: this.editJob.tagsStr.split(',').map(t => t.trim()).filter(t => t)
                     };
                     
@@ -1226,6 +1470,42 @@
                     a.click();
                     URL.revokeObjectURL(url);
                     this.toast('Logs downloaded', 'success');
+                },
+
+                // Runs
+                async loadRuns() {
+                    try {
+                        let endpoint = '/runs?limit=200';
+                        if (this.runsFilter.job_id) endpoint += `&job_id=${this.runsFilter.job_id}`;
+                        if (this.runsFilter.status) endpoint += `&status=${this.runsFilter.status}`;
+                        if (this.runsFilter.trigger) endpoint += `&trigger=${this.runsFilter.trigger}`;
+                        const res = await this.api(endpoint);
+                        this.runs = res.runs || [];
+                    } catch (e) {
+                        console.error('Failed to load runs:', e);
+                        this.runs = [];
+                    }
+                },
+
+                selectRun(run) {
+                    this.selectedRun = run;
+                },
+
+                viewRunLogs(run) {
+                    this.selectedLogJob = run.job_id;
+                    this.currentTab = 'logs';
+                    this.loadLogs();
+                    this.selectedRun = null;
+                },
+
+                formatDuration(seconds) {
+                    if (!seconds) return '-';
+                    if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
+                    if (seconds < 60) return `${seconds.toFixed(1)}s`;
+                    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+                    const h = Math.floor(seconds / 3600);
+                    const m = Math.floor((seconds % 3600) / 60);
+                    return `${h}h ${m}m`;
                 },
 
                 // DLQ

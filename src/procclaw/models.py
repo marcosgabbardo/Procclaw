@@ -16,6 +16,7 @@ class JobType(str, Enum):
     SCHEDULED = "scheduled"
     CONTINUOUS = "continuous"
     MANUAL = "manual"
+    ONESHOT = "oneshot"  # Run once at specific datetime, then auto-disable
     OPENCLAW = "openclaw"  # Jobs linked to OpenClaw (depend on AI/cron integration)
 
 
@@ -25,7 +26,7 @@ class JobStatus(str, Enum):
     RUNNING = "running"
     STOPPED = "stopped"
     FAILED = "failed"
-    IDLE = "idle"  # For scheduled jobs waiting for next run
+    PLANNED = "planned"  # Scheduled job waiting for next run
     PENDING = "pending"  # Waiting for dependency
     DISABLED = "disabled"
 
@@ -262,6 +263,7 @@ class JobConfig(BaseModel):
 
     # Scheduling (for scheduled jobs)
     schedule: str | None = None  # cron expression
+    run_at: datetime | None = None  # ISO datetime for oneshot jobs
     timezone: str = "America/Sao_Paulo"
     on_overlap: OnOverlap = OnOverlap.SKIP
 
