@@ -415,17 +415,18 @@ When done, respond with one of:
 
 
 class SelfHealer:
-    """Self-healing manager for jobs."""
+    """Self-healing manager for jobs.
     
-    # Cooldown period between healing attempts for the same job (seconds)
-    HEALING_COOLDOWN_SECONDS = 300  # 5 minutes
+    Uses a queue to ensure only one healing runs at a time.
+    """
     
     def __init__(self, db: "Database", logs_dir: Path):
         self.db = db
         self.logs_dir = logs_dir
-        self._healing_in_progress: set[str] = set()
-        self._last_healing_time: dict[str, datetime] = {}
-        self._cancelled: set[str] = set()  # Jobs with cancelled healing
+        
+        # Import queue here to avoid circular imports
+        from procclaw.core.healing_queue import get_healing_queue
+        self._queue = get_healing_queue()
     
     def is_healing_enabled(self, job: JobConfig) -> bool:
         """Check if self-healing is enabled for a job."""
@@ -436,34 +437,26 @@ class SelfHealer:
     
     def is_healing_in_progress(self, job_id: str) -> bool:
         """Check if healing is already in progress for a job."""
-        return job_id in self._healing_in_progress
+        return self._queue.current is not None and self._queue.current.job_id == job_id
     
-    def is_in_cooldown(self, job_id: str) -> bool:
-        """Check if job is in healing cooldown period."""
-        if job_id not in self._last_healing_time:
-            return False
-        elapsed = (datetime.now() - self._last_healing_time[job_id]).total_seconds()
-        return elapsed < self.HEALING_COOLDOWN_SECONDS
+    def is_queue_processing(self) -> bool:
+        """Check if any healing is in progress."""
+        return self._queue.is_processing
     
-    def cancel_healing(self, job_id: str) -> bool:
+    async def cancel_healing(self, job_id: str) -> bool:
         """Cancel healing for a job.
         
         Returns True if there was healing to cancel.
         """
-        was_in_progress = job_id in self._healing_in_progress
-        self._cancelled.add(job_id)
-        self._healing_in_progress.discard(job_id)
-        if was_in_progress:
-            logger.info(f"Cancelled healing for job '{job_id}'")
-        return was_in_progress
+        return await self._queue.cancel(job_id)
     
-    def is_cancelled(self, job_id: str) -> bool:
-        """Check if healing was cancelled for a job."""
-        return job_id in self._cancelled
+    def get_queue_status(self) -> dict:
+        """Get healing queue status."""
+        return self._queue.get_status()
     
-    def clear_cancelled(self, job_id: str) -> None:
-        """Clear cancelled state for a job."""
-        self._cancelled.discard(job_id)
+    def get_queue_list(self) -> list[dict]:
+        """Get list of queued healing requests."""
+        return self._queue.get_queue_list()
     
     async def trigger_healing(
         self,
@@ -474,14 +467,17 @@ class SelfHealer:
     ) -> HealingResult:
         """Trigger self-healing for a failed job.
         
+        Enqueues a healing request. The actual healing is processed
+        by process_queue() which runs one at a time.
+        
         Args:
             job_id: The job identifier
             job: Job configuration
             run: The failed run
-            on_retry: Callback to re-run the job if fix is applied
+            on_retry: Callback to re-run the job if fix is applied (not used in queue mode)
             
         Returns:
-            HealingResult with the outcome
+            HealingResult indicating the request was queued
         """
         if not self.is_healing_enabled(job):
             return HealingResult(
@@ -489,124 +485,147 @@ class SelfHealer:
                 summary="Self-healing not enabled",
             )
         
-        if self.is_healing_in_progress(job_id):
-            logger.warning(f"Healing already in progress for job '{job_id}'")
-            return HealingResult(
-                status=HealingStatus.IN_PROGRESS,
-                summary="Healing already in progress",
-            )
+        # Collect context for the queue
+        config = job.self_healing.analysis
         
-        # Check cooldown to prevent API overload
-        if self.is_in_cooldown(job_id):
-            cooldown_remaining = self.HEALING_COOLDOWN_SECONDS - (datetime.now() - self._last_healing_time[job_id]).total_seconds()
-            logger.info(f"Job '{job_id}' in healing cooldown ({cooldown_remaining:.0f}s remaining)")
-            return HealingResult(
-                status=HealingStatus.GAVE_UP,
-                summary=f"In cooldown - wait {cooldown_remaining:.0f}s",
-            )
+        # Collect logs
+        logs = ""
+        if config.include_logs:
+            log_lines = self.db.get_logs(run_id=run.id, level="stdout", limit=config.log_lines)
+            logs = "\n".join(line.get("line", "") for line in log_lines)
         
-        # Clear any previous cancelled state
-        self.clear_cancelled(job_id)
+        stderr = ""
+        if config.include_stderr:
+            stderr_lines = self.db.get_logs(run_id=run.id, level="stderr", limit=config.log_lines)
+            stderr = "\n".join(line.get("line", "") for line in stderr_lines)
         
-        config = job.self_healing
-        max_attempts = config.remediation.max_attempts
+        # Enqueue the request
+        request = await self._queue.enqueue(
+            job_id=job_id,
+            run_id=run.id,
+            job_config=job.model_dump(exclude={"self_healing"}),
+            exit_code=run.exit_code or 0,
+            error=run.error,
+            logs=logs,
+            stderr=stderr,
+        )
         
-        self._healing_in_progress.add(job_id)
+        # Update run to show queued status
+        run.healing_status = "queued"
+        run.healing_attempts = 0
+        self.db.update_run(run)
+        
+        logger.info(f"Healing queued for job '{job_id}' (request: {request.id}, queue size: {self._queue.pending_count + 1})")
+        
+        return HealingResult(
+            status=HealingStatus.IN_PROGRESS,
+            summary=f"Queued for healing (position: {self._queue.pending_count})",
+        )
+    
+    async def process_queue(self) -> None:
+        """Process the next healing request in the queue.
+        
+        This should be called periodically (e.g., every 30 seconds).
+        Only one healing runs at a time.
+        """
+        if self._queue.is_processing:
+            return  # Already processing
+        
+        request = await self._queue.dequeue()
+        if not request:
+            return  # Queue empty
+        
+        job_id = request.job_id
+        logger.info(f"Processing healing request '{request.id}' for job '{job_id}'")
         
         try:
-            # Store original exit code
-            original_exit_code = run.exit_code
-            run.original_exit_code = original_exit_code
-            run.healing_status = HealingStatus.IN_PROGRESS.value
-            self.db.update_run(run)
+            # Build prompt with context including previous attempts
+            prompt = self._build_queue_prompt(request)
             
-            # Notify if configured
-            if config.notify.on_analysis:
-                await self._notify(
-                    config.notify.session,
-                    f"🔍 Analyzing failure for job '{job_id}'..."
-                )
+            # Send to main session
+            from procclaw.openclaw import send_to_session
+            await send_to_session("main", prompt, immediate=False)
             
-            for attempt in range(max_attempts):
-                logger.info(f"Healing attempt {attempt + 1}/{max_attempts} for job '{job_id}'")
-                
-                # Collect context
-                context = collect_context(job_id, job, run, self.db, self.logs_dir)
-                context.attempt = attempt
-                
-                # Build prompt
-                prompt = build_healing_prompt(context)
-                
-                # Notify fix attempt if configured
-                if config.notify.on_fix_attempt:
-                    await self._notify(
-                        config.notify.session,
-                        f"🔧 Healing attempt {attempt + 1}/{max_attempts} for job '{job_id}'..."
-                    )
-                
-                # Spawn healer session
-                result = await spawn_healer_session(context, prompt)
-                
-                # Update run with result
-                run.healing_attempts = attempt + 1
-                run.healing_result = result.to_dict()
-                
-                if result.status == HealingStatus.FIXED and result.should_retry:
-                    # Try to re-run the job
-                    if on_retry:
-                        logger.info(f"Retrying job '{job_id}' after healing fix")
-                        retry_success = await on_retry(job_id)
-                        
-                        if retry_success:
-                            # Job passed after fix!
-                            run.healing_status = HealingStatus.FIXED.value
-                            run.exit_code = 0  # Mark as successful
-                            self.db.update_run(run)
-                            
-                            if config.notify.on_success:
-                                await self._notify(
-                                    config.notify.session,
-                                    f"✅ Self-healing SUCCESS for job '{job_id}'\n\n"
-                                    f"Root cause: {result.root_cause}\n"
-                                    f"Fix: {result.summary}"
-                                )
-                            
-                            return result
-                        else:
-                            # Fix didn't work, continue to next attempt
-                            logger.info(f"Fix didn't work for job '{job_id}', will try again")
-                            continue
-                    else:
-                        # No retry callback, just mark as fixed
-                        run.healing_status = HealingStatus.FIXED.value
-                        self.db.update_run(run)
-                        return result
-                
-                elif result.status == HealingStatus.GAVE_UP:
-                    # Healer gave up on this attempt
-                    if result.human_intervention_needed:
-                        # Stop trying, need human
-                        break
-                    # Otherwise continue to next attempt
-                    continue
+            # Mark as completed (we sent the request, human/agent will handle it)
+            result = {
+                "status": "sent_to_session",
+                "summary": "Healing request sent to main session for review",
+                "previous_attempts_count": len(request.previous_attempts),
+            }
+            await self._queue.complete(request.id, result, success=True)
             
-            # Exhausted all attempts
-            run.healing_status = HealingStatus.GAVE_UP.value
-            self.db.update_run(run)
+            # Update run
+            run = self._get_run(request.run_id)
+            if run:
+                run.healing_status = HealingStatus.GAVE_UP.value  # Awaiting human review
+                run.healing_attempts = 1
+                run.healing_result = result
+                self.db.update_run(run)
             
-            if config.notify.on_give_up:
-                await self._notify(
-                    config.notify.session,
-                    f"❌ Self-healing GAVE UP for job '{job_id}' after {max_attempts} attempts\n\n"
-                    f"Last analysis: {result.root_cause}\n"
-                    f"Human intervention may be needed."
-                )
+            logger.info(f"Healing request '{request.id}' sent to main session")
             
-            return result
-            
-        finally:
-            self._healing_in_progress.discard(job_id)
-            self._last_healing_time[job_id] = datetime.now()  # Record for cooldown
+        except Exception as e:
+            logger.error(f"Error processing healing request '{request.id}': {e}")
+            await self._queue.complete(request.id, {"error": str(e)}, success=False)
+    
+    def _get_run(self, run_id: int) -> JobRun | None:
+        """Get a run by ID."""
+        runs = self.db.get_runs(limit=500)
+        return next((r for r in runs if r.id == run_id), None)
+    
+    def _build_queue_prompt(self, request) -> str:
+        """Build healing prompt from a queue request."""
+        from procclaw.core.healing_queue import HealingRequest
+        req: HealingRequest = request
+        
+        # Build previous attempts section
+        prev_attempts_text = ""
+        if req.previous_attempts:
+            prev_attempts_text = "\n## Previous Healing Attempts\n"
+            prev_attempts_text += "**DO NOT repeat the same approach. Try something different.**\n\n"
+            for i, attempt in enumerate(req.previous_attempts, 1):
+                result = attempt.get("result", {})
+                prev_attempts_text += f"### Attempt {i} ({attempt.get('created_at', 'unknown')})\n"
+                prev_attempts_text += f"- State: {attempt.get('state', 'unknown')}\n"
+                if result.get("summary"):
+                    prev_attempts_text += f"- Summary: {result.get('summary')}\n"
+                prev_attempts_text += "\n"
+        
+        prompt = f"""🔧 **Self-Healing Request** (Queue ID: {req.id})
+
+## Job Info
+- **ID:** {req.job_id}
+- **Exit Code:** {req.exit_code}
+- **Error:** {req.error or 'None'}
+
+## Logs
+```
+{req.logs[:5000] if req.logs else '(no logs)'}
+```
+
+## Stderr
+```
+{req.stderr[:2000] if req.stderr else '(no stderr)'}
+```
+{prev_attempts_text}
+## Job Config
+```json
+{json.dumps(req.job_config, indent=2, default=str)[:3000]}
+```
+
+---
+
+## Instructions
+
+1. **Analyze** the failure
+2. **If you already tried before** (see Previous Attempts above), try a DIFFERENT approach
+3. **Apply fix** if possible
+4. Report with: HEALING_FIXED, HEALING_MANUAL, or HEALING_GAVE_UP
+
+**If this is a repeat failure with no new approach possible, respond:**
+HEALING_GAVE_UP: No new approach available
+"""
+        return prompt
     
     async def _notify(self, session: str, message: str) -> None:
         """Send notification to OpenClaw session."""

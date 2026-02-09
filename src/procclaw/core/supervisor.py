@@ -876,6 +876,32 @@ class Supervisor:
             except Exception as e:
                 logger.error(f"Failed to send session trigger for job '{job_id}': {e}")
 
+    async def _run_healing_queue(self) -> None:
+        """Background task to process healing queue.
+        
+        Runs every 30 seconds and processes one healing at a time.
+        """
+        logger.info("Healing queue processor started")
+        
+        while not self._shutdown_event.is_set():
+            try:
+                # Process queue (only runs if not already processing)
+                await self._self_healer.process_queue()
+            except Exception as e:
+                logger.error(f"Error processing healing queue: {e}")
+            
+            # Wait 30 seconds before checking again
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=30.0,
+                )
+                break  # Shutdown requested
+            except asyncio.TimeoutError:
+                pass
+        
+        logger.info("Healing queue processor stopped")
+
     async def _trigger_self_healing(
         self,
         job_id: str,
@@ -1926,6 +1952,7 @@ class Supervisor:
         resource_task = asyncio.create_task(self._resource_monitor.run())
         trigger_task = asyncio.create_task(self._trigger_manager.run())
         concurrency_task = asyncio.create_task(self._concurrency_limiter.run())
+        healing_queue_task = asyncio.create_task(self._run_healing_queue())
 
         try:
             while not self._shutdown_event.is_set():

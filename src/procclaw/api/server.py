@@ -542,12 +542,27 @@ def create_app() -> FastAPI:
         """Cancel self-healing for a job."""
         supervisor = get_supervisor()
         
-        cancelled = supervisor._self_healer.cancel_healing(job_id)
+        cancelled = await supervisor._self_healer.cancel_healing(job_id)
         
         return {
             "success": True,
             "message": f"Healing cancelled for job '{job_id}'" if cancelled else f"No active healing for job '{job_id}'",
             "was_in_progress": cancelled,
+        }
+    
+    @app.get("/api/v1/healing/queue")
+    async def get_healing_queue(
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get healing queue status and pending requests."""
+        supervisor = get_supervisor()
+        
+        status = supervisor._self_healer.get_queue_status()
+        queue_list = supervisor._self_healer.get_queue_list()
+        
+        return {
+            **status,
+            "queue": queue_list,
         }
 
     @app.delete("/api/v1/runs/{run_id}")

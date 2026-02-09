@@ -425,11 +425,36 @@
                         <option value="dependency">Dependency</option>
                         <option value="api">API</option>
                     </select>
-                    <button @click="loadRuns()" class="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm">🔄 Refresh</button>
+                    <button @click="loadRuns(); loadHealingQueue()" class="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm">🔄 Refresh</button>
                     <span class="text-sm text-dark-400 ml-auto">
                         Showing <span class="text-dark-200" x-text="((runsPage-1)*runsPerPage+1) + '-' + Math.min(runsPage*runsPerPage, runs.length)"></span> 
                         of <span class="text-dark-200" x-text="runs.length"></span>
                     </span>
+                </div>
+                
+                <!-- Healing Queue Status -->
+                <div x-show="healingQueue && (healingQueue.processing || healingQueue.pending_count > 0)" 
+                     class="mx-4 mt-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <span class="text-purple-400">🔧</span>
+                            <div>
+                                <span class="text-sm font-medium text-purple-300">Healing Queue</span>
+                                <span x-show="healingQueue?.processing" class="ml-2 text-xs text-purple-400 animate-pulse">
+                                    Processing: <span x-text="healingQueue?.current_job"></span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2 text-sm">
+                            <span class="text-dark-400">Pending:</span>
+                            <span class="text-purple-300 font-mono" x-text="healingQueue?.pending_count || 0"></span>
+                        </div>
+                    </div>
+                    <div x-show="healingQueue?.pending_jobs?.length > 0" class="mt-2 flex flex-wrap gap-1">
+                        <template x-for="job in healingQueue?.pending_jobs || []">
+                            <span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded" x-text="job"></span>
+                        </template>
+                    </div>
                 </div>
                 
                 <!-- Table -->
@@ -1877,6 +1902,7 @@
                 showHealingModal: false,
                 healingRun: null,
                 healingDetails: null,
+                healingQueue: null,
                 runLogRun: null,
                 logContent: [],
                 logSource: 'file',
@@ -2640,6 +2666,9 @@
                         }
                         this.runs = runs;
                         this.runsPage = 1; // Reset to first page on filter change
+                        
+                        // Also load healing queue
+                        this.loadHealingQueue();
                     } catch (e) {
                         console.error('Failed to load runs:', e);
                         this.runs = [];
@@ -2747,6 +2776,14 @@
                     } catch (e) {
                         console.error('Error deleting run:', e);
                         this.toast('Error deleting run: ' + e.message, 'error');
+                    }
+                },
+
+                async loadHealingQueue() {
+                    try {
+                        this.healingQueue = await this.api('/healing/queue');
+                    } catch (e) {
+                        console.error('Error loading healing queue:', e);
                     }
                 },
 
