@@ -146,9 +146,13 @@ def create_app() -> FastAPI:
     async def list_jobs(
         status: str | None = Query(None, description="Filter by status"),
         tag: str | None = Query(None, description="Filter by tag"),
+        tags: str | None = Query(None, description="Filter by multiple tags (comma-separated)"),
+        type: str | None = Query(None, description="Filter by type (scheduled/continuous/manual)"),
+        q: str | None = Query(None, description="Search in name and description"),
+        enabled: bool | None = Query(None, description="Filter by enabled status"),
         _auth: bool = Depends(verify_token),
     ):
-        """List all jobs."""
+        """List all jobs with filtering and search."""
         supervisor = get_supervisor()
         jobs = supervisor.list_jobs()
 
@@ -157,6 +161,21 @@ def create_app() -> FastAPI:
             jobs = [j for j in jobs if j["status"] == status]
         if tag:
             jobs = [j for j in jobs if tag in j.get("tags", [])]
+        if tags:
+            tag_list = [t.strip() for t in tags.split(",")]
+            jobs = [j for j in jobs if any(t in j.get("tags", []) for t in tag_list)]
+        if type:
+            jobs = [j for j in jobs if j["type"] == type]
+        if enabled is not None:
+            jobs = [j for j in jobs if j["enabled"] == enabled]
+        if q:
+            q_lower = q.lower()
+            jobs = [j for j in jobs if (
+                q_lower in j["name"].lower() or 
+                q_lower in j.get("description", "").lower() or
+                q_lower in j["id"].lower() or
+                any(q_lower in t.lower() for t in j.get("tags", []))
+            )]
 
         return JobListResponse(
             jobs=[

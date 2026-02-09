@@ -304,9 +304,12 @@ def daemon_logs(
 def list_jobs(
     status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status"),
     tag: Optional[str] = typer.Option(None, "--tag", "-t", help="Filter by tag"),
+    job_type: Optional[str] = typer.Option(None, "--type", help="Filter by type (scheduled/continuous/manual)"),
+    query: Optional[str] = typer.Option(None, "--query", "-q", help="Search in name, description, tags"),
+    enabled_only: bool = typer.Option(False, "--enabled", help="Show only enabled jobs"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show more details"),
 ) -> None:
-    """List all jobs."""
+    """List all jobs with optional filtering and search."""
     setup_logging(verbose)
 
     # Try API first for live data
@@ -319,7 +322,13 @@ def list_jobs(
         try:
             with APIClient() as client:
                 if client.is_daemon_running():
-                    jobs_data = client.list_jobs(status=status, tag=tag)
+                    jobs_data = client.list_jobs(
+                        status=status, 
+                        tag=tag, 
+                        job_type=job_type,
+                        query=query,
+                        enabled=True if enabled_only else None,
+                    )
         except Exception:
             pass  # Fall back to direct DB access
 
@@ -456,6 +465,58 @@ def sync_job_state(db: Database, job_id: str, exit_code: int | None = None) -> N
             last_run.duration_seconds = duration
             last_run.exit_code = exit_code
             db.update_run(last_run)
+
+
+@app.command("search")
+def search_jobs(
+    query: str = typer.Argument(..., help="Search query (matches name, description, id, tags)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show more details"),
+) -> None:
+    """Search jobs by name, description, id, or tags."""
+    setup_logging(verbose)
+
+    daemon_pid = get_daemon_pid()
+    
+    if not daemon_pid:
+        console.print("[red]Daemon not running. Start with: procclaw daemon start[/red]")
+        raise typer.Exit(1)
+
+    from procclaw.cli.client import APIClient
+
+    try:
+        with APIClient() as client:
+            jobs = client.search_jobs(query)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+    if not jobs:
+        console.print(f"[yellow]No jobs matching '{query}'[/yellow]")
+        return
+
+    console.print(f"[green]Found {len(jobs)} job(s) matching '{query}':[/green]\n")
+
+    for job in jobs:
+        status = job["status"]
+        if status == "running":
+            status_str = f"[green]●[/green] running"
+        elif status == "failed":
+            status_str = f"[red]●[/red] failed"
+        else:
+            status_str = f"[dim]○[/dim] {status}"
+
+        if not job["enabled"]:
+            status_str = "[dim]○ disabled[/dim]"
+
+        tags_str = ", ".join(job.get("tags", [])) if job.get("tags") else "-"
+        
+        console.print(f"[cyan bold]{job['id']}[/cyan bold] ({job['type']})")
+        console.print(f"  Name: {job['name']}")
+        console.print(f"  Status: {status_str}")
+        console.print(f"  Tags: {tags_str}")
+        if verbose and job.get("next_run"):
+            console.print(f"  Next: {job['next_run'][:16].replace('T', ' ')}")
+        console.print()
 
 
 @app.command("status")

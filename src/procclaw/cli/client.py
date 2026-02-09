@@ -67,17 +67,34 @@ class APIClient:
         response.raise_for_status()
         return response.json()
 
-    def list_jobs(self, status: str | None = None, tag: str | None = None) -> list[dict]:
-        """List all jobs."""
+    def list_jobs(
+        self, 
+        status: str | None = None, 
+        tag: str | None = None,
+        job_type: str | None = None,
+        query: str | None = None,
+        enabled: bool | None = None,
+    ) -> list[dict]:
+        """List all jobs with optional filtering."""
         params = {}
         if status:
             params["status"] = status
         if tag:
             params["tag"] = tag
+        if job_type:
+            params["type"] = job_type
+        if query:
+            params["q"] = query
+        if enabled is not None:
+            params["enabled"] = str(enabled).lower()
 
         response = self._get_client().get("/api/v1/jobs", params=params)
         response.raise_for_status()
         return response.json()["jobs"]
+    
+    def search_jobs(self, query: str) -> list[dict]:
+        """Search jobs by name, description, or tags."""
+        return self.list_jobs(query=query)
 
     def get_job(self, job_id: str) -> dict:
         """Get job status."""
