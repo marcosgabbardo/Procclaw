@@ -826,7 +826,7 @@ class Supervisor:
         """Direct lookup of OpenClaw session info via CLI.
         
         Used when job was killed or logs don't contain session markers.
-        Extracts cron job ID from the command and looks up the session.
+        Extracts cron job ID from the job config command and looks up the session.
         
         Returns:
             Tuple of (session_key, session_transcript_path)
@@ -837,9 +837,15 @@ class Supervisor:
         from pathlib import Path
         
         try:
-            # Extract OpenClaw cron job ID from the run command
+            # Get command from job config (not stored in JobRun)
+            job = self.jobs.get_job(job_id)
+            if not job:
+                logger.debug(f"Job '{job_id}' not found for session lookup")
+                return None, None
+            
+            # Extract OpenClaw cron job ID from the job command
             # Format: python3 oc-runner.py <cron_job_id> <timeout>
-            cmd = run.cmd or ""
+            cmd = job.cmd or ""
             match = re.search(r'oc-runner\.py\s+([a-f0-9-]{36})', cmd)
             if not match:
                 logger.debug(f"Could not extract cron job ID from command: {cmd}")
