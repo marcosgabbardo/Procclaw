@@ -1,0 +1,557 @@
+"""OpenClaw integration for ProcClaw.
+
+Provides alerting via WhatsApp/Telegram and memory logging for AI context.
+
+Alert delivery strategy:
+1. Try gateway wake API (triggers immediate agent response)
+2. Fall back to alert file for heartbeat pickup
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from loguru import logger
+
+
+# OpenClaw workspace for memory logging
+OPENCLAW_WORKSPACE = Path.home() / ".openclaw" / "workspace"
+MEMORY_DIR = OPENCLAW_WORKSPACE / "memory"
+
+# Gateway API
+GATEWAY_URL = os.environ.get("OPENCLAW_GATEWAY_URL", "http://localhost:3000")
+GATEWAY_TOKEN = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "")
+
+
+class AlertType:
+    """Alert type constants."""
+    
+    FAILURE = "failure"
+    MAX_RETRIES = "max_retries"
+    HEALTH_FAIL = "health_fail"
+    RECOVERED = "recovered"
+    RESTART = "restart"
+
+
+# Emoji for alert types
+ALERT_EMOJI: dict[str, str] = {
+    AlertType.FAILURE: "🚨",
+    AlertType.MAX_RETRIES: "💀",
+    AlertType.HEALTH_FAIL: "🏥",
+    AlertType.RECOVERED: "✅",
+    AlertType.RESTART: "🔄",
+}
+
+
+async def send_alert(
+    job_id: str,
+    alert_type: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+    channels: list[str] | None = None,
+) -> bool:
+    """Send an alert via OpenClaw message tool.
+    
+    Uses the OpenClaw CLI to send messages through configured channels.
+    
+    Args:
+        job_id: The job ID
+        alert_type: Type of alert (failure, max_retries, health_fail, etc.)
+        message: Main message content
+        details: Optional additional details
+        channels: List of channels to send to (default: whatsapp)
+        
+    Returns:
+        True if alert was sent successfully
+    """
+    channels = channels or ["whatsapp"]
+    emoji = ALERT_EMOJI.get(alert_type, "ℹ️")
+    
+    # Format the message
+    text_parts = [
+        f"{emoji} **ProcClaw: {job_id}**",
+        "",
+        message,
+    ]
+    
+    if details:
+        text_parts.append("")
+        for key, value in details.items():
+            if value is not None:
+                text_parts.append(f"• {key}: {value}")
+    
+    text = "\n".join(text_parts)
+    
+    # Try to send via OpenClaw CLI
+    success = False
+    for channel in channels:
+        try:
+            result = await _send_via_openclaw(text, channel)
+            if result:
+                success = True
+                logger.info(f"Alert sent via {channel} for job '{job_id}'")
+        except Exception as e:
+            logger.warning(f"Failed to send alert via {channel}: {e}")
+    
+    return success
+
+
+async def _send_via_openclaw(message: str, channel: str = "whatsapp") -> bool:
+    """Send message via OpenClaw gateway.
+    
+    Strategy:
+    1. Try wake API to trigger immediate agent response
+    2. Write to pending alerts file for heartbeat pickup
+    """
+    # Write to pending alerts (always, for reliability)
+    _write_pending_alert(message, channel)
+    
+    # Try wake API for immediate delivery
+    result = await _trigger_wake(message)
+    if result:
+        return True
+    
+    logger.info("Wake API failed, alert queued for heartbeat pickup")
+    return True  # Still return True since we queued the alert
+
+
+async def _trigger_wake(message: str) -> bool:
+    """Trigger OpenClaw wake with alert message.
+    
+    This causes the agent to process the alert immediately.
+    """
+    try:
+        # Use curl to call the wake endpoint
+        wake_url = f"{GATEWAY_URL}/api/v1/cron/wake"
+        
+        payload = {
+            "action": "wake",
+            "text": f"[PROCCLAW ALERT] {message}",
+            "mode": "now",
+        }
+        
+        headers = ["Content-Type: application/json"]
+        if GATEWAY_TOKEN:
+            headers.append(f"Authorization: Bearer {GATEWAY_TOKEN}")
+        
+        cmd = ["curl", "-s", "-X", "POST"]
+        for h in headers:
+            cmd.extend(["-H", h])
+        cmd.extend(["-d", json.dumps(payload), wake_url])
+        
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=10.0,
+        )
+        
+        if process.returncode == 0:
+            response = stdout.decode()
+            if "error" not in response.lower():
+                logger.debug("Wake triggered successfully")
+                return True
+        
+        return False
+        
+    except Exception as e:
+        logger.debug(f"Wake API error: {e}")
+        return False
+
+
+def _write_pending_alert(message: str, channel: str) -> bool:
+    """Write alert to pending file for heartbeat pickup.
+    
+    Creates a file that the agent reads during heartbeat.
+    """
+    try:
+        pending_file = MEMORY_DIR / "procclaw-pending-alerts.md"
+        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        entry = f"\n## [{timestamp}] {channel}\n{message}\n"
+        
+        with open(pending_file, "a") as f:
+            f.write(entry)
+        
+        logger.debug(f"Alert queued in {pending_file}")
+        return True
+        
+    except Exception as e:
+        logger.warning(f"Failed to write pending alert: {e}")
+        return False
+
+
+def clear_pending_alerts() -> int:
+    """Clear pending alerts file.
+    
+    Call this after alerts have been delivered.
+    Returns number of alerts cleared.
+    """
+    try:
+        pending_file = MEMORY_DIR / "procclaw-pending-alerts.md"
+        if not pending_file.exists():
+            return 0
+        
+        content = pending_file.read_text()
+        count = content.count("## [")
+        
+        pending_file.unlink()
+        return count
+        
+    except Exception as e:
+        logger.warning(f"Failed to clear pending alerts: {e}")
+        return 0
+
+
+def get_pending_alerts() -> list[dict]:
+    """Get list of pending alerts.
+    
+    Returns list of {timestamp, channel, message} dicts.
+    """
+    try:
+        pending_file = MEMORY_DIR / "procclaw-pending-alerts.md"
+        if not pending_file.exists():
+            return []
+        
+        content = pending_file.read_text()
+        alerts = []
+        
+        for block in content.split("\n## [")[1:]:
+            try:
+                # Parse timestamp and channel from header
+                header, *body = block.split("\n", 1)
+                ts_end = header.index("]")
+                timestamp = header[:ts_end]
+                channel = header[ts_end+1:].strip()
+                message = body[0].strip() if body else ""
+                
+                alerts.append({
+                    "timestamp": timestamp,
+                    "channel": channel,
+                    "message": message,
+                })
+            except Exception:
+                continue
+        
+        return alerts
+        
+    except Exception as e:
+        logger.warning(f"Failed to read pending alerts: {e}")
+        return []
+
+
+def log_to_memory(
+    job_id: str,
+    event: str,
+    details: dict[str, Any] | None = None,
+) -> bool:
+    """Log job event to OpenClaw memory for AI context.
+    
+    Writes to memory/procclaw-state.md for the AI to read.
+    
+    Args:
+        job_id: The job ID
+        event: Event type (started, stopped, failed, etc.)
+        details: Optional additional details
+        
+    Returns:
+        True if logged successfully
+    """
+    try:
+        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        
+        memory_file = MEMORY_DIR / "procclaw-state.md"
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Build log entry
+        entry_parts = [f"## [{timestamp}] {job_id}: {event}"]
+        
+        if details:
+            for key, value in details.items():
+                if value is not None:
+                    entry_parts.append(f"- **{key}:** {value}")
+        
+        entry = "\n".join(entry_parts) + "\n\n"
+        
+        # Append to file (keep last 100 entries by truncating if too large)
+        if memory_file.exists():
+            content = memory_file.read_text()
+            entries = content.split("\n## [")
+            
+            # Keep last 99 entries to add new one
+            if len(entries) > 99:
+                entries = entries[-99:]
+                content = "## [".join(entries)
+                memory_file.write_text(content)
+        
+        with open(memory_file, "a") as f:
+            f.write(entry)
+        
+        logger.debug(f"Logged to memory: {job_id} - {event}")
+        return True
+        
+    except Exception as e:
+        logger.warning(f"Failed to log to memory: {e}")
+        return False
+
+
+def update_job_summary() -> bool:
+    """Update the job summary file for quick AI reference.
+    
+    Creates memory/procclaw-jobs.md with current job states.
+    """
+    try:
+        # Import here to avoid circular imports
+        from procclaw.config import load_jobs
+        from procclaw.db import Database
+        
+        jobs = load_jobs()
+        db = Database()
+        
+        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        summary_file = MEMORY_DIR / "procclaw-jobs.md"
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        lines = [
+            "# ProcClaw Jobs Summary",
+            f"*Updated: {timestamp}*",
+            "",
+            "| Job | Type | Status | Last Run |",
+            "|-----|------|--------|----------|",
+        ]
+        
+        for job_id, job in jobs.jobs.items():
+            state = db.get_state(job_id)
+            status = state.status.value if state else "unknown"
+            last_run = db.get_last_run(job_id)
+            
+            last_run_str = "-"
+            if last_run and last_run.finished_at:
+                last_run_str = last_run.finished_at.strftime("%m/%d %H:%M")
+                if last_run.exit_code == 0:
+                    last_run_str += " ✓"
+                else:
+                    last_run_str += f" ✗({last_run.exit_code})"
+            
+            lines.append(f"| {job_id} | {job.type.value} | {status} | {last_run_str} |")
+        
+        lines.append("")
+        
+        summary_file.write_text("\n".join(lines))
+        return True
+        
+    except Exception as e:
+        logger.warning(f"Failed to update job summary: {e}")
+        return False
+
+
+class OpenClawIntegration:
+    """OpenClaw integration manager.
+    
+    Provides methods for sending alerts and logging to memory.
+    """
+    
+    def __init__(self, enabled: bool = True, channels: list[str] | None = None):
+        """Initialize the integration.
+        
+        Args:
+            enabled: Whether integration is enabled
+            channels: Default channels for alerts
+        """
+        self.enabled = enabled
+        self.channels = channels or ["whatsapp"]
+        self._alert_queue: asyncio.Queue[tuple[str, str, str, dict | None]] = asyncio.Queue()
+        self._running = False
+    
+    async def start(self) -> None:
+        """Start the integration background tasks."""
+        if not self.enabled:
+            return
+        
+        self._running = True
+        asyncio.create_task(self._alert_worker())
+        logger.info("OpenClaw integration started")
+    
+    async def stop(self) -> None:
+        """Stop the integration."""
+        self._running = False
+    
+    async def _alert_worker(self) -> None:
+        """Background worker to process alert queue."""
+        while self._running:
+            try:
+                # Wait for alert with timeout
+                try:
+                    job_id, alert_type, message, details = await asyncio.wait_for(
+                        self._alert_queue.get(),
+                        timeout=1.0,
+                    )
+                except asyncio.TimeoutError:
+                    continue
+                
+                # Send the alert
+                await send_alert(
+                    job_id=job_id,
+                    alert_type=alert_type,
+                    message=message,
+                    details=details,
+                    channels=self.channels,
+                )
+                
+                # Log to memory
+                log_to_memory(job_id, alert_type, details)
+                
+                # Update summary
+                update_job_summary()
+                
+            except Exception as e:
+                logger.error(f"Alert worker error: {e}")
+    
+    def queue_alert(
+        self,
+        job_id: str,
+        alert_type: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        """Queue an alert to be sent.
+        
+        Args:
+            job_id: The job ID
+            alert_type: Type of alert
+            message: Alert message
+            details: Optional details
+        """
+        if not self.enabled:
+            return
+        
+        try:
+            self._alert_queue.put_nowait((job_id, alert_type, message, details))
+        except asyncio.QueueFull:
+            logger.warning("Alert queue full, dropping alert")
+    
+    def on_job_started(self, job_id: str, pid: int, trigger: str) -> None:
+        """Called when a job starts."""
+        log_to_memory(job_id, "started", {
+            "pid": pid,
+            "trigger": trigger,
+        })
+        update_job_summary()
+    
+    def on_job_stopped(self, job_id: str, exit_code: int, duration: float) -> None:
+        """Called when a job stops normally."""
+        log_to_memory(job_id, "stopped", {
+            "exit_code": exit_code,
+            "duration": f"{duration:.1f}s",
+        })
+        update_job_summary()
+    
+    def on_job_failed(
+        self,
+        job_id: str,
+        exit_code: int,
+        error: str | None,
+        should_alert: bool = True,
+    ) -> None:
+        """Called when a job fails."""
+        details = {
+            "exit_code": exit_code,
+            "error": error,
+        }
+        
+        log_to_memory(job_id, "failed", details)
+        
+        if should_alert:
+            self.queue_alert(
+                job_id=job_id,
+                alert_type=AlertType.FAILURE,
+                message=f"Job failed with exit code {exit_code}",
+                details=details,
+            )
+        
+        update_job_summary()
+    
+    def on_max_retries(self, job_id: str, attempts: int) -> None:
+        """Called when a job reaches max retries."""
+        details = {"attempts": attempts}
+        
+        log_to_memory(job_id, "max_retries", details)
+        
+        self.queue_alert(
+            job_id=job_id,
+            alert_type=AlertType.MAX_RETRIES,
+            message=f"Job reached max retries ({attempts} attempts)",
+            details=details,
+        )
+        
+        update_job_summary()
+    
+    def on_health_fail(self, job_id: str, check_type: str, message: str) -> None:
+        """Called when a health check fails."""
+        details = {
+            "check_type": check_type,
+            "message": message,
+        }
+        
+        log_to_memory(job_id, "health_fail", details)
+        
+        self.queue_alert(
+            job_id=job_id,
+            alert_type=AlertType.HEALTH_FAIL,
+            message=f"Health check failed: {message}",
+            details=details,
+        )
+        
+        update_job_summary()
+    
+    def on_health_recover(self, job_id: str) -> None:
+        """Called when a job recovers from health failure."""
+        log_to_memory(job_id, "recovered", {})
+        
+        self.queue_alert(
+            job_id=job_id,
+            alert_type=AlertType.RECOVERED,
+            message="Job recovered and is healthy again",
+        )
+        
+        update_job_summary()
+    
+    def on_job_restart(self, job_id: str, restart_count: int) -> None:
+        """Called when a job is restarted."""
+        log_to_memory(job_id, "restart", {
+            "restart_count": restart_count,
+        })
+        update_job_summary()
+
+
+# Singleton instance
+_integration: OpenClawIntegration | None = None
+
+
+def get_integration() -> OpenClawIntegration:
+    """Get the global OpenClaw integration instance."""
+    global _integration
+    if _integration is None:
+        _integration = OpenClawIntegration()
+    return _integration
+
+
+def init_integration(enabled: bool = True, channels: list[str] | None = None) -> OpenClawIntegration:
+    """Initialize the global OpenClaw integration."""
+    global _integration
+    _integration = OpenClawIntegration(enabled=enabled, channels=channels)
+    return _integration

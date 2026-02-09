@@ -29,6 +29,7 @@ from procclaw.core.dependencies import DependencyManager, DependencyStatus
 from procclaw.core.health import HealthChecker, HealthCheckResult
 from procclaw.core.retry import RetryManager
 from procclaw.core.scheduler import Scheduler
+from procclaw.openclaw import OpenClawIntegration, init_integration
 
 
 class ProcessHandle:
@@ -126,6 +127,12 @@ class Supervisor:
             get_last_run=self._get_last_run_info,
         )
 
+        # Initialize OpenClaw integration
+        self._openclaw = init_integration(
+            enabled=self.config.openclaw.enabled,
+            channels=self.config.openclaw.alerts_channels,
+        )
+
         # Ensure directories exist
         ensure_config_dir()
 
@@ -175,13 +182,21 @@ class Supervisor:
             handle = self._spawn_process(job_id, job)
             self._processes[job_id] = handle
 
-            # Update state
+            # Update state (preserve retry_attempt and restart_count from existing state)
+            existing_state = self.db.get_state(job_id)
             state = JobState(
                 job_id=job_id,
                 status=JobStatus.RUNNING,
                 pid=handle.pid,
                 started_at=handle.started_at,
+                retry_attempt=existing_state.retry_attempt if existing_state else 0,
+                restart_count=existing_state.restart_count if existing_state else 0,
             )
+            
+            # Increment restart count if this is a restart/retry
+            if trigger in ("restart", "retry"):
+                state.restart_count += 1
+            
             self.db.save_state(state)
 
             # Record run
@@ -194,6 +209,9 @@ class Supervisor:
 
             logger.info(f"Started job '{job_id}' (PID: {handle.pid})")
             self._audit_log(job_id, "started", f"PID: {handle.pid}, trigger: {trigger}")
+
+            # Notify OpenClaw
+            self._openclaw.on_job_started(job_id, handle.pid, trigger)
 
             # Register for health checking
             self._health_checker.register_job(job_id, job, handle.pid)
@@ -251,7 +269,19 @@ class Supervisor:
     def restart_job(self, job_id: str) -> bool:
         """Restart a job."""
         self.stop_job(job_id)
-        return self.start_job(job_id, trigger="restart")
+        result = self.start_job(job_id, trigger="restart")
+        
+        if result:
+            # Get restart count
+            state = self.db.get_state(job_id)
+            restart_count = state.restart_count if state else 0
+            
+            # Notify OpenClaw
+            job = self.jobs.get_job(job_id)
+            if job and job.alerts.on_restart:
+                self._openclaw.on_job_restart(job_id, restart_count)
+        
+        return result
 
     def get_job_status(self, job_id: str) -> dict | None:
         """Get detailed status of a job."""
@@ -445,6 +475,19 @@ class Supervisor:
         logger.info(f"Job '{job_id}' {status} (exit code: {exit_code}, duration: {duration:.1f}s)")
         self._audit_log(job_id, status, f"exit_code: {exit_code}, duration: {duration:.1f}s")
 
+        # Notify OpenClaw
+        if exit_code == 0:
+            self._openclaw.on_job_stopped(job_id, exit_code, duration)
+        else:
+            job = self.jobs.get_job(job_id)
+            should_alert = job.alerts.on_failure if job else True
+            self._openclaw.on_job_failed(
+                job_id,
+                exit_code,
+                state.last_error,
+                should_alert=should_alert,
+            )
+
         # Handle retry for failed jobs
         if exit_code != 0:
             job = self.jobs.get_job(job_id)
@@ -468,15 +511,20 @@ class Supervisor:
         logger.warning(f"Health check failed for '{job_id}': {result.message}")
         self._audit_log(job_id, "health_fail", result.message)
 
-        # TODO: Send alert if configured
+        # Send alert if configured
         job = self.jobs.get_job(job_id)
         if job and job.alerts.on_health_fail:
-            pass  # Implement alerting
+            self._openclaw.on_health_fail(job_id, result.check_type.value, result.message)
 
     def _on_health_recover(self, job_id: str, result: HealthCheckResult) -> None:
         """Called when a job recovers from health failure."""
         logger.info(f"Job '{job_id}' recovered: {result.message}")
         self._audit_log(job_id, "health_recover", result.message)
+
+        # Send alert if configured
+        job = self.jobs.get_job(job_id)
+        if job and job.alerts.on_recovered:
+            self._openclaw.on_health_recover(job_id)
 
     def _on_max_retries(self, job_id: str) -> None:
         """Called when a job reaches max retries."""
@@ -490,10 +538,12 @@ class Supervisor:
         state.retry_attempt = 0
         self.db.save_state(state)
 
-        # TODO: Send alert
+        # Get retry attempts for the alert
         job = self.jobs.get_job(job_id)
-        if job and job.alerts.on_max_retries:
-            pass  # Implement alerting
+        max_attempts = job.retry.max_attempts if job else 5
+
+        # Send alert (always for max retries)
+        self._openclaw.on_max_retries(job_id, max_attempts)
 
     # Audit Logging
 
@@ -514,6 +564,9 @@ class Supervisor:
         """Run the supervisor main loop."""
         self._running = True
         logger.info("Supervisor started")
+
+        # Start OpenClaw integration
+        await self._openclaw.start()
 
         # Load scheduled jobs into scheduler
         self._scheduler.update_jobs(self.jobs.get_enabled_jobs())
@@ -566,6 +619,7 @@ class Supervisor:
             self._scheduler.stop()
             self._health_checker.stop()
             self._retry_manager.stop()
+            await self._openclaw.stop()
 
             for task in [api_task, scheduler_task, health_task, retry_task]:
                 task.cancel()
