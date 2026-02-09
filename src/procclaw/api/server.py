@@ -135,6 +135,7 @@ class LogsResponse(BaseModel):
     job_id: str
     lines: list[str]
     total_lines: int
+    source: str = "file"  # file, sqlite, none
 
 
 class MetricsResponse(BaseModel):
@@ -674,7 +675,7 @@ def create_app() -> FastAPI:
         error: bool = Query(False, description="Get error log instead"),
         _auth: bool = Depends(verify_token),
     ):
-        """Get job logs."""
+        """Get job logs. Tries file first, falls back to SQLite if empty."""
         from procclaw.config import DEFAULT_CONFIG_DIR
 
         supervisor = get_supervisor()
@@ -688,20 +689,36 @@ def create_app() -> FastAPI:
         else:
             log_path = job.get_log_stdout_path(DEFAULT_CONFIG_DIR, job_id)
 
-        if not log_path.exists():
-            return LogsResponse(job_id=job_id, lines=[], total_lines=0)
+        # Try reading from file first (for running jobs)
+        file_lines = []
+        if log_path.exists():
+            try:
+                with open(log_path, "r") as f:
+                    file_lines = [line.rstrip("\n") for line in f.readlines()]
+            except Exception:
+                pass
 
-        # Read last N lines
-        with open(log_path, "r") as f:
-            all_lines = f.readlines()
+        if file_lines:
+            return LogsResponse(
+                job_id=job_id,
+                lines=file_lines[-lines:],
+                total_lines=len(file_lines),
+                source="file",
+            )
 
-        result_lines = all_lines[-lines:]
+        # Fallback to SQLite for historical logs
+        level = "stderr" if error else "stdout"
+        db_logs = supervisor.db.get_logs(job_id=job_id, level=level, limit=lines)
 
-        return LogsResponse(
-            job_id=job_id,
-            lines=[line.rstrip("\n") for line in result_lines],
-            total_lines=len(all_lines),
-        )
+        if db_logs:
+            return LogsResponse(
+                job_id=job_id,
+                lines=[log["line"] for log in db_logs],
+                total_lines=len(db_logs),
+                source="sqlite",
+            )
+
+        return LogsResponse(job_id=job_id, lines=[], total_lines=0, source="none")
 
     @app.get("/metrics", response_model=MetricsResponse)
     async def prometheus_metrics():
@@ -1194,32 +1211,6 @@ def create_app() -> FastAPI:
     # =========================================================================
     # Additional Endpoints for Web UI
     # =========================================================================
-
-    @app.get("/api/v1/jobs/{job_id}/logs")
-    async def get_job_logs(
-        job_id: str,
-        lines: int = Query(100, description="Number of lines"),
-        type: str = Query("stdout", description="Log type: stdout or stderr"),
-        _auth: bool = Depends(verify_token),
-    ):
-        """Get job logs."""
-        from procclaw.config import DEFAULT_LOGS_DIR
-        
-        log_file = DEFAULT_LOGS_DIR / f"{job_id}.{'error.' if type == 'stderr' else ''}log"
-        
-        if not log_file.exists():
-            return {"job_id": job_id, "lines": [], "total_lines": 0}
-        
-        try:
-            with open(log_file, "r") as f:
-                all_lines = f.readlines()
-                return {
-                    "job_id": job_id,
-                    "lines": [l.rstrip() for l in all_lines[-lines:]],
-                    "total_lines": len(all_lines),
-                }
-        except Exception as e:
-            return {"job_id": job_id, "lines": [f"Error reading logs: {e}"], "total_lines": 0}
 
     @app.get("/api/v1/daemon/logs")
     async def get_daemon_logs(
