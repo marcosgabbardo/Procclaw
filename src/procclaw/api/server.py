@@ -280,6 +280,34 @@ def create_app() -> FastAPI:
         
         return RunListResponse(runs=result, total=len(result))
 
+    @app.get("/api/v1/runs/{run_id}/logs")
+    async def get_run_logs(
+        run_id: int,
+        level: str | None = Query(None, description="Filter by level (stdout/stderr)"),
+        limit: int = Query(5000, le=10000, description="Max lines to return"),
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get logs for a specific job run from SQLite."""
+        supervisor = get_supervisor()
+        
+        # Get logs from database
+        logs = supervisor.db.get_logs(run_id=run_id, level=level, limit=limit)
+        
+        if not logs:
+            # Fallback: check if run exists
+            runs = supervisor.db.get_runs(limit=500)
+            run = next((r for r in runs if r.id == run_id), None)
+            if run is None:
+                raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+            # Run exists but no logs in DB yet
+            return {"run_id": run_id, "lines": [], "total": 0, "message": "No logs stored for this run"}
+        
+        return {
+            "run_id": run_id,
+            "lines": [log["line"] for log in logs],
+            "total": len(logs),
+        }
+
     @app.get("/api/v1/jobs/{job_id}", response_model=JobDetail)
     async def get_job(
         job_id: str,

@@ -649,6 +649,65 @@ class Supervisor:
         except Exception as e:
             logger.error(f"Error disabling oneshot job '{job_id}': {e}")
 
+    def _save_run_logs(self, job_id: str, run_id: int, started_at: datetime) -> None:
+        """Save logs from log file to SQLite for a specific run.
+        
+        Reads the log file and extracts lines from this run based on timestamps.
+        """
+        try:
+            job = self.jobs.get_job(job_id)
+            if not job:
+                return
+            
+            # Get log file path
+            log_path = job.get_log_stdout_path(DEFAULT_LOGS_DIR, job_id)
+            if not log_path.exists():
+                return
+            
+            # Read log file and find lines for this run
+            lines_to_save = []
+            in_run = False
+            run_marker = f"[{started_at.strftime('%Y-%m-%dT%H:%M:%S')}"
+            
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    # Look for the start marker of this run
+                    if run_marker in line or (in_run and "Starting job:" in line and job_id in line):
+                        # Found start of next run, stop collecting
+                        if in_run and "Starting job:" in line:
+                            break
+                        in_run = True
+                    
+                    if in_run:
+                        lines_to_save.append(line.rstrip('\n'))
+                    
+                    # Also check for exact timestamp match in header
+                    if f"[{started_at.isoformat().split('.')[0]}" in line:
+                        in_run = True
+            
+            # If we couldn't find by marker, just save the last N lines
+            if not lines_to_save:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    all_lines = f.readlines()
+                    # Take last 500 lines as fallback
+                    lines_to_save = [l.rstrip('\n') for l in all_lines[-500:]]
+            
+            # Save to database
+            if lines_to_save:
+                self.db.add_log_lines(run_id, job_id, lines_to_save, level="stdout")
+                logger.debug(f"Saved {len(lines_to_save)} log lines for run {run_id} of job '{job_id}'")
+                
+            # Also save stderr if exists
+            stderr_path = job.get_log_stderr_path(DEFAULT_LOGS_DIR, job_id)
+            if stderr_path.exists():
+                with open(stderr_path, "r", encoding="utf-8", errors="replace") as f:
+                    stderr_lines = [l.rstrip('\n') for l in f.readlines()[-500:]]
+                if stderr_lines:
+                    self.db.add_log_lines(run_id, job_id, stderr_lines, level="stderr")
+                    
+        except Exception as e:
+            logger.error(f"Error saving logs for run {run_id}: {e}")
+
     def add_job_tag(self, job_id: str, tag: str) -> bool:
         """Add a tag to a job.
         
@@ -1035,6 +1094,9 @@ class Supervisor:
             if exit_code != 0:
                 last_run.error = f"Exit code: {exit_code}"
             self.db.update_run(last_run)
+            
+            # Save logs to SQLite for this run
+            self._save_run_logs(job_id, last_run.id, handle.started_at)
 
         # Remove from active processes
         if job_id in self._processes:

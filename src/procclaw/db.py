@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -168,7 +168,22 @@ CREATE TABLE IF NOT EXISTS job_results (
     FOREIGN KEY (workflow_run_id) REFERENCES workflow_runs(id)
 );
 
+-- Job logs (per-run logs stored in SQLite)
+CREATE TABLE IF NOT EXISTS job_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    job_id TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    level TEXT DEFAULT 'stdout',  -- stdout, stderr
+    line TEXT NOT NULL,
+    line_num INTEGER,
+    FOREIGN KEY (run_id) REFERENCES job_runs(id)
+);
+
 -- Indexes
+CREATE INDEX IF NOT EXISTS idx_job_logs_run_id ON job_logs(run_id);
+CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_logs_timestamp ON job_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_job_runs_job_id ON job_runs(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_runs_started_at ON job_runs(started_at);
 CREATE INDEX IF NOT EXISTS idx_job_metrics_job_id ON job_metrics(job_id);
@@ -484,6 +499,115 @@ class Database:
             trigger=row["trigger"],
             error=row["error"],
         )
+
+    # Log Methods
+
+    def add_log_line(
+        self,
+        run_id: int,
+        job_id: str,
+        line: str,
+        level: str = "stdout",
+        timestamp: datetime | None = None,
+        line_num: int | None = None,
+    ) -> None:
+        """Add a log line for a job run."""
+        if timestamp is None:
+            timestamp = datetime.now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO job_logs (run_id, job_id, timestamp, level, line, line_num)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (run_id, job_id, timestamp.isoformat(), level, line, line_num),
+            )
+
+    def add_log_lines(
+        self,
+        run_id: int,
+        job_id: str,
+        lines: list[str],
+        level: str = "stdout",
+        timestamp: datetime | None = None,
+    ) -> None:
+        """Add multiple log lines for a job run (batch insert)."""
+        if timestamp is None:
+            timestamp = datetime.now()
+        ts = timestamp.isoformat()
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO job_logs (run_id, job_id, timestamp, level, line, line_num)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [(run_id, job_id, ts, level, line, i) for i, line in enumerate(lines)],
+            )
+
+    def get_logs(
+        self,
+        run_id: int | None = None,
+        job_id: str | None = None,
+        level: str | None = None,
+        limit: int = 1000,
+        since: datetime | None = None,
+    ) -> list[dict]:
+        """Get log lines, optionally filtered by run_id, job_id, or level."""
+        with self._connect() as conn:
+            query = "SELECT * FROM job_logs WHERE 1=1"
+            params: list = []
+
+            if run_id is not None:
+                query += " AND run_id = ?"
+                params.append(run_id)
+
+            if job_id is not None:
+                query += " AND job_id = ?"
+                params.append(job_id)
+
+            if level is not None:
+                query += " AND level = ?"
+                params.append(level)
+
+            if since is not None:
+                query += " AND timestamp >= ?"
+                params.append(since.isoformat())
+
+            query += " ORDER BY id ASC LIMIT ?"
+            params.append(limit)
+
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+
+            return [
+                {
+                    "id": row["id"],
+                    "run_id": row["run_id"],
+                    "job_id": row["job_id"],
+                    "timestamp": row["timestamp"],
+                    "level": row["level"],
+                    "line": row["line"],
+                    "line_num": row["line_num"],
+                }
+                for row in rows
+            ]
+
+    def get_run_logs(self, run_id: int, level: str | None = None, limit: int = 5000) -> list[str]:
+        """Get log lines for a specific run as a simple list of strings."""
+        logs = self.get_logs(run_id=run_id, level=level, limit=limit)
+        return [log["line"] for log in logs]
+
+    def cleanup_old_logs(self, days: int = 30) -> int:
+        """Remove logs older than specified days."""
+        cutoff = datetime.now() - timedelta(days=days)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM job_logs WHERE timestamp < ?",
+                (cutoff.isoformat(),),
+            )
+            deleted = cursor.rowcount
+            logger.info(f"Cleaned up {deleted} old log entries")
+            return deleted
 
     # Metrics Methods
 
