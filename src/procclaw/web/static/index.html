@@ -298,7 +298,12 @@
                                             </template>
                                             <!-- Schedule -->
                                             <template x-if="col.id === 'schedule'">
-                                                <span class="text-xs font-mono text-dark-400" x-text="job.schedule || '-'"></span>
+                                                <div class="flex items-center gap-1">
+                                                    <span class="text-xs font-mono text-dark-400" x-text="job.schedule || '-'"></span>
+                                                    <span x-show="job.schedule" 
+                                                          class="text-dark-500 hover:text-dark-300 cursor-help text-xs" 
+                                                          :title="cronToHuman(job.schedule)">?</span>
+                                                </div>
                                             </template>
                                             <!-- Restarts -->
                                             <template x-if="col.id === 'restarts'">
@@ -2030,6 +2035,88 @@
                     if (h > 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
                     if (h > 0) return `${h}h ${m}m`;
                     return `${m}m`;
+                },
+
+                cronToHuman(cron) {
+                    if (!cron) return '';
+                    const parts = cron.trim().split(/\s+/);
+                    if (parts.length < 5) return cron;
+                    
+                    const [min, hour, dom, mon, dow] = parts;
+                    
+                    // Helper for time formatting
+                    const formatTime = (h, m) => {
+                        const hh = h.padStart(2, '0');
+                        const mm = m.padStart(2, '0');
+                        return `${hh}:${mm}`;
+                    };
+                    
+                    // Days of week names
+                    const dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                    const monNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                    
+                    let result = '';
+                    
+                    // Every minute
+                    if (min === '*' && hour === '*') {
+                        return 'Every minute';
+                    }
+                    
+                    // Time part
+                    if (hour !== '*' && min !== '*') {
+                        // Handle hour ranges like */12
+                        if (hour.startsWith('*/')) {
+                            const interval = hour.slice(2);
+                            result = `Every ${interval}h at :${min.padStart(2, '0')}`;
+                        } else if (hour.includes(',')) {
+                            const hours = hour.split(',').map(h => formatTime(h, min)).join(', ');
+                            result = `At ${hours}`;
+                        } else {
+                            result = `At ${formatTime(hour, min)}`;
+                        }
+                    } else if (hour !== '*') {
+                        result = `At ${hour}:00`;
+                    } else if (min !== '*') {
+                        if (min.startsWith('*/')) {
+                            result = `Every ${min.slice(2)} min`;
+                        } else {
+                            result = `At :${min.padStart(2, '0')} every hour`;
+                        }
+                    }
+                    
+                    // Day of week
+                    if (dow !== '*') {
+                        if (dow.includes(',')) {
+                            const days = dow.split(',').map(d => dowNames[parseInt(d)] || d).join(', ');
+                            result += ` on ${days}`;
+                        } else if (dow.includes('-')) {
+                            const [start, end] = dow.split('-');
+                            result += ` ${dowNames[parseInt(start)]}-${dowNames[parseInt(end)]}`;
+                        } else {
+                            result += ` on ${dowNames[parseInt(dow)] || dow}`;
+                        }
+                    }
+                    
+                    // Day of month
+                    if (dom !== '*') {
+                        if (dom.includes(',')) {
+                            result += ` on day ${dom}`;
+                        } else {
+                            result += ` on day ${dom}`;
+                        }
+                    }
+                    
+                    // Month
+                    if (mon !== '*') {
+                        result += ` in ${monNames[parseInt(mon)] || mon}`;
+                    }
+                    
+                    // Default daily
+                    if (dow === '*' && dom === '*' && mon === '*' && result && !result.includes('Every')) {
+                        result += ' daily';
+                    }
+                    
+                    return result || cron;
                 },
 
                 toast(message, type = 'info') {
