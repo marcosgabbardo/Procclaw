@@ -79,7 +79,7 @@
     
     <!-- Header -->
     <header class="bg-dark-800 border-b border-dark-600 sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div class="max-w-[95vw] mx-auto px-4 py-3 flex items-center justify-between">
             <div class="flex items-center gap-3">
                 <span class="text-2xl">🦞</span>
                 <h1 class="text-xl font-semibold text-dark-100">ProcClaw</h1>
@@ -120,7 +120,7 @@
 
     <!-- Navigation Tabs -->
     <nav class="bg-dark-800 border-b border-dark-600">
-        <div class="max-w-7xl mx-auto px-4">
+        <div class="max-w-[95vw] mx-auto px-4">
             <div class="flex gap-1">
                 <button @click="currentTab = 'jobs'" 
                     :class="currentTab === 'jobs' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
@@ -163,7 +163,7 @@
     </nav>
 
     <!-- Main Content -->
-    <main class="max-w-7xl mx-auto px-4 py-6 pb-16">
+    <main class="max-w-[95vw] mx-auto px-4 py-6 pb-16">
         
         <!-- Jobs Tab -->
         <div x-show="currentTab === 'jobs'" x-cloak>
@@ -279,6 +279,18 @@
                                                         </span>
                                                     </template>
                                                     <button class="tag-add-btn text-dark-400 hover:text-dark-200" @click="openTagInput(job.id)" title="Add tag">+</button>
+                                                </div>
+                                            </template>
+                                            <!-- Workflows -->
+                                            <template x-if="col.id === 'workflows'">
+                                                <div class="flex flex-wrap gap-1 items-center">
+                                                    <template x-for="wf in getWorkflowsForJob(job.id)" :key="wf.id">
+                                                        <span class="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 cursor-pointer hover:bg-purple-500/30"
+                                                            :title="wf.type + ': ' + wf.jobs.join(' → ')"
+                                                            x-text="wf.name">
+                                                        </span>
+                                                    </template>
+                                                    <span x-show="getWorkflowsForJob(job.id).length === 0" class="text-dark-500">-</span>
                                                 </div>
                                             </template>
                                             <!-- Dependencies -->
@@ -1111,6 +1123,19 @@
                             </div>
                         </div>
 
+                        <div x-show="getWorkflowsForJob(selectedJob.id).length > 0" class="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
+                            <div class="text-xs text-purple-400 mb-2">⛓️ Part of Workflows</div>
+                            <div class="flex flex-wrap gap-2">
+                                <template x-for="wf in getWorkflowsForJob(selectedJob.id)" :key="wf.id">
+                                    <span class="text-xs px-2 py-1 bg-purple-500/20 text-purple-300 rounded cursor-pointer hover:bg-purple-500/30"
+                                        :title="wf.type + ': ' + wf.jobs.join(' → ')"
+                                        @click="currentTab = 'workflows'"
+                                        x-text="wf.name + ' (' + wf.type + ')'">
+                                    </span>
+                                </template>
+                            </div>
+                        </div>
+
                         <div x-show="selectedJob.depends_on?.length > 0 || selectedJob.dependents?.length > 0" class="bg-dark-700 rounded-lg p-3">
                             <div class="text-xs text-dark-400 mb-2">Dependencies</div>
                             <div class="space-y-2">
@@ -1498,6 +1523,7 @@
                 { id: 'last_run', label: 'Last Run', visible: true, sortKey: 'started_at' },
                 { id: 'next_run', label: 'Next Run', visible: true, sortKey: 'next_run' },
                 { id: 'tags', label: 'Tags', visible: true, sortable: false },
+                { id: 'workflows', label: 'Workflows', visible: true, sortable: false },
                 { id: 'deps', label: 'Deps', visible: true, sortable: false },
                 { id: 'schedule', label: 'Schedule', visible: false, sortKey: 'schedule' },
                 { id: 'restarts', label: 'Restarts', visible: false, sortKey: 'restart_count' },
@@ -1729,6 +1755,11 @@
                 getJobStatus(jobId) {
                     const job = this.jobs.find(j => j.id === jobId);
                     return job?.status || 'unknown';
+                },
+
+                getWorkflowsForJob(jobId) {
+                    // Return saved workflows that include this job
+                    return this.savedWorkflows.filter(wf => wf.jobs.includes(jobId));
                 },
 
                 selectJobById(jobId) {
