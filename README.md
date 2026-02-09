@@ -174,6 +174,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
   stock-scanner:
     name: Stock Scanner
+    description: Scans for unusual volume patterns in small cap stocks
     cmd: python scanner.py
     cwd: ~/scripts/scanner
     type: scheduled
@@ -182,7 +183,7 @@ jobs:
     on_overlap: skip              # skip | queue | kill_restart
     env:
       SCAN_MODE: production
-    tags: [trading, scanner]
+    tags: [trading, scanner, stocks]
 
   # ═══════════════════════════════════════════════════════════
   # CONTINUOUS JOB - Runs forever, auto-restarts on failure
@@ -357,6 +358,33 @@ procclaw service status
 procclaw service uninstall
 ```
 
+### Search and Filtering
+
+ProcClaw provides powerful search and filtering capabilities to find jobs quickly.
+
+```bash
+# Search by name, description, id, or tags
+procclaw search "trading"
+procclaw search "polymarket"
+procclaw search "scanner"
+
+# List with filters
+procclaw list --status running
+procclaw list --type scheduled
+procclaw list --tag openclaw
+procclaw list --enabled
+
+# Combine filters
+procclaw list --type continuous --tag trading
+procclaw list -q "report" --status stopped
+```
+
+**Search matches:**
+- Job ID (e.g., `stock-scanner`)
+- Job name (e.g., `Stock Scanner`)
+- Job description
+- Tags
+
 ### Configuration
 
 ```bash
@@ -382,7 +410,7 @@ The daemon exposes a REST API at `http://localhost:9876` (configurable).
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/health` | Daemon health check |
-| `GET` | `/api/v1/jobs` | List all jobs |
+| `GET` | `/api/v1/jobs` | List all jobs (with filtering) |
 | `GET` | `/api/v1/jobs/{id}` | Get job details |
 | `POST` | `/api/v1/jobs/{id}/start` | Start a job |
 | `POST` | `/api/v1/jobs/{id}/stop` | Stop a job |
@@ -392,24 +420,48 @@ The daemon exposes a REST API at `http://localhost:9876` (configurable).
 | `GET` | `/metrics` | Prometheus metrics |
 | `POST` | `/api/v1/reload` | Reload configuration |
 
+### Query Parameters for `/api/v1/jobs`
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `q` | Search in name, description, id, tags | `?q=trading` |
+| `status` | Filter by status | `?status=running` |
+| `type` | Filter by job type | `?type=scheduled` |
+| `tag` | Filter by single tag | `?tag=openclaw` |
+| `tags` | Filter by multiple tags (comma-separated) | `?tags=ai,trading` |
+| `enabled` | Filter by enabled status | `?enabled=true` |
+
 ### Examples
 
 ```bash
 # Health check
 curl http://localhost:9876/health
-# {"status": "ok", "uptime": 3600, "jobs_running": 3}
+# {"status": "healthy", "version": "0.1.0", "jobs_running": 3, "jobs_total": 10}
 
-# List jobs
+# List all jobs
 curl http://localhost:9876/api/v1/jobs
-# [{"id": "my-job", "name": "My Job", "status": "running", ...}]
+# {"jobs": [...], "total": 10}
+
+# Search jobs
+curl "http://localhost:9876/api/v1/jobs?q=trading"
+# {"jobs": [...], "total": 5}
+
+# Filter by type and status
+curl "http://localhost:9876/api/v1/jobs?type=scheduled&status=running"
+
+# Filter by multiple tags
+curl "http://localhost:9876/api/v1/jobs?tags=openclaw,ai"
+
+# Combine search with filters
+curl "http://localhost:9876/api/v1/jobs?q=report&type=scheduled&enabled=true"
 
 # Start a job
 curl -X POST http://localhost:9876/api/v1/jobs/my-job/start
-# {"status": "started", "pid": 12345}
+# {"success": true, "message": "Job started", "job_id": "my-job", "pid": 12345}
 
 # Get logs
 curl "http://localhost:9876/api/v1/jobs/my-job/logs?lines=50"
-# {"logs": "...", "lines": 50}
+# {"job_id": "my-job", "lines": [...], "total_lines": 50}
 
 # Prometheus metrics
 curl http://localhost:9876/metrics
