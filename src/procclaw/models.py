@@ -242,6 +242,35 @@ class AlertConfig(BaseModel):
     channels: list[str] = Field(default_factory=lambda: ["whatsapp"])
 
 
+class SessionTriggerEvent(str, Enum):
+    """Events that can trigger a session message."""
+    
+    ON_SUCCESS = "on_success"
+    ON_FAILURE = "on_failure"
+    ON_START = "on_start"
+    ON_COMPLETE = "on_complete"  # Both success and failure
+
+
+class SessionTrigger(BaseModel):
+    """Trigger to send a message to an OpenClaw session.
+    
+    Template variables available in message:
+    - {{job_id}}: Job identifier
+    - {{job_name}}: Job display name
+    - {{status}}: "success" or "failed"
+    - {{exit_code}}: Process exit code
+    - {{duration}}: Duration in seconds
+    - {{error}}: Error message (if failed)
+    - {{started_at}}: Start timestamp
+    - {{finished_at}}: End timestamp
+    """
+    
+    event: SessionTriggerEvent
+    session: str = "main"  # "main", "cron:<id>", or full session key
+    message: str  # Message template
+    enabled: bool = True
+
+
 class JobDependency(BaseModel):
     """Dependency on another job."""
 
@@ -305,8 +334,11 @@ class JobConfig(BaseModel):
     # Distributed locks
     lock: LockConfig = Field(default_factory=LockConfig)
 
-    # Event triggers
+    # Event triggers (incoming)
     trigger: TriggerConfig = Field(default_factory=TriggerConfig)
+    
+    # Session triggers (outgoing - send to OpenClaw)
+    session_triggers: list[SessionTrigger] = Field(default_factory=list)
 
     # Metadata
     tags: list[str] = Field(default_factory=list)

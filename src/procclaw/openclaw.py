@@ -376,6 +376,113 @@ def update_job_summary() -> bool:
         return False
 
 
+async def send_to_session(
+    session: str,
+    message: str,
+    timeout: float = 30.0,
+) -> bool:
+    """Send a message to an OpenClaw session.
+    
+    Writes to a trigger file that the heartbeat picks up.
+    For immediate delivery, also attempts to wake the gateway.
+    
+    Args:
+        session: Session identifier:
+            - "main" -> "agent:main:main"
+            - "cron:<id>" -> "agent:main:cron:<id>"
+            - Full key like "agent:main:..." used as-is
+        message: Message to send
+        timeout: Timeout in seconds
+        
+    Returns:
+        True if message was queued successfully
+    """
+    # Expand session shorthand
+    if session == "main":
+        session_key = "agent:main:main"
+    elif session.startswith("cron:"):
+        cron_id = session[5:]  # Remove "cron:" prefix
+        session_key = f"agent:main:cron:{cron_id}"
+    else:
+        session_key = session
+    
+    logger.debug(f"Sending to session {session_key}: {message[:50]}...")
+    
+    try:
+        # Write to trigger file for heartbeat pickup
+        trigger_file = MEMORY_DIR / "procclaw-session-triggers.md"
+        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry = f"\n## [{timestamp}] Session: {session_key}\n{message}\n"
+        
+        with open(trigger_file, "a") as f:
+            f.write(entry)
+        
+        logger.info(f"Session trigger queued for {session_key}")
+        
+        # Try to wake the gateway for immediate pickup
+        try:
+            cmd = ["openclaw", "cron", "wake", "--mode", "now"]
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(process.communicate(), timeout=5.0)
+        except Exception:
+            # Wake is best-effort, don't fail if it doesn't work
+            pass
+        
+        return True
+        
+    except Exception as e:
+        logger.warning(f"Error queueing session trigger for {session_key}: {e}")
+        return False
+
+
+def render_trigger_template(
+    template: str,
+    job_id: str,
+    job_name: str,
+    status: str,
+    exit_code: int | None,
+    duration: float | None,
+    error: str | None,
+    started_at: datetime | None,
+    finished_at: datetime | None,
+) -> str:
+    """Render a trigger message template with job variables.
+    
+    Template variables:
+    - {{job_id}}: Job identifier
+    - {{job_name}}: Job display name
+    - {{status}}: "success" or "failed"
+    - {{exit_code}}: Process exit code
+    - {{duration}}: Duration in seconds
+    - {{error}}: Error message (if failed)
+    - {{started_at}}: Start timestamp
+    - {{finished_at}}: End timestamp
+    """
+    result = template
+    
+    replacements = {
+        "{{job_id}}": job_id,
+        "{{job_name}}": job_name or job_id,
+        "{{status}}": status,
+        "{{exit_code}}": str(exit_code) if exit_code is not None else "N/A",
+        "{{duration}}": f"{duration:.1f}" if duration is not None else "N/A",
+        "{{error}}": error or "",
+        "{{started_at}}": started_at.strftime("%Y-%m-%d %H:%M:%S") if started_at else "N/A",
+        "{{finished_at}}": finished_at.strftime("%Y-%m-%d %H:%M:%S") if finished_at else "N/A",
+    }
+    
+    for key, value in replacements.items():
+        result = result.replace(key, value)
+    
+    return result
+
+
 class OpenClawIntegration:
     """OpenClaw integration manager.
     

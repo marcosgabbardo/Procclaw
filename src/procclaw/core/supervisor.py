@@ -25,6 +25,7 @@ from procclaw.models import (
     JobType,
     Priority,
     ProcClawConfig,
+    SessionTriggerEvent,
 )
 from procclaw.core.concurrency import ConcurrencyLimiter
 from procclaw.core.dedup import DeduplicationManager
@@ -45,7 +46,13 @@ from procclaw.core.triggers import TriggerManager, TriggerEvent
 from procclaw.core.composite import CompositeExecutor
 from procclaw.core.watchdog import Watchdog, MissedRunInfo
 from procclaw.core.workflow import WorkflowManager, WorkflowConfig
-from procclaw.openclaw import OpenClawIntegration, init_integration, AlertType
+from procclaw.openclaw import (
+    OpenClawIntegration, 
+    init_integration, 
+    AlertType,
+    send_to_session,
+    render_trigger_template,
+)
 from procclaw.secrets import resolve_secret_ref
 
 
@@ -417,6 +424,19 @@ class Supervisor:
 
             # Notify OpenClaw
             self._openclaw.on_job_started(job_id, handle.pid, trigger)
+
+            # Execute ON_START session triggers (async, fire-and-forget)
+            if job.session_triggers:
+                asyncio.create_task(self._execute_session_triggers(
+                    job_id=job_id,
+                    job=job,
+                    event=SessionTriggerEvent.ON_START,
+                    exit_code=None,
+                    duration=None,
+                    error=None,
+                    started_at=handle.started_at,
+                    finished_at=None,
+                ))
 
             # Register for health checking
             self._health_checker.register_job(job_id, job, handle.pid)
@@ -790,6 +810,62 @@ class Supervisor:
                 
         except Exception as e:
             logger.error(f"Error extracting session info for job '{job_id}': {e}")
+
+    async def _execute_session_triggers(
+        self,
+        job_id: str,
+        job: JobConfig,
+        event: SessionTriggerEvent,
+        exit_code: int | None,
+        duration: float | None,
+        error: str | None,
+        started_at: datetime | None,
+        finished_at: datetime | None,
+    ) -> None:
+        """Execute session triggers for a job event.
+        
+        Sends messages to OpenClaw sessions based on configured triggers.
+        """
+        if not job.session_triggers:
+            return
+        
+        status = "success" if exit_code == 0 else "failed"
+        
+        for trigger in job.session_triggers:
+            if not trigger.enabled:
+                continue
+            
+            # Check if this trigger matches the event
+            should_fire = False
+            if trigger.event == event:
+                should_fire = True
+            elif trigger.event == SessionTriggerEvent.ON_COMPLETE:
+                # ON_COMPLETE fires for both success and failure
+                if event in (SessionTriggerEvent.ON_SUCCESS, SessionTriggerEvent.ON_FAILURE):
+                    should_fire = True
+            
+            if not should_fire:
+                continue
+            
+            # Render the message template
+            message = render_trigger_template(
+                template=trigger.message,
+                job_id=job_id,
+                job_name=job.name,
+                status=status,
+                exit_code=exit_code,
+                duration=duration,
+                error=error,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            
+            # Send to session
+            logger.info(f"Firing session trigger for job '{job_id}' -> {trigger.session}")
+            try:
+                await send_to_session(trigger.session, message)
+            except Exception as e:
+                logger.error(f"Failed to send session trigger for job '{job_id}': {e}")
 
     def add_job_tag(self, job_id: str, tag: str) -> bool:
         """Add a tag to a job.
@@ -1215,6 +1291,23 @@ class Supervisor:
         # Check output for errors (even if exit code is 0)
         if job:
             self._output_checker.check_job_output(job_id, job, exit_code)
+
+        # Execute session triggers (async, fire-and-forget)
+        if job and job.session_triggers:
+            trigger_event = (
+                SessionTriggerEvent.ON_SUCCESS if exit_code == 0 
+                else SessionTriggerEvent.ON_FAILURE
+            )
+            asyncio.create_task(self._execute_session_triggers(
+                job_id=job_id,
+                job=job,
+                event=trigger_event,
+                exit_code=exit_code,
+                duration=duration,
+                error=state.last_error if exit_code != 0 else None,
+                started_at=handle.started_at,
+                finished_at=now,
+            ))
 
         # Handle retry for failed jobs
         if exit_code != 0:
