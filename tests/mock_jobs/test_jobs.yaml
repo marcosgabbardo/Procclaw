@@ -83,7 +83,7 @@ jobs:
     schedule: "* * * * *"
     timezone: America/Sao_Paulo
     on_overlap: skip
-    enabled: false  # Disabled by default, enable to test scheduling
+    enabled: false  # Disabled by default
     tags: [test, scheduled]
 
   # Job with retry policy

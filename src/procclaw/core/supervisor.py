@@ -25,6 +25,7 @@ from procclaw.models import (
     JobType,
     ProcClawConfig,
 )
+from procclaw.core.scheduler import Scheduler
 
 
 class ProcessHandle:
@@ -97,12 +98,19 @@ class Supervisor:
         self._shutdown_event = asyncio.Event()
         self._running = False
 
+        # Initialize scheduler
+        self._scheduler = Scheduler(
+            on_trigger=self.start_job,
+            is_job_running=self.is_job_running,
+        )
+
         # Ensure directories exist
         ensure_config_dir()
 
     def reload_jobs(self) -> None:
         """Reload jobs configuration."""
         self.jobs = load_jobs()
+        self._scheduler.update_jobs(self.jobs.get_enabled_jobs())
         logger.info(f"Reloaded {len(self.jobs.jobs)} jobs")
 
     # Process Management
@@ -228,6 +236,9 @@ class Supervisor:
         # Get last run
         last_run = self.db.get_last_run(job_id)
 
+        # Get next scheduled run
+        next_run = self._scheduler.get_next_run(job_id)
+
         return {
             "id": job_id,
             "name": job.name,
@@ -242,7 +253,7 @@ class Supervisor:
             "retry_attempt": state.retry_attempt,
             "last_exit_code": state.last_exit_code,
             "last_error": state.last_error,
-            "next_run": state.next_run.isoformat() if state.next_run else None,
+            "next_run": next_run.isoformat() if next_run else (state.next_run.isoformat() if state.next_run else None),
             "cpu_percent": cpu_percent,
             "memory_mb": memory_mb,
             "last_run": {
@@ -399,6 +410,24 @@ class Supervisor:
         self._running = True
         logger.info("Supervisor started")
 
+        # Load scheduled jobs into scheduler
+        self._scheduler.update_jobs(self.jobs.get_enabled_jobs())
+
+        # Start continuous jobs that should auto-start
+        for job_id, job in self.jobs.get_jobs_by_type(JobType.CONTINUOUS).items():
+            if job.enabled:
+                # Check if already running from previous session
+                state = self.db.get_state(job_id)
+                if state and state.status == JobStatus.RUNNING and state.pid:
+                    if self.check_pid(state.pid):
+                        logger.info(f"Job '{job_id}' still running from previous session")
+                        continue
+                # Don't auto-start continuous jobs - let user start them
+                # self.start_job(job_id, trigger="auto")
+
+        # Start scheduler task
+        scheduler_task = asyncio.create_task(self._scheduler.run())
+
         try:
             while not self._shutdown_event.is_set():
                 # Check running processes
@@ -416,6 +445,14 @@ class Supervisor:
         except Exception as e:
             logger.error(f"Supervisor error: {e}")
         finally:
+            # Stop scheduler
+            self._scheduler.stop()
+            scheduler_task.cancel()
+            try:
+                await scheduler_task
+            except asyncio.CancelledError:
+                pass
+
             await self._cleanup()
             self._running = False
             logger.info("Supervisor stopped")
