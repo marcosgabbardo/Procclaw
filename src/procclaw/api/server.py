@@ -82,6 +82,11 @@ class JobSummary(BaseModel):
     next_run: str | None = None
     restart_count: int = 0
     tags: list[str] = []
+    cmd: str | None = None
+    cwd: str | None = None
+    description: str | None = None
+    schedule: str | None = None
+    run_at: str | None = None
 
 
 class JobDetail(JobSummary):
@@ -224,6 +229,11 @@ def create_app() -> FastAPI:
                     next_run=j.get("next_run"),
                     restart_count=j.get("restart_count", 0),
                     tags=j.get("tags", []),
+                    cmd=j.get("cmd"),
+                    cwd=j.get("cwd"),
+                    description=j.get("description"),
+                    schedule=j.get("schedule"),
+                    run_at=j.get("run_at"),
                 )
                 for j in jobs
             ],
