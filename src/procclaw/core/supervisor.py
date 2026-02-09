@@ -1097,8 +1097,8 @@ class Supervisor:
         logs_dir = DEFAULT_LOGS_DIR
         logs_dir.mkdir(parents=True, exist_ok=True)
 
-        stdout_path = job.get_log_stdout_path(logs_dir.parent, job_id)
-        stderr_path = job.get_log_stderr_path(logs_dir.parent, job_id)
+        stdout_path = job.get_log_stdout_path(logs_dir, job_id)
+        stderr_path = job.get_log_stderr_path(logs_dir, job_id)
 
         stdout_file = open(stdout_path, "a")
         stderr_file = open(stderr_path, "a")
