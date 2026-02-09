@@ -25,6 +25,8 @@ from procclaw.models import (
     JobType,
     ProcClawConfig,
 )
+from procclaw.core.health import HealthChecker, HealthCheckResult
+from procclaw.core.retry import RetryManager
 from procclaw.core.scheduler import Scheduler
 
 
@@ -104,6 +106,18 @@ class Supervisor:
             is_job_running=self.is_job_running,
         )
 
+        # Initialize health checker
+        self._health_checker = HealthChecker(
+            on_health_fail=self._on_health_fail,
+            on_health_recover=self._on_health_recover,
+        )
+
+        # Initialize retry manager
+        self._retry_manager = RetryManager(
+            on_retry=lambda job_id: self.start_job(job_id, trigger="retry"),
+            on_max_retries=self._on_max_retries,
+        )
+
         # Ensure directories exist
         ensure_config_dir()
 
@@ -153,6 +167,12 @@ class Supervisor:
 
             logger.info(f"Started job '{job_id}' (PID: {handle.pid})")
             self._audit_log(job_id, "started", f"PID: {handle.pid}, trigger: {trigger}")
+
+            # Register for health checking
+            self._health_checker.register_job(job_id, job, handle.pid)
+
+            # Cancel any pending retry
+            self._retry_manager.cancel_retry(job_id)
 
             return True
 
@@ -363,6 +383,9 @@ class Supervisor:
         # Close file handles
         handle.close_files()
 
+        # Unregister from health checker
+        self._health_checker.unregister_job(job_id)
+
         # Update state
         state = self.db.get_state(job_id) or JobState(job_id=job_id)
         state.status = JobStatus.STOPPED if exit_code == 0 else JobStatus.FAILED
@@ -370,7 +393,6 @@ class Supervisor:
         state.last_exit_code = exit_code
         if exit_code != 0:
             state.last_error = f"Process exited with code {exit_code}"
-        self.db.save_state(state)
 
         # Update run record
         last_run = self.db.get_last_run(job_id)
@@ -389,6 +411,56 @@ class Supervisor:
         status = "completed" if exit_code == 0 else "failed"
         logger.info(f"Job '{job_id}' {status} (exit code: {exit_code}, duration: {duration:.1f}s)")
         self._audit_log(job_id, status, f"exit_code: {exit_code}, duration: {duration:.1f}s")
+
+        # Handle retry for failed jobs
+        if exit_code != 0:
+            job = self.jobs.get_job(job_id)
+            if job and job.retry.enabled:
+                retry_time = self._retry_manager.schedule_retry(
+                    job_id, job, state.retry_attempt
+                )
+                if retry_time:
+                    state.retry_attempt += 1
+                    state.next_retry = retry_time
+                else:
+                    # Max retries reached
+                    state.retry_attempt = 0
+
+        self.db.save_state(state)
+
+    # Callbacks
+
+    def _on_health_fail(self, job_id: str, result: HealthCheckResult) -> None:
+        """Called when a job fails health check."""
+        logger.warning(f"Health check failed for '{job_id}': {result.message}")
+        self._audit_log(job_id, "health_fail", result.message)
+
+        # TODO: Send alert if configured
+        job = self.jobs.get_job(job_id)
+        if job and job.alerts.on_health_fail:
+            pass  # Implement alerting
+
+    def _on_health_recover(self, job_id: str, result: HealthCheckResult) -> None:
+        """Called when a job recovers from health failure."""
+        logger.info(f"Job '{job_id}' recovered: {result.message}")
+        self._audit_log(job_id, "health_recover", result.message)
+
+    def _on_max_retries(self, job_id: str) -> None:
+        """Called when a job reaches max retries."""
+        logger.error(f"Job '{job_id}' reached max retries, marking as failed")
+        self._audit_log(job_id, "max_retries", "Job disabled")
+
+        # Update state
+        state = self.db.get_state(job_id) or JobState(job_id=job_id)
+        state.status = JobStatus.FAILED
+        state.last_error = "Max retries reached"
+        state.retry_attempt = 0
+        self.db.save_state(state)
+
+        # TODO: Send alert
+        job = self.jobs.get_job(job_id)
+        if job and job.alerts.on_max_retries:
+            pass  # Implement alerting
 
     # Audit Logging
 
@@ -425,8 +497,10 @@ class Supervisor:
                 # Don't auto-start continuous jobs - let user start them
                 # self.start_job(job_id, trigger="auto")
 
-        # Start scheduler task
+        # Start background tasks
         scheduler_task = asyncio.create_task(self._scheduler.run())
+        health_task = asyncio.create_task(self._health_checker.run())
+        retry_task = asyncio.create_task(self._retry_manager.run())
 
         try:
             while not self._shutdown_event.is_set():
@@ -445,13 +519,17 @@ class Supervisor:
         except Exception as e:
             logger.error(f"Supervisor error: {e}")
         finally:
-            # Stop scheduler
+            # Stop all background tasks
             self._scheduler.stop()
-            scheduler_task.cancel()
-            try:
-                await scheduler_task
-            except asyncio.CancelledError:
-                pass
+            self._health_checker.stop()
+            self._retry_manager.stop()
+
+            for task in [scheduler_task, health_task, retry_task]:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
             await self._cleanup()
             self._running = False
