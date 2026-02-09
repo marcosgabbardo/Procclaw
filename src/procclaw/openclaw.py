@@ -25,9 +25,13 @@ from loguru import logger
 OPENCLAW_WORKSPACE = Path.home() / ".openclaw" / "workspace"
 MEMORY_DIR = OPENCLAW_WORKSPACE / "memory"
 
-# Gateway API
-GATEWAY_URL = os.environ.get("OPENCLAW_GATEWAY_URL", "http://localhost:3000")
+# Gateway API - try common ports
+GATEWAY_PORT = int(os.environ.get("OPENCLAW_GATEWAY_PORT", "18789"))
+GATEWAY_URL = os.environ.get("OPENCLAW_GATEWAY_URL", f"http://localhost:{GATEWAY_PORT}")
 GATEWAY_TOKEN = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "")
+
+# Optional webhook for external notifications
+ALERT_WEBHOOK_URL = os.environ.get("PROCCLAW_ALERT_WEBHOOK", "")
 
 
 class AlertType:
@@ -38,6 +42,9 @@ class AlertType:
     HEALTH_FAIL = "health_fail"
     RECOVERED = "recovered"
     RESTART = "restart"
+    MISSED_RUN = "missed_run"
+    RATE_LIMIT = "rate_limit"
+    OUTPUT_ERROR = "output_error"
 
 
 # Emoji for alert types
@@ -47,6 +54,9 @@ ALERT_EMOJI: dict[str, str] = {
     AlertType.HEALTH_FAIL: "🏥",
     AlertType.RECOVERED: "✅",
     AlertType.RESTART: "🔄",
+    AlertType.MISSED_RUN: "⏰",
+    AlertType.RATE_LIMIT: "🚦",
+    AlertType.OUTPUT_ERROR: "📝",
 }
 
 
@@ -107,44 +117,50 @@ async def _send_via_openclaw(message: str, channel: str = "whatsapp") -> bool:
     """Send message via OpenClaw gateway.
     
     Strategy:
-    1. Try wake API to trigger immediate agent response
-    2. Write to pending alerts file for heartbeat pickup
+    1. Write to pending alerts file (always, for reliability)
+    2. Try webhook if configured (for immediate external notification)
+    3. Log success/failure
     """
     # Write to pending alerts (always, for reliability)
     _write_pending_alert(message, channel)
     
-    # Try wake API for immediate delivery
-    result = await _trigger_wake(message)
-    if result:
-        return True
+    # Try webhook for immediate external notification
+    if ALERT_WEBHOOK_URL:
+        webhook_result = await _send_webhook(message, channel)
+        if webhook_result:
+            logger.info("Alert sent via webhook")
+            return True
     
-    logger.info("Wake API failed, alert queued for heartbeat pickup")
-    return True  # Still return True since we queued the alert
+    logger.debug("Alert queued for heartbeat pickup")
+    return True  # Return True since we queued the alert
 
 
-async def _trigger_wake(message: str) -> bool:
-    """Trigger OpenClaw wake with alert message.
+async def _send_webhook(message: str, channel: str) -> bool:
+    """Send alert to external webhook.
     
-    This causes the agent to process the alert immediately.
+    Supports various webhook formats:
+    - Slack: {"text": "message"}
+    - Discord: {"content": "message"}
+    - Generic: {"message": "message", "channel": "channel"}
     """
+    if not ALERT_WEBHOOK_URL:
+        return False
+    
     try:
-        # Use curl to call the wake endpoint
-        wake_url = f"{GATEWAY_URL}/api/v1/cron/wake"
+        # Detect webhook type from URL
+        if "slack.com" in ALERT_WEBHOOK_URL:
+            payload = {"text": message}
+        elif "discord.com" in ALERT_WEBHOOK_URL:
+            payload = {"content": message}
+        else:
+            payload = {"message": message, "channel": channel}
         
-        payload = {
-            "action": "wake",
-            "text": f"[PROCCLAW ALERT] {message}",
-            "mode": "now",
-        }
-        
-        headers = ["Content-Type: application/json"]
-        if GATEWAY_TOKEN:
-            headers.append(f"Authorization: Bearer {GATEWAY_TOKEN}")
-        
-        cmd = ["curl", "-s", "-X", "POST"]
-        for h in headers:
-            cmd.extend(["-H", h])
-        cmd.extend(["-d", json.dumps(payload), wake_url])
+        cmd = [
+            "curl", "-s", "-X", "POST",
+            "-H", "Content-Type: application/json",
+            "-d", json.dumps(payload),
+            ALERT_WEBHOOK_URL,
+        ]
         
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -158,15 +174,16 @@ async def _trigger_wake(message: str) -> bool:
         )
         
         if process.returncode == 0:
-            response = stdout.decode()
-            if "error" not in response.lower():
-                logger.debug("Wake triggered successfully")
-                return True
+            return True
         
+        logger.warning(f"Webhook failed: {stderr.decode()}")
         return False
         
+    except asyncio.TimeoutError:
+        logger.warning("Webhook timed out")
+        return False
     except Exception as e:
-        logger.debug(f"Wake API error: {e}")
+        logger.warning(f"Webhook error: {e}")
         return False
 
 
@@ -536,6 +553,67 @@ class OpenClawIntegration:
             "restart_count": restart_count,
         })
         update_job_summary()
+
+    def on_missed_run(
+        self,
+        job_id: str,
+        expected_time: datetime,
+        hours_overdue: float,
+        last_run: datetime | None = None,
+    ) -> None:
+        """Called when a scheduled job misses its expected run.
+        
+        Args:
+            job_id: The job ID
+            expected_time: When the job should have run
+            hours_overdue: How many hours overdue
+            last_run: When the job last actually ran
+        """
+        details = {
+            "expected": expected_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "overdue": f"{hours_overdue:.1f}h",
+            "last_run": last_run.strftime("%Y-%m-%d %H:%M:%S") if last_run else "never",
+        }
+        
+        log_to_memory(job_id, "missed_run", details)
+        
+        self.queue_alert(
+            job_id=job_id,
+            alert_type=AlertType.MISSED_RUN,
+            message=f"Scheduled job missed! Expected at {expected_time.strftime('%H:%M')}, now {hours_overdue:.1f}h overdue",
+            details=details,
+        )
+        
+        update_job_summary()
+
+    def on_rate_limit(self, job_id: str, error_message: str) -> None:
+        """Called when a job hits rate limiting."""
+        details = {"error": error_message}
+        
+        log_to_memory(job_id, "rate_limit", details)
+        
+        self.queue_alert(
+            job_id=job_id,
+            alert_type=AlertType.RATE_LIMIT,
+            message=f"Rate limit detected: {error_message}",
+            details=details,
+        )
+
+    def on_output_error(self, job_id: str, pattern: str, context: str) -> None:
+        """Called when error pattern is found in job output."""
+        details = {
+            "pattern": pattern,
+            "context": context[:200],  # Truncate context
+        }
+        
+        log_to_memory(job_id, "output_error", details)
+        
+        self.queue_alert(
+            job_id=job_id,
+            alert_type=AlertType.OUTPUT_ERROR,
+            message=f"Error pattern '{pattern}' found in output",
+            details=details,
+        )
 
 
 # Singleton instance

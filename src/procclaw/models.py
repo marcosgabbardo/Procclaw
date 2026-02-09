@@ -94,12 +94,22 @@ class RetryConfig(BaseModel):
     max_attempts: int = 5
     preset: RetryPreset = RetryPreset.WEBHOOK
     delays: list[int] | None = None  # Custom delays in seconds
+    
+    # Rate limit specific settings
+    rate_limit_delays: list[int] = Field(
+        default_factory=lambda: [60, 120, 300, 600, 1800]  # 1m, 2m, 5m, 10m, 30m
+    )
+    rate_limit_max_attempts: int = 5
 
     def get_delays(self) -> list[int]:
         """Get the delay sequence for retries."""
         if self.delays:
             return self.delays
         return RETRY_PRESETS[self.preset]
+    
+    def get_rate_limit_delays(self) -> list[int]:
+        """Get the delay sequence for rate limit retries."""
+        return self.rate_limit_delays
 
 
 class ShutdownConfig(BaseModel):
@@ -116,6 +126,103 @@ class LogConfig(BaseModel):
     stderr: str | None = None
     max_size: str = "10MB"
     rotate: int = 5
+
+
+class OperatingHoursAction(str, Enum):
+    """Action to take outside operating hours."""
+    
+    PAUSE = "pause"      # Pause the job (restart when hours resume)
+    SKIP = "skip"        # Skip scheduled runs
+    ALERT = "alert"      # Alert but still run
+
+
+class ResourceLimitAction(str, Enum):
+    """Action to take when resource limit is exceeded."""
+    
+    WARN = "warn"        # Just log a warning
+    THROTTLE = "throttle"  # Reduce CPU priority
+    KILL = "kill"        # Kill the job
+
+
+class ResourceLimitsConfig(BaseModel):
+    """Resource limits configuration for a job."""
+    
+    enabled: bool = False
+    max_memory_mb: int | None = None  # Maximum memory in MB
+    max_cpu_percent: int | None = None  # Maximum CPU percentage (averaged)
+    timeout_seconds: int | None = None  # Maximum runtime in seconds
+    action: ResourceLimitAction = ResourceLimitAction.WARN
+    
+    # How often to check resources (seconds)
+    check_interval: int = 30
+
+
+class OperatingHoursConfig(BaseModel):
+    """Operating hours configuration for a job."""
+    
+    enabled: bool = False
+    days: list[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5])  # 1=Mon, 7=Sun
+    start: str = "08:00"  # HH:MM
+    end: str = "18:00"    # HH:MM
+    timezone: str = "America/Sao_Paulo"
+    action: OperatingHoursAction = OperatingHoursAction.SKIP
+
+
+class Priority(int, Enum):
+    """Job execution priority."""
+    
+    CRITICAL = 0  # Highest priority, may preempt others
+    HIGH = 1
+    NORMAL = 2
+    LOW = 3  # Lowest priority
+
+
+class DedupConfig(BaseModel):
+    """Deduplication configuration for a job."""
+    
+    enabled: bool = True
+    window_seconds: int = 60  # Don't run same job within this window
+    use_params: bool = True  # Include params in fingerprint
+
+
+class ConcurrencyConfig(BaseModel):
+    """Concurrency configuration for a job."""
+    
+    max_instances: int = 1  # Max concurrent instances of this job
+    queue_excess: bool = True  # Queue jobs that exceed max (vs reject)
+    queue_timeout: int = 300  # Max time to wait in queue (seconds)
+
+
+class LockConfig(BaseModel):
+    """Distributed lock configuration for a job."""
+    
+    enabled: bool = False
+    timeout_seconds: int = 300  # Lock timeout
+    retry_interval: float = 0.5  # Seconds between lock attempts
+    max_attempts: int = 10  # Max lock acquisition attempts
+
+
+class TriggerType(str, Enum):
+    """Type of event trigger."""
+    
+    WEBHOOK = "webhook"  # HTTP POST trigger
+    FILE = "file"  # File creation trigger
+    # QUEUE = "queue"  # Message queue trigger (future)
+
+
+class TriggerConfig(BaseModel):
+    """Event trigger configuration for a job."""
+    
+    enabled: bool = False
+    type: TriggerType = TriggerType.WEBHOOK
+    
+    # Webhook settings
+    auth_token: str | None = None  # Optional bearer token
+    
+    # File trigger settings
+    watch_path: str | None = None  # Directory to watch
+    pattern: str = "*"  # Glob pattern for files
+    delete_after: bool = False  # Delete file after trigger
 
 
 class AlertConfig(BaseModel):
@@ -172,6 +279,27 @@ class JobConfig(BaseModel):
 
     # Dependencies
     depends_on: list[JobDependency] = Field(default_factory=list)
+
+    # Operating hours
+    operating_hours: OperatingHoursConfig = Field(default_factory=OperatingHoursConfig)
+
+    # Resource limits
+    resources: ResourceLimitsConfig = Field(default_factory=ResourceLimitsConfig)
+
+    # Priority
+    priority: Priority = Priority.NORMAL
+
+    # Deduplication
+    dedup: DedupConfig = Field(default_factory=DedupConfig)
+
+    # Concurrency control
+    concurrency: ConcurrencyConfig = Field(default_factory=ConcurrencyConfig)
+
+    # Distributed locks
+    lock: LockConfig = Field(default_factory=LockConfig)
+
+    # Event triggers
+    trigger: TriggerConfig = Field(default_factory=TriggerConfig)
 
     # Metadata
     tags: list[str] = Field(default_factory=list)

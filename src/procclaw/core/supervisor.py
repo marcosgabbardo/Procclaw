@@ -27,9 +27,13 @@ from procclaw.models import (
 )
 from procclaw.core.dependencies import DependencyManager, DependencyStatus
 from procclaw.core.health import HealthChecker, HealthCheckResult
+from procclaw.core.log_utils import LogRotator
+from procclaw.core.output_parser import JobOutputChecker, OutputMatch
+from procclaw.core.resources import ResourceMonitor, ResourceViolation
 from procclaw.core.retry import RetryManager
 from procclaw.core.scheduler import Scheduler
-from procclaw.openclaw import OpenClawIntegration, init_integration
+from procclaw.core.watchdog import Watchdog, MissedRunInfo
+from procclaw.openclaw import OpenClawIntegration, init_integration, AlertType
 
 
 class ProcessHandle:
@@ -118,6 +122,8 @@ class Supervisor:
         self._retry_manager = RetryManager(
             on_retry=lambda job_id: self.start_job(job_id, trigger="retry"),
             on_max_retries=self._on_max_retries,
+            on_rate_limit=self._on_rate_limit,
+            logs_dir=DEFAULT_LOGS_DIR,
         )
 
         # Initialize dependency manager
@@ -131,6 +137,40 @@ class Supervisor:
         self._openclaw = init_integration(
             enabled=self.config.openclaw.enabled,
             channels=self.config.openclaw.alerts_channels,
+        )
+
+        # Initialize watchdog (dead man's switch)
+        self._watchdog = Watchdog(
+            db=self.db,
+            get_jobs=lambda: self.jobs.get_enabled_jobs(),
+            on_missed_run=self._on_missed_run,
+            check_interval=300,  # Check every 5 minutes
+            default_timezone="America/Sao_Paulo",
+        )
+
+        # Initialize log rotator
+        self._log_rotator = LogRotator(
+            logs_dir=DEFAULT_LOGS_DIR,
+            check_interval=300,  # Check every 5 minutes
+            max_age_days=7,
+        )
+        # Register all jobs for log rotation
+        for job_id, job in self.jobs.jobs.items():
+            self._log_rotator.register_job(job_id, job.log)
+
+        # Initialize output checker
+        self._output_checker = JobOutputChecker(
+            logs_dir=DEFAULT_LOGS_DIR,
+            on_error=self._on_output_error,
+            on_warning=self._on_output_warning,
+            on_rate_limit=lambda job_id, match: self._on_rate_limit(job_id, match.line),
+        )
+
+        # Initialize resource monitor
+        self._resource_monitor = ResourceMonitor(
+            on_violation=self._on_resource_violation,
+            on_kill=self._on_resource_kill,
+            default_check_interval=30,
         )
 
         # Ensure directories exist
@@ -215,6 +255,15 @@ class Supervisor:
 
             # Register for health checking
             self._health_checker.register_job(job_id, job, handle.pid)
+
+            # Register for resource monitoring
+            if job.resources.enabled:
+                self._resource_monitor.register_job(
+                    job_id=job_id,
+                    pid=handle.pid,
+                    config=job.resources,
+                    started_at=handle.started_at,
+                )
 
             # Cancel any pending retry
             self._retry_manager.cancel_retry(job_id)
@@ -446,6 +495,9 @@ class Supervisor:
         # Unregister from health checker
         self._health_checker.unregister_job(job_id)
 
+        # Unregister from resource monitor
+        self._resource_monitor.unregister_job(job_id)
+
         # Record completion for dependency tracking
         self._dependency_manager.record_job_complete(job_id)
 
@@ -487,6 +539,11 @@ class Supervisor:
                 state.last_error,
                 should_alert=should_alert,
             )
+
+        # Check output for errors (even if exit code is 0)
+        job = self.jobs.get_job(job_id)
+        if job:
+            self._output_checker.check_job_output(job_id, job, exit_code)
 
         # Handle retry for failed jobs
         if exit_code != 0:
@@ -545,6 +602,72 @@ class Supervisor:
         # Send alert (always for max retries)
         self._openclaw.on_max_retries(job_id, max_attempts)
 
+    def _on_missed_run(self, miss: MissedRunInfo) -> None:
+        """Called when a scheduled job misses its expected run."""
+        logger.error(
+            f"Job '{miss.job_id}' missed scheduled run "
+            f"(expected: {miss.expected_time}, overdue: {miss.hours_overdue:.1f}h)"
+        )
+        self._audit_log(
+            miss.job_id,
+            "missed_run",
+            f"Expected: {miss.expected_time}, Overdue: {miss.hours_overdue:.1f}h",
+        )
+
+        # Send alert
+        self._openclaw.on_missed_run(
+            job_id=miss.job_id,
+            expected_time=miss.expected_time,
+            hours_overdue=miss.hours_overdue,
+            last_run=miss.last_actual_run,
+        )
+
+    def _on_rate_limit(self, job_id: str, message: str) -> None:
+        """Called when rate limiting is detected for a job."""
+        logger.warning(f"Rate limit detected for '{job_id}': {message}")
+        self._audit_log(job_id, "rate_limit", message)
+
+        # Send alert
+        self._openclaw.on_rate_limit(job_id, message)
+
+    def _on_output_error(self, job_id: str, match: OutputMatch) -> None:
+        """Called when error pattern is found in job output."""
+        logger.warning(f"Error pattern found in '{job_id}' output: {match.pattern}")
+        self._audit_log(job_id, "output_error", f"Pattern: {match.pattern}, Line: {match.line_number}")
+
+        # Send alert
+        self._openclaw.on_output_error(job_id, match.pattern, match.line)
+
+    def _on_output_warning(self, job_id: str, match: OutputMatch) -> None:
+        """Called when warning pattern is found in job output."""
+        # Just log, don't alert for warnings
+        logger.info(f"Warning pattern found in '{job_id}' output: {match.pattern}")
+
+    def _on_resource_violation(self, violation: ResourceViolation) -> None:
+        """Called when a resource limit is violated."""
+        logger.warning(
+            f"Resource violation for '{violation.job_id}': "
+            f"{violation.resource} = {violation.current_value:.1f} > {violation.limit_value:.1f}"
+        )
+        self._audit_log(
+            violation.job_id,
+            "resource_violation",
+            f"{violation.resource}: {violation.current_value:.1f} > {violation.limit_value:.1f}",
+        )
+
+    def _on_resource_kill(self, job_id: str, reason: str) -> None:
+        """Called when a job is killed due to resource limits."""
+        logger.error(f"Job '{job_id}' killed: {reason}")
+        self._audit_log(job_id, "resource_kill", reason)
+        
+        # Send alert
+        self._openclaw.queue_alert(
+            job_id=job_id,
+            alert_type=AlertType.FAILURE,
+            message=f"Job killed due to resource limit: {reason}",
+            details={"reason": reason},
+        )
+
     # Audit Logging
 
     def _audit_log(self, job_id: str, action: str, details: str = "") -> None:
@@ -597,6 +720,9 @@ class Supervisor:
         scheduler_task = asyncio.create_task(self._scheduler.run())
         health_task = asyncio.create_task(self._health_checker.run())
         retry_task = asyncio.create_task(self._retry_manager.run())
+        watchdog_task = asyncio.create_task(self._watchdog.run())
+        log_rotator_task = asyncio.create_task(self._log_rotator.run())
+        resource_task = asyncio.create_task(self._resource_monitor.run())
 
         try:
             while not self._shutdown_event.is_set():
@@ -619,9 +745,12 @@ class Supervisor:
             self._scheduler.stop()
             self._health_checker.stop()
             self._retry_manager.stop()
+            self._watchdog.stop()
+            self._log_rotator.stop()
+            self._resource_monitor.stop()
             await self._openclaw.stop()
 
-            for task in [api_task, scheduler_task, health_task, retry_task]:
+            for task in [api_task, scheduler_task, health_task, retry_task, watchdog_task, log_rotator_task, resource_task]:
                 task.cancel()
                 try:
                     await task

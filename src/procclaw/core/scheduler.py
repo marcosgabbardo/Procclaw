@@ -11,6 +11,7 @@ from loguru import logger
 import pytz
 
 from procclaw.models import JobConfig, JobType, OnOverlap
+from procclaw.core.operating_hours import OperatingHoursChecker
 
 
 class Scheduler:
@@ -36,6 +37,7 @@ class Scheduler:
         self._next_runs: dict[str, datetime] = {}
         self._queued: dict[str, int] = {}  # job_id -> queue count
         self._running = False
+        self._operating_hours = OperatingHoursChecker(default_timezone=timezone)
 
     def add_job(self, job_id: str, job: JobConfig) -> None:
         """Add a scheduled job."""
@@ -129,6 +131,13 @@ class Scheduler:
         """Trigger a scheduled job."""
         job = self._jobs.get(job_id)
         if not job:
+            return
+
+        # Check operating hours
+        should_run, reason = self._operating_hours.should_run_job(job)
+        if not should_run:
+            logger.info(f"Skipping '{job_id}': {reason}")
+            self._calculate_next_run(job_id)
             return
 
         is_running = self._is_job_running(job_id)

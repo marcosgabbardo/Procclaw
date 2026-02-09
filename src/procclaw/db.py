@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Generator
 
@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -46,7 +46,9 @@ CREATE TABLE IF NOT EXISTS job_runs (
     exit_code INTEGER,
     duration_seconds REAL,
     trigger TEXT DEFAULT 'manual',
-    error TEXT
+    error TEXT,
+    fingerprint TEXT,
+    idempotency_key TEXT
 );
 
 -- Metrics (for historical queries)
@@ -58,11 +60,62 @@ CREATE TABLE IF NOT EXISTS job_metrics (
     metric_value REAL NOT NULL
 );
 
+-- Dead Letter Queue
+CREATE TABLE IF NOT EXISTS dead_letter_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    original_run_id INTEGER,
+    failed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    attempts INTEGER DEFAULT 0,
+    last_error TEXT,
+    job_config TEXT,
+    trigger_params TEXT,
+    reinjected_at TEXT,
+    reinjected_run_id INTEGER
+);
+
+-- Execution records for deduplication
+CREATE TABLE IF NOT EXISTS execution_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    run_id INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,
+    idempotency_key TEXT,
+    started_at TEXT NOT NULL,
+    UNIQUE(fingerprint, started_at)
+);
+
+-- Distributed locks
+CREATE TABLE IF NOT EXISTS job_locks (
+    job_id TEXT PRIMARY KEY,
+    holder_id TEXT NOT NULL,
+    acquired_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+-- Priority queue (for pending jobs)
+CREATE TABLE IF NOT EXISTS job_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    priority INTEGER DEFAULT 2,
+    queued_at TEXT NOT NULL,
+    trigger TEXT DEFAULT 'manual',
+    params TEXT,
+    idempotency_key TEXT,
+    status TEXT DEFAULT 'pending'
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_job_runs_job_id ON job_runs(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_runs_started_at ON job_runs(started_at);
 CREATE INDEX IF NOT EXISTS idx_job_metrics_job_id ON job_metrics(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_metrics_timestamp ON job_metrics(timestamp);
+CREATE INDEX IF NOT EXISTS idx_dead_letter_job_id ON dead_letter_jobs(job_id);
+CREATE INDEX IF NOT EXISTS idx_dead_letter_failed_at ON dead_letter_jobs(failed_at);
+CREATE INDEX IF NOT EXISTS idx_execution_records_fingerprint ON execution_records(fingerprint);
+CREATE INDEX IF NOT EXISTS idx_execution_records_started_at ON execution_records(started_at);
+CREATE INDEX IF NOT EXISTS idx_job_queue_priority ON job_queue(priority, queued_at);
+CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
 """
 
 
@@ -78,25 +131,112 @@ class Database:
         """Ensure the database exists and is up to date."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with self._connect() as conn:
-            # Create tables
-            conn.executescript(SCHEMA_SQL)
+        try:
+            with self._connect() as conn:
+                # Create tables
+                conn.executescript(SCHEMA_SQL)
 
-            # Check/update schema version
-            cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
-            row = cursor.fetchone()
+                # Check/update schema version
+                cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
+                row = cursor.fetchone()
 
-            if row is None:
-                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
-                logger.debug(f"Initialized database at {self.db_path}")
-            elif row[0] < SCHEMA_VERSION:
-                # Run migrations if needed
-                self._migrate(conn, row[0], SCHEMA_VERSION)
+                if row is None:
+                    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+                    logger.debug(f"Initialized database at {self.db_path}")
+                elif row[0] < SCHEMA_VERSION:
+                    # Run migrations if needed
+                    self._migrate(conn, row[0], SCHEMA_VERSION)
+        except sqlite3.DatabaseError as e:
+            if "malformed" in str(e).lower() or "corrupt" in str(e).lower():
+                logger.error(f"Database corruption detected at {self.db_path}: {e}")
+                # Backup corrupted file and create fresh database
+                backup_path = self.db_path.with_suffix(".db.corrupt")
+                try:
+                    import shutil
+                    shutil.move(str(self.db_path), str(backup_path))
+                    logger.warning(f"Moved corrupted database to {backup_path}")
+                except Exception as move_error:
+                    logger.error(f"Failed to backup corrupted database: {move_error}")
+                    # Try to delete instead
+                    try:
+                        self.db_path.unlink()
+                    except:
+                        pass
+                
+                # Retry with fresh database
+                with self._connect() as conn:
+                    conn.executescript(SCHEMA_SQL)
+                    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+                    logger.info(f"Created fresh database at {self.db_path}")
+            else:
+                raise
 
     def _migrate(self, conn: sqlite3.Connection, from_version: int, to_version: int) -> None:
         """Run database migrations."""
         logger.info(f"Migrating database from version {from_version} to {to_version}")
-        # Add migration logic here as needed
+        
+        if from_version < 2 and to_version >= 2:
+            # Migration to version 2: Add new tables
+            logger.info("Migrating to version 2: Adding DLQ, dedup, locks, queue tables")
+            
+            # Add new columns to job_runs
+            try:
+                conn.execute("ALTER TABLE job_runs ADD COLUMN fingerprint TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            
+            try:
+                conn.execute("ALTER TABLE job_runs ADD COLUMN idempotency_key TEXT")
+            except sqlite3.OperationalError:
+                pass
+            
+            # Create new tables (idempotent)
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS dead_letter_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    original_run_id INTEGER,
+                    failed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    attempts INTEGER DEFAULT 0,
+                    last_error TEXT,
+                    job_config TEXT,
+                    trigger_params TEXT,
+                    reinjected_at TEXT,
+                    reinjected_run_id INTEGER
+                );
+                
+                CREATE TABLE IF NOT EXISTS execution_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    run_id INTEGER NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    idempotency_key TEXT,
+                    started_at TEXT NOT NULL
+                );
+                
+                CREATE TABLE IF NOT EXISTS job_locks (
+                    job_id TEXT PRIMARY KEY,
+                    holder_id TEXT NOT NULL,
+                    acquired_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                );
+                
+                CREATE TABLE IF NOT EXISTS job_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    priority INTEGER DEFAULT 2,
+                    queued_at TEXT NOT NULL,
+                    trigger TEXT DEFAULT 'manual',
+                    params TEXT,
+                    idempotency_key TEXT,
+                    status TEXT DEFAULT 'pending'
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_dead_letter_job_id ON dead_letter_jobs(job_id);
+                CREATE INDEX IF NOT EXISTS idx_execution_records_fingerprint ON execution_records(fingerprint);
+                CREATE INDEX IF NOT EXISTS idx_job_queue_priority ON job_queue(priority, queued_at);
+            """)
+        
         conn.execute("UPDATE schema_version SET version = ?", (to_version,))
 
     @contextmanager
@@ -383,3 +523,303 @@ class Database:
             deleted = cursor.rowcount
             logger.info(f"Cleaned up {deleted} old metric records")
             return deleted
+
+    # =========================================================================
+    # Dead Letter Queue Methods
+    # =========================================================================
+
+    def add_to_dlq(
+        self,
+        job_id: str,
+        run_id: int | None,
+        error: str,
+        attempts: int,
+        job_config: str | None = None,
+        trigger_params: str | None = None,
+    ) -> int:
+        """Add a failed job to the dead letter queue."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO dead_letter_jobs 
+                (job_id, original_run_id, last_error, attempts, job_config, trigger_params)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (job_id, run_id, error, attempts, job_config, trigger_params),
+            )
+            dlq_id = cursor.lastrowid
+            logger.info(f"Added job '{job_id}' to DLQ (id={dlq_id})")
+            return dlq_id
+
+    def get_dlq_entries(
+        self,
+        job_id: str | None = None,
+        include_reinjected: bool = False,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Get entries from the dead letter queue."""
+        with self._connect() as conn:
+            query = "SELECT * FROM dead_letter_jobs WHERE 1=1"
+            params: list = []
+
+            if job_id:
+                query += " AND job_id = ?"
+                params.append(job_id)
+
+            if not include_reinjected:
+                query += " AND reinjected_at IS NULL"
+
+            query += " ORDER BY failed_at DESC LIMIT ?"
+            params.append(limit)
+
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+
+            return [dict(row) for row in rows]
+
+    def reinject_from_dlq(self, dlq_id: int, new_run_id: int) -> bool:
+        """Mark a DLQ entry as reinjected."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE dead_letter_jobs
+                SET reinjected_at = ?, reinjected_run_id = ?
+                WHERE id = ? AND reinjected_at IS NULL
+                """,
+                (datetime.now().isoformat(), new_run_id, dlq_id),
+            )
+            return cursor.rowcount > 0
+
+    def delete_dlq_entry(self, dlq_id: int) -> bool:
+        """Delete a DLQ entry."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM dead_letter_jobs WHERE id = ?",
+                (dlq_id,),
+            )
+            return cursor.rowcount > 0
+
+    def cleanup_old_dlq(self, days: int = 30) -> int:
+        """Delete old DLQ entries."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM dead_letter_jobs
+                WHERE failed_at < datetime('now', ?)
+                """,
+                (f"-{days} days",),
+            )
+            return cursor.rowcount
+
+    # =========================================================================
+    # Deduplication Methods
+    # =========================================================================
+
+    def record_execution(
+        self,
+        job_id: str,
+        run_id: int,
+        fingerprint: str,
+        idempotency_key: str | None = None,
+    ) -> None:
+        """Record an execution for deduplication."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO execution_records
+                (job_id, run_id, fingerprint, idempotency_key, started_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (job_id, run_id, fingerprint, idempotency_key, datetime.now().isoformat()),
+            )
+
+    def get_recent_executions(
+        self,
+        since: datetime,
+        job_id: str | None = None,
+    ) -> list:
+        """Get recent executions for deduplication cache."""
+        with self._connect() as conn:
+            query = "SELECT * FROM execution_records WHERE started_at >= ?"
+            params: list = [since.isoformat()]
+
+            if job_id:
+                query += " AND job_id = ?"
+                params.append(job_id)
+
+            cursor = conn.execute(query, params)
+            return cursor.fetchall()
+
+    def cleanup_old_execution_records(self, hours: int = 24) -> int:
+        """Delete old execution records."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM execution_records
+                WHERE started_at < datetime('now', ?)
+                """,
+                (f"-{hours} hours",),
+            )
+            return cursor.rowcount
+
+    # =========================================================================
+    # Distributed Lock Methods
+    # =========================================================================
+
+    def acquire_lock(
+        self,
+        job_id: str,
+        holder_id: str,
+        timeout_seconds: int,
+    ) -> bool:
+        """Try to acquire a lock for a job."""
+        now = datetime.now()
+        expires_at = now + timedelta(seconds=timeout_seconds)
+        
+        with self._connect() as conn:
+            # First, clean up expired locks
+            conn.execute(
+                "DELETE FROM job_locks WHERE expires_at < ?",
+                (now.isoformat(),),
+            )
+
+            # Try to acquire
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO job_locks (job_id, holder_id, acquired_at, expires_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (job_id, holder_id, now.isoformat(), expires_at.isoformat()),
+                )
+                return True
+            except sqlite3.IntegrityError:
+                # Lock already held
+                return False
+
+    def release_lock(self, job_id: str, holder_id: str) -> bool:
+        """Release a lock (only if we hold it)."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM job_locks
+                WHERE job_id = ? AND holder_id = ?
+                """,
+                (job_id, holder_id),
+            )
+            return cursor.rowcount > 0
+
+    def is_locked(self, job_id: str) -> bool:
+        """Check if a job is locked."""
+        with self._connect() as conn:
+            # Clean expired first
+            conn.execute(
+                "DELETE FROM job_locks WHERE expires_at < ?",
+                (datetime.now().isoformat(),),
+            )
+
+            cursor = conn.execute(
+                "SELECT 1 FROM job_locks WHERE job_id = ?",
+                (job_id,),
+            )
+            return cursor.fetchone() is not None
+
+    def get_lock_holder(self, job_id: str) -> str | None:
+        """Get the current lock holder for a job."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "SELECT holder_id FROM job_locks WHERE job_id = ? AND expires_at > ?",
+                (job_id, datetime.now().isoformat()),
+            )
+            row = cursor.fetchone()
+            return row["holder_id"] if row else None
+
+    # =========================================================================
+    # Priority Queue Methods
+    # =========================================================================
+
+    def enqueue_job(
+        self,
+        job_id: str,
+        priority: int = 2,
+        trigger: str = "manual",
+        params: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> int:
+        """Add a job to the priority queue."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO job_queue 
+                (job_id, priority, queued_at, trigger, params, idempotency_key, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                """,
+                (job_id, priority, datetime.now().isoformat(), trigger, params, idempotency_key),
+            )
+            return cursor.lastrowid
+
+    def dequeue_next(self) -> dict | None:
+        """Get and claim the next job from the queue."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM job_queue
+                WHERE status = 'pending'
+                ORDER BY priority ASC, queued_at ASC
+                LIMIT 1
+                """
+            )
+            row = cursor.fetchone()
+
+            if row is None:
+                return None
+
+            # Mark as claimed
+            conn.execute(
+                "UPDATE job_queue SET status = 'claimed' WHERE id = ?",
+                (row["id"],),
+            )
+
+            return dict(row)
+
+    def complete_queued_job(self, queue_id: int) -> None:
+        """Mark a queued job as completed."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE job_queue SET status = 'completed' WHERE id = ?",
+                (queue_id,),
+            )
+
+    def fail_queued_job(self, queue_id: int) -> None:
+        """Mark a queued job as failed."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE job_queue SET status = 'failed' WHERE id = ?",
+                (queue_id,),
+            )
+
+    def get_queue_length(self, job_id: str | None = None) -> int:
+        """Get the number of pending jobs in the queue."""
+        with self._connect() as conn:
+            query = "SELECT COUNT(*) FROM job_queue WHERE status = 'pending'"
+            params: list = []
+
+            if job_id:
+                query += " AND job_id = ?"
+                params.append(job_id)
+
+            cursor = conn.execute(query, params)
+            return cursor.fetchone()[0]
+
+    def cleanup_old_queue_entries(self, hours: int = 24) -> int:
+        """Delete old completed/failed queue entries."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM job_queue
+                WHERE status IN ('completed', 'failed')
+                AND queued_at < datetime('now', ?)
+                """,
+                (f"-{hours} hours",),
+            )
+            return cursor.rowcount
