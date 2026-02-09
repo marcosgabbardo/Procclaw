@@ -389,9 +389,10 @@
                     </select>
                     <select x-model="runsFilter.status" @change="loadRuns()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
                         <option value="">All Status</option>
-                        <option value="success">Success</option>
-                        <option value="failed">Failed</option>
-                        <option value="running">Running</option>
+                        <option value="completed">Completed (Success + Failed)</option>
+                        <option value="success">Success only</option>
+                        <option value="failed">Failed only</option>
+                        <option value="running">Running only</option>
                     </select>
                     <select x-model="runsFilter.trigger" @change="loadRuns()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
                         <option value="">All Triggers</option>
@@ -403,7 +404,10 @@
                         <option value="api">API</option>
                     </select>
                     <button @click="loadRuns()" class="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm">🔄 Refresh</button>
-                    <span class="text-sm text-dark-400">Total: <span class="text-dark-200" x-text="runs.length"></span> runs</span>
+                    <span class="text-sm text-dark-400 ml-auto">
+                        Showing <span class="text-dark-200" x-text="((runsPage-1)*runsPerPage+1) + '-' + Math.min(runsPage*runsPerPage, runs.length)"></span> 
+                        of <span class="text-dark-200" x-text="runs.length"></span>
+                    </span>
                 </div>
                 
                 <!-- Table -->
@@ -420,7 +424,7 @@
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-dark-700">
-                        <template x-for="run in runs" :key="run.id">
+                        <template x-for="run in paginatedRuns" :key="run.id">
                             <tr class="hover:bg-dark-750 transition cursor-pointer" @click="selectRun(run)">
                                 <td class="px-4 py-3">
                                     <div class="font-medium text-dark-100" x-text="run.job_id"></div>
@@ -453,6 +457,21 @@
                         </template>
                     </tbody>
                 </table>
+                
+                <!-- Pagination -->
+                <div x-show="totalRunsPages > 1" class="p-4 border-t border-dark-600 flex items-center justify-center gap-2">
+                    <button @click="runsPage = 1" :disabled="runsPage === 1" 
+                        class="px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed">⏮️</button>
+                    <button @click="runsPage--" :disabled="runsPage === 1" 
+                        class="px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed">◀️</button>
+                    <span class="px-4 text-sm">
+                        Page <span class="text-dark-200" x-text="runsPage"></span> of <span class="text-dark-200" x-text="totalRunsPages"></span>
+                    </span>
+                    <button @click="runsPage++" :disabled="runsPage === totalRunsPages" 
+                        class="px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed">▶️</button>
+                    <button @click="runsPage = totalRunsPages" :disabled="runsPage === totalRunsPages" 
+                        class="px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed">⏭️</button>
+                </div>
                 
                 <div x-show="runs.length === 0" class="text-center py-8 text-dark-400">
                     No runs found
@@ -1054,7 +1073,9 @@
                 dlqStats: { pending: 0, total: 0 },
                 dlqEntries: [],
                 runs: [],
-                runsFilter: { job_id: '', status: '', trigger: '' },
+                runsFilter: { job_id: '', status: 'completed', trigger: '' },
+                runsPage: 1,
+                runsPerPage: 10,
                 selectedRun: null,
                 logContent: [],
                 logLoadedAt: null,
@@ -1475,16 +1496,34 @@
                 // Runs
                 async loadRuns() {
                     try {
-                        let endpoint = '/runs?limit=200';
+                        let endpoint = '/runs?limit=500';
                         if (this.runsFilter.job_id) endpoint += `&job_id=${this.runsFilter.job_id}`;
-                        if (this.runsFilter.status) endpoint += `&status=${this.runsFilter.status}`;
+                        // Handle "completed" as success + failed (exclude running)
+                        if (this.runsFilter.status && this.runsFilter.status !== 'completed') {
+                            endpoint += `&status=${this.runsFilter.status}`;
+                        }
                         if (this.runsFilter.trigger) endpoint += `&trigger=${this.runsFilter.trigger}`;
                         const res = await this.api(endpoint);
-                        this.runs = res.runs || [];
+                        let runs = res.runs || [];
+                        // Filter out running if "completed" is selected
+                        if (this.runsFilter.status === 'completed') {
+                            runs = runs.filter(r => r.status !== 'running');
+                        }
+                        this.runs = runs;
+                        this.runsPage = 1; // Reset to first page on filter change
                     } catch (e) {
                         console.error('Failed to load runs:', e);
                         this.runs = [];
                     }
+                },
+
+                get paginatedRuns() {
+                    const start = (this.runsPage - 1) * this.runsPerPage;
+                    return this.runs.slice(start, start + this.runsPerPage);
+                },
+
+                get totalRunsPages() {
+                    return Math.ceil(this.runs.length / this.runsPerPage);
                 },
 
                 selectRun(run) {
