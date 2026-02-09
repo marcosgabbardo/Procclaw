@@ -49,7 +49,7 @@ class Scheduler:
     def add_job(self, job_id: str, job: JobConfig) -> None:
         """Add a scheduled or oneshot job."""
         # Handle scheduled jobs (cron)
-        if job.type == JobType.SCHEDULED and job.schedule:
+        if job.type in (JobType.SCHEDULED, JobType.OPENCLAW) and job.schedule:
             self._jobs[job_id] = job
             self._calculate_next_run(job_id)
             logger.debug(f"Scheduled job '{job_id}' - next run: {self._next_runs.get(job_id)}")
@@ -71,7 +71,7 @@ class Scheduler:
         current_ids = set(self._jobs.keys())
         new_ids = {
             jid for jid, j in jobs.items() 
-            if (j.type == JobType.SCHEDULED and j.schedule) or (j.type == JobType.ONESHOT and j.run_at)
+            if (j.type in (JobType.SCHEDULED, JobType.OPENCLAW) and j.schedule) or (j.type == JobType.ONESHOT and j.run_at)
         }
 
         for job_id in current_ids - new_ids:
@@ -80,7 +80,7 @@ class Scheduler:
         # Add/update jobs
         for job_id, job in jobs.items():
             if job.enabled:
-                if (job.type == JobType.SCHEDULED and job.schedule) or (job.type == JobType.ONESHOT and job.run_at):
+                if (job.type in (JobType.SCHEDULED, JobType.OPENCLAW) and job.schedule) or (job.type == JobType.ONESHOT and job.run_at):
                     self.add_job(job_id, job)
 
     def _calculate_next_run(self, job_id: str, check_missed: bool = True) -> None:

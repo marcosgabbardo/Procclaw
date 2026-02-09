@@ -197,8 +197,8 @@ class Watchdog:
         """
         from procclaw.models import JobType
         
-        # Only check scheduled jobs
-        if job.type != JobType.SCHEDULED or not job.schedule:
+        # Only check scheduled jobs (including openclaw which have schedules)
+        if job.type not in (JobType.SCHEDULED, JobType.OPENCLAW) or not job.schedule:
             return None
         
         if not job.enabled:
@@ -257,7 +257,7 @@ class Watchdog:
         jobs = self._get_jobs()
         
         for job_id, job in jobs.items():
-            if job.type != JobType.SCHEDULED:
+            if job.type not in (JobType.SCHEDULED, JobType.OPENCLAW):
                 continue
             
             miss = self.check_job(job_id, job)
