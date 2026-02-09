@@ -13,11 +13,19 @@
 Access the dashboard at **http://localhost:9876** when the daemon is running.
 
 ### Features
-- 📊 **Dashboard**: Job stats, running jobs, failed jobs, upcoming schedules
-- ⚙️ **Jobs**: Full list with filtering (search, type, status, tags)
-- 📜 **Logs**: Real-time log viewer with filtering and download
-- 💀 **DLQ**: Dead Letter Queue management (view, reinject, purge)
-- 🔧 **Config**: View jobs.yaml and daemon info
+- 📊 **Stats Header**: Running/failed/total jobs at a glance
+- ⚙️ **Jobs Tab**: Full list with filtering (search, type, status, tags), sortable columns
+- 📜 **Logs Tab**: Real-time log viewer with source indicator (📄 file / 💾 SQLite)
+- 🔄 **Runs Tab**: Execution history with filters and details
+- 💀 **DLQ Tab**: Dead Letter Queue management (view, reinject, purge)
+- 🔧 **Config Tab**: View/edit jobs.yaml with YAML editor
+
+### Job Management
+- **Inline tag editing** (GitHub-style: click + to add, × to remove)
+- **Edit modal** with form and YAML modes
+- **Create jobs** via form or raw YAML
+- **Force run** scheduled jobs with ⚡ button
+- **Column customization** (persisted in localStorage)
 
 ### Keyboard Shortcuts
 | Key | Action |
@@ -29,7 +37,7 @@ Access the dashboard at **http://localhost:9876** when the daemon is running.
 
 ## Features
 
-- 🔄 **Job Types**: Manual, Continuous, Scheduled (cron expressions)
+- 🔄 **Job Types**: Manual, Continuous, Scheduled (cron), Oneshot (run once at datetime)
 - 🔗 **Dependencies**: Jobs can depend on other jobs (after_start, after_complete)
 - 🏥 **Health Checks**: Process, HTTP endpoint, File heartbeat monitoring
 - 🔁 **Retry Policy**: Webhook-style exponential backoff (0s → 30s → 5m → 15m → 1h)
@@ -39,6 +47,9 @@ Access the dashboard at **http://localhost:9876** when the daemon is running.
 - 🌐 **HTTP API**: Full REST API with Prometheus metrics
 - 📊 **Prometheus Metrics**: Built-in `/metrics` endpoint
 - 🦞 **OpenClaw Integration**: Skill control, memory logging, alerts
+- 🚀 **Auto-start**: Continuous jobs start automatically on daemon startup
+- 💾 **SQLite Logs**: Logs saved to SQLite after completion (configurable: keep/delete files)
+- ⏰ **Missed Run Catchup**: Scheduled jobs catch up if daemon was down (60 min grace period)
 
 ### Enterprise Features
 
@@ -85,6 +96,30 @@ pip install -e .
 ```bash
 procclaw version
 # ProcClaw v0.1.0
+```
+
+### CLI-only (no Web UI)
+
+If you only need the CLI without the web interface, you can run the daemon in headless mode:
+
+```bash
+# Start daemon without binding HTTP port
+procclaw daemon start --no-api
+
+# Or configure in procclaw.yaml
+daemon:
+  api_enabled: false
+```
+
+All CLI commands work without the web UI:
+
+```bash
+procclaw list              # List all jobs
+procclaw start <job>       # Start a job
+procclaw stop <job>        # Stop a job
+procclaw logs <job> -f     # Follow logs
+procclaw status <job>      # Check status
+procclaw search "query"    # Search jobs
 ```
 
 ## Quick Start
@@ -434,11 +469,17 @@ The daemon exposes a REST API at `http://localhost:9876` (configurable).
 | `GET` | `/health` | Daemon health check |
 | `GET` | `/api/v1/jobs` | List all jobs (with filtering) |
 | `GET` | `/api/v1/jobs/{id}` | Get job details |
+| `POST` | `/api/v1/jobs` | Create a new job |
+| `PATCH` | `/api/v1/jobs/{id}` | Update job properties |
+| `DELETE` | `/api/v1/jobs/{id}` | Delete a job |
 | `POST` | `/api/v1/jobs/{id}/start` | Start a job |
 | `POST` | `/api/v1/jobs/{id}/stop` | Stop a job |
 | `POST` | `/api/v1/jobs/{id}/restart` | Restart a job |
-| `POST` | `/api/v1/jobs/{id}/run` | Run a job (same as start) |
+| `POST` | `/api/v1/jobs/{id}/run` | Force run (for scheduled/oneshot) |
+| `POST` | `/api/v1/jobs/{id}/tags` | Add tags to a job |
+| `DELETE` | `/api/v1/jobs/{id}/tags/{tag}` | Remove a tag |
 | `GET` | `/api/v1/jobs/{id}/logs` | Get job logs |
+| `GET` | `/api/v1/runs` | List execution history |
 | `GET` | `/metrics` | Prometheus metrics |
 | `POST` | `/api/v1/reload` | Reload configuration |
 
@@ -549,6 +590,22 @@ procclaw_job_restart_count_total{job="api-server"} 2
 - Timezone-aware
 - Good for: periodic tasks, scanners, reports
 
+### Oneshot
+- Runs once at a specific datetime
+- Auto-disables after successful execution
+- Shows as "Planned" status until run time
+- Good for: one-time migrations, scheduled deployments, reminders
+
+```yaml
+jobs:
+  switch-calendar:
+    name: Switch Calendar Mode
+    cmd: python switch_mode.py
+    type: oneshot
+    run_at: "2026-02-13T09:00:00"
+    timezone: America/Sao_Paulo
+```
+
 ## Retry Policy
 
 When a job fails, ProcClaw uses exponential backoff:
@@ -638,34 +695,66 @@ health_check:
   interval: 60
 ```
 
+## Log Storage
+
+ProcClaw stores logs in files during execution and optionally saves them to SQLite after completion.
+
+### Configuration
+
+In `procclaw.yaml`:
+
+```yaml
+daemon:
+  file_log_mode: delete  # keep | delete | disabled
+```
+
+| Mode | Behavior |
+|------|----------|
+| `keep` | Keep log files after saving to SQLite (default) |
+| `delete` | Delete log files after saving to SQLite |
+| `disabled` | Don't save to SQLite, keep files only |
+
+### Log Source
+
+The API returns a `source` field indicating where logs came from:
+- `file` - Logs read from active log file (running jobs)
+- `sqlite` - Logs retrieved from database (completed jobs)
+- `none` - No logs available
+
+The Web UI shows a visual indicator: 📄 File (green) or 💾 SQLite (yellow).
+
 ## Directory Structure
 
 ```
 ~/.procclaw/
 ├── procclaw.yaml     # Main daemon configuration
 ├── jobs.yaml         # Job definitions
-├── procclaw.db       # SQLite state database
+├── procclaw.db       # SQLite state database (jobs, runs, logs)
 ├── procclaw.pid      # Daemon PID file
 ├── .secrets          # Fallback secrets file (if keychain unavailable)
+├── scripts/          # Custom scripts for jobs
 └── logs/
     ├── daemon.log           # Daemon output
     ├── daemon.audit.log     # Audit log (start/stop/config changes)
-    ├── <job>.log            # Job stdout
+    ├── <job>.log            # Job stdout (if file_log_mode != disabled)
     └── <job>.error.log      # Job stderr
 ```
 
 ## Comparison with Alternatives
 
-| Feature | ProcClaw | PM2 | Supervisor | systemd |
-|---------|----------|-----|------------|---------|
-| Cron scheduling | ✅ | ✅ | ❌ | ❌ |
-| Job dependencies | ✅ | ❌ | ❌ | ✅ |
-| HTTP API | ✅ | ✅ | ✅ | ❌ |
-| Secrets management | ✅ | ❌ | ❌ | ❌ |
-| Prometheus metrics | ✅ | ✅ | ❌ | ❌ |
-| OpenClaw integration | ✅ | ❌ | ❌ | ❌ |
-| Single binary | ❌ | ❌ | ❌ | ✅ |
-| Python native | ✅ | ❌ | ✅ | ❌ |
+| Feature | ProcClaw | Celery | PM2 | Supervisor | systemd |
+|---------|----------|--------|-----|------------|---------|
+| Cron scheduling | ✅ | ✅ (beat) | ✅ | ❌ | ❌ |
+| Job dependencies | ✅ | ✅ (chains) | ❌ | ❌ | ✅ |
+| HTTP API | ✅ | ✅ (flower) | ✅ | ✅ | ❌ |
+| Secrets management | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Prometheus metrics | ✅ | ✅ | ✅ | ❌ | ❌ |
+| OpenClaw integration | ✅ | ❌ | ❌ | ❌ | ❌ |
+| No broker required | ✅ | ❌ | ✅ | ✅ | ✅ |
+| Web UI built-in | ✅ | ❌ (flower) | ✅ | ✅ | ❌ |
+| Single binary | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Python native | ✅ | ✅ | ❌ | ✅ | ❌ |
+| Setup complexity | Low | High | Low | Medium | Low |
 
 ## Troubleshooting
 
