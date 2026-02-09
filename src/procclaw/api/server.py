@@ -591,6 +591,43 @@ def create_app() -> FastAPI:
             "job_id": run.job_id,
         }
 
+    @app.post("/api/v1/runs/{run_id}/extract-session")
+    async def extract_run_session(
+        run_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Re-extract OpenClaw session info for a run.
+        
+        Useful for runs where session info wasn't captured (e.g., killed jobs).
+        Does direct lookup via OpenClaw CLI.
+        """
+        supervisor = get_supervisor()
+        
+        # Find the run
+        runs = supervisor.db.get_runs(limit=1000)
+        run = next((r for r in runs if r.id == run_id), None)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        
+        # Try to extract session info
+        old_key = run.session_key
+        old_transcript = run.session_transcript
+        
+        supervisor._extract_session_info(run.job_id, run)
+        
+        # Check if we found anything new
+        found_new = (run.session_key != old_key) or (run.session_transcript != old_transcript)
+        
+        return {
+            "success": True,
+            "run_id": run_id,
+            "job_id": run.job_id,
+            "session_key": run.session_key,
+            "session_transcript": run.session_transcript,
+            "found_new": found_new,
+            "message": "Session info extracted" if found_new else "No new session info found",
+        }
+
     @app.get("/api/v1/jobs/{job_id}", response_model=JobDetail)
     async def get_job(
         job_id: str,

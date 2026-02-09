@@ -785,29 +785,32 @@ class Supervisor:
             logger.error(f"Error saving logs for run {run_id}: {e}")
 
     def _extract_session_info(self, job_id: str, run: "JobRun") -> None:
-        """Extract OpenClaw session info from job logs.
+        """Extract OpenClaw session info from job logs or direct lookup.
         
-        Looks for SESSION_KEY= and SESSION_TRANSCRIPT= lines in the log output
-        stored in SQLite and updates the run record with the session info.
+        First tries to find SESSION_KEY= and SESSION_TRANSCRIPT= lines in logs.
+        If not found and job is OpenClaw type, does direct lookup via CLI.
         """
-        from procclaw.models import JobRun
+        from procclaw.models import JobRun, JobType
         
         try:
-            # Read from SQLite logs (file may already be deleted)
-            logs = self.db.get_logs(run_id=run.id, limit=5000)
-            if not logs:
-                return
-            
             session_key = None
             session_transcript = None
             
-            # Search through log lines for session markers
-            for log_entry in logs:
-                line = log_entry.get("line", "").strip()
-                if line.startswith("SESSION_KEY="):
-                    session_key = line.split("=", 1)[1]
-                elif line.startswith("SESSION_TRANSCRIPT="):
-                    session_transcript = line.split("=", 1)[1]
+            # Method 1: Try to extract from logs
+            logs = self.db.get_logs(run_id=run.id, limit=5000)
+            if logs:
+                for log_entry in logs:
+                    line = log_entry.get("line", "").strip()
+                    if line.startswith("SESSION_KEY="):
+                        session_key = line.split("=", 1)[1]
+                    elif line.startswith("SESSION_TRANSCRIPT="):
+                        session_transcript = line.split("=", 1)[1]
+            
+            # Method 2: Direct lookup if not found in logs and job is OpenClaw type
+            if not session_key and not session_transcript:
+                job = self._jobs.get(job_id)
+                if job and job.type == JobType.OPENCLAW:
+                    session_key, session_transcript = self._lookup_openclaw_session(job_id, run)
             
             # Update run if we found session info
             if session_key or session_transcript:
@@ -818,6 +821,76 @@ class Supervisor:
                 
         except Exception as e:
             logger.error(f"Error extracting session info for job '{job_id}': {e}")
+    
+    def _lookup_openclaw_session(self, job_id: str, run: "JobRun") -> tuple[str | None, str | None]:
+        """Direct lookup of OpenClaw session info via CLI.
+        
+        Used when job was killed or logs don't contain session markers.
+        Extracts cron job ID from the command and looks up the session.
+        
+        Returns:
+            Tuple of (session_key, session_transcript_path)
+        """
+        import subprocess
+        import json
+        import re
+        from pathlib import Path
+        
+        try:
+            # Extract OpenClaw cron job ID from the run command
+            # Format: python3 oc-runner.py <cron_job_id> <timeout>
+            cmd = run.cmd or ""
+            match = re.search(r'oc-runner\.py\s+([a-f0-9-]{36})', cmd)
+            if not match:
+                logger.debug(f"Could not extract cron job ID from command: {cmd}")
+                return None, None
+            
+            cron_job_id = match.group(1)
+            expected_session_key = f"agent:main:cron:{cron_job_id}"
+            
+            logger.debug(f"Looking up OpenClaw session: {expected_session_key}")
+            
+            # Query OpenClaw for sessions
+            result = subprocess.run(
+                ["openclaw", "sessions", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                logger.warning(f"openclaw sessions command failed: {result.stderr}")
+                return None, None
+            
+            data = json.loads(result.stdout)
+            sessions = data.get("sessions", [])
+            
+            # Find matching session
+            for session in sessions:
+                if session.get("key") == expected_session_key:
+                    session_id = session.get("sessionId")
+                    if session_id:
+                        # Build transcript path
+                        transcript_path = Path.home() / ".openclaw" / "agents" / "main" / "sessions" / f"{session_id}.jsonl"
+                        if transcript_path.exists():
+                            logger.info(f"Found OpenClaw session via direct lookup: {expected_session_key}")
+                            return expected_session_key, str(transcript_path)
+                        else:
+                            logger.debug(f"Session found but transcript not at: {transcript_path}")
+                            return expected_session_key, None
+            
+            logger.debug(f"No matching OpenClaw session found for: {expected_session_key}")
+            return None, None
+            
+        except subprocess.TimeoutExpired:
+            logger.warning("Timeout looking up OpenClaw session")
+            return None, None
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON from openclaw sessions: {e}")
+            return None, None
+        except Exception as e:
+            logger.error(f"Error looking up OpenClaw session: {e}")
+            return None, None
 
     async def _execute_session_triggers(
         self,
