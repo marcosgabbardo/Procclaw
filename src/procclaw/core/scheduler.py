@@ -128,9 +128,9 @@ class Scheduler:
                 if prev_run >= grace_cutoff:
                     should_catchup = False
                     if last_run is None:
-                        # Never ran - catch up
-                        should_catchup = True
-                        logger.info(f"Job '{job_id}' never ran, missed run at {prev_run}")
+                        # Never ran - skip catchup (no history to catch up on)
+                        should_catchup = False
+                        logger.debug(f"Job '{job_id}' has no history, skipping catchup")
                     elif last_run.tzinfo is None:
                         last_run = tz.localize(last_run)
                     
