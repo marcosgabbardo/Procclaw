@@ -1,0 +1,110 @@
+# Test jobs configuration for ProcClaw
+# Copy to ~/.procclaw/jobs.yaml to test
+
+jobs:
+  # Manual job that succeeds
+  test-success:
+    name: Test Success Job
+    description: A simple job that runs for 3 seconds and exits successfully
+    cmd: python3 tests/mock_jobs/success_job.py 3
+    cwd: ~/.openclaw/workspace/projects/procclaw
+    type: manual
+    enabled: true
+    tags: [test, manual]
+
+  # Manual job that fails
+  test-failure:
+    name: Test Failure Job
+    description: A job that always fails after 1 second
+    cmd: python3 tests/mock_jobs/failing_job.py
+    cwd: ~/.openclaw/workspace/projects/procclaw
+    type: manual
+    enabled: true
+    tags: [test, manual]
+
+  # Continuous job with process health check
+  test-continuous:
+    name: Test Continuous Job
+    description: A continuous job that runs until killed
+    cmd: python3 tests/mock_jobs/continuous_job.py
+    cwd: ~/.openclaw/workspace/projects/procclaw
+    type: continuous
+    enabled: true
+    health_check:
+      type: process
+      interval: 30
+    shutdown:
+      grace_period: 10
+    tags: [test, continuous]
+
+  # Continuous job with file health check
+  test-heartbeat:
+    name: Test Heartbeat Job
+    description: A job that writes heartbeat to a file
+    cmd: python3 tests/mock_jobs/heartbeat_job.py
+    cwd: ~/.openclaw/workspace/projects/procclaw
+    type: continuous
+    enabled: true
+    env:
+      HEARTBEAT_FILE: /tmp/procclaw-test-heartbeat
+    health_check:
+      type: file
+      path: /tmp/procclaw-test-heartbeat
+      max_age: 30
+      interval: 15
+    tags: [test, continuous, heartbeat]
+
+  # Continuous job with HTTP health check
+  test-http:
+    name: Test HTTP Job
+    description: A job that exposes an HTTP health endpoint
+    cmd: python3 tests/mock_jobs/http_job.py
+    cwd: ~/.openclaw/workspace/projects/procclaw
+    type: continuous
+    enabled: true
+    env:
+      HTTP_PORT: "8765"
+    health_check:
+      type: http
+      url: http://localhost:8765/health
+      expected_status: 200
+      expected_body: "ok"
+      interval: 15
+      timeout: 5
+    tags: [test, continuous, http]
+
+  # Scheduled job (every minute for testing)
+  test-scheduled:
+    name: Test Scheduled Job
+    description: A scheduled job that runs every minute
+    cmd: python3 tests/mock_jobs/success_job.py 2
+    cwd: ~/.openclaw/workspace/projects/procclaw
+    type: scheduled
+    schedule: "* * * * *"
+    timezone: America/Sao_Paulo
+    on_overlap: skip
+    enabled: false  # Disabled by default, enable to test scheduling
+    tags: [test, scheduled]
+
+  # Job with retry policy
+  test-retry:
+    name: Test Retry Job
+    description: A failing job with retry policy
+    cmd: python3 tests/mock_jobs/failing_job.py
+    cwd: ~/.openclaw/workspace/projects/procclaw
+    type: manual
+    enabled: true
+    retry:
+      enabled: true
+      preset: webhook
+      max_attempts: 3
+    tags: [test, retry]
+
+  # Disabled job
+  test-disabled:
+    name: Test Disabled Job
+    description: A disabled job that should not run
+    cmd: echo "This should never run"
+    type: manual
+    enabled: false
+    tags: [test, disabled]
