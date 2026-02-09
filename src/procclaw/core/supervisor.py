@@ -393,8 +393,8 @@ class Supervisor:
                     idempotency_key=idempotency_key,
                 )
 
-            # Increment concurrency counter
-            self._concurrency_limiter.increment_running(job_id)
+            # Record job start for concurrency tracking
+            self._concurrency_limiter.record_start(job_id)
 
             logger.info(f"Started job '{job_id}' (PID: {handle.pid})")
             self._audit_log(job_id, "started", f"PID: {handle.pid}, trigger: {trigger}")
@@ -987,8 +987,8 @@ class Supervisor:
         if job and job.lock.enabled:
             self._lock_manager.release(job_id)
 
-        # Decrement concurrency counter
-        self._concurrency_limiter.decrement_running(job_id)
+        # Record job stop for concurrency tracking
+        self._concurrency_limiter.record_stop(job_id)
 
         # Process queued jobs for this job type
         self._process_queued_jobs(job_id)
@@ -1059,14 +1059,15 @@ class Supervisor:
 
     def _process_queued_jobs(self, job_id: str) -> None:
         """Process queued jobs after a job completes."""
-        queued = self._concurrency_limiter.dequeue_job(job_id)
-        if queued:
-            logger.info(f"Starting queued job '{job_id}' (was queued at {queued.queued_at})")
+        # Check if there are queued jobs waiting
+        queued = self._concurrency_limiter.get_next_queued()
+        if queued and queued.get("job_id") == job_id:
+            logger.info(f"Starting queued job '{job_id}'")
             self.start_job(
                 job_id=job_id,
-                trigger=queued.trigger,
-                params=queued.params,
-                idempotency_key=queued.idempotency_key,
+                trigger=queued.get("trigger", "queued"),
+                params=queued.get("params"),
+                idempotency_key=queued.get("idempotency_key"),
             )
 
     # Callbacks
