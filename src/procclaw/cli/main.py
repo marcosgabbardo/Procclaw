@@ -41,6 +41,12 @@ console = Console()
 daemon_app = typer.Typer(help="Daemon management commands")
 app.add_typer(daemon_app, name="daemon")
 
+secret_app = typer.Typer(help="Secret management commands")
+app.add_typer(secret_app, name="secret")
+
+service_app = typer.Typer(help="System service management commands")
+app.add_typer(service_app, name="service")
+
 
 def setup_logging(verbose: bool = False) -> None:
     """Setup logging configuration."""
@@ -754,6 +760,126 @@ def init_config() -> None:
 def version() -> None:
     """Show version."""
     console.print(f"ProcClaw v{__version__}")
+
+
+# ============================================================================
+# Secret Commands
+# ============================================================================
+
+
+@secret_app.command("set")
+def secret_set(
+    name: str = typer.Argument(..., help="Secret name"),
+    value: str = typer.Argument(..., help="Secret value"),
+) -> None:
+    """Store a secret in the system keychain."""
+    from procclaw.secrets import set_secret
+
+    if set_secret(name, value):
+        console.print(f"[green]✓ Secret '{name}' stored[/green]")
+    else:
+        console.print(f"[red]✗ Failed to store secret '{name}'[/red]")
+        raise typer.Exit(1)
+
+
+@secret_app.command("get")
+def secret_get(
+    name: str = typer.Argument(..., help="Secret name"),
+    show: bool = typer.Option(False, "--show", help="Show the actual value"),
+) -> None:
+    """Get a secret from the system keychain."""
+    from procclaw.secrets import get_secret
+
+    value = get_secret(name)
+    if value is None:
+        console.print(f"[yellow]Secret '{name}' not found[/yellow]")
+        raise typer.Exit(1)
+
+    if show:
+        console.print(value)
+    else:
+        masked = value[:2] + "*" * (len(value) - 4) + value[-2:] if len(value) > 4 else "****"
+        console.print(f"[dim]{name}[/dim] = {masked}")
+
+
+@secret_app.command("list")
+def secret_list() -> None:
+    """List all stored secrets."""
+    from procclaw.secrets import list_secrets
+
+    secrets = list_secrets()
+    if not secrets:
+        console.print("[dim]No secrets stored[/dim]")
+        return
+
+    console.print("[bold]Stored secrets:[/bold]")
+    for name in secrets:
+        console.print(f"  • {name}")
+
+
+@secret_app.command("delete")
+def secret_delete(
+    name: str = typer.Argument(..., help="Secret name"),
+) -> None:
+    """Delete a secret from the system keychain."""
+    from procclaw.secrets import delete_secret
+
+    if delete_secret(name):
+        console.print(f"[green]✓ Secret '{name}' deleted[/green]")
+    else:
+        console.print(f"[yellow]Secret '{name}' not found or could not be deleted[/yellow]")
+
+
+# ============================================================================
+# Service Commands
+# ============================================================================
+
+
+@service_app.command("install")
+def service_install_cmd() -> None:
+    """Install ProcClaw as a system service (launchd on macOS, systemd on Linux)."""
+    from procclaw.service import service_install
+
+    if service_install():
+        console.print("[green]✓ Service installed[/green]")
+        console.print("[dim]ProcClaw will start automatically on login.[/dim]")
+    else:
+        console.print("[red]✗ Failed to install service[/red]")
+        raise typer.Exit(1)
+
+
+@service_app.command("uninstall")
+def service_uninstall_cmd() -> None:
+    """Uninstall the ProcClaw system service."""
+    from procclaw.service import service_uninstall
+
+    if service_uninstall():
+        console.print("[green]✓ Service uninstalled[/green]")
+    else:
+        console.print("[red]✗ Failed to uninstall service[/red]")
+        raise typer.Exit(1)
+
+
+@service_app.command("status")
+def service_status_cmd() -> None:
+    """Show system service status."""
+    from procclaw.service import service_status
+
+    status = service_status()
+
+    if not status.get("installed"):
+        if "error" in status:
+            console.print(f"[yellow]{status['error']}[/yellow]")
+        else:
+            console.print("[dim]Service is not installed[/dim]")
+            console.print("Run [bold]procclaw service install[/bold] to install.")
+        return
+
+    if status.get("running"):
+        pid = status.get("pid", "unknown")
+        console.print(f"[green]● Service is running (PID: {pid})[/green]")
+    else:
+        console.print("[yellow]○ Service is installed but not running[/yellow]")
 
 
 # ============================================================================
