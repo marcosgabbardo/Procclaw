@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ProcClaw Dashboard</title>
+    <!-- Fonts: JetBrains Mono for code, IBM Plex Sans for UI -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script>
@@ -11,6 +15,10 @@
             darkMode: 'class',
             theme: {
                 extend: {
+                    fontFamily: {
+                        sans: ['IBM Plex Sans', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
                     colors: {
                         dark: {
                             900: '#0d1117',
@@ -35,27 +43,64 @@
     </script>
     <style>
         [x-cloak] { display: none !important; }
+        
+        /* Scrollbars */
         .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
         .scrollbar-thin::-webkit-scrollbar-track { background: #21262d; }
         .scrollbar-thin::-webkit-scrollbar-thumb { background: #484f58; border-radius: 3px; }
         .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #6e7681; }
-        @keyframes pulse-slow { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
-        .animate-pulse-slow { animation: pulse-slow 2s infinite; }
-        .log-line { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; }
-        @keyframes slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        .animate-slide-in { animation: slide-in 0.3s ease-out; }
-        /* Keyboard shortcuts hint */
-        kbd { background: #30363d; padding: 2px 6px; border-radius: 4px; font-size: 11px; border: 1px solid #484f58; }
+        
+        /* Animations - respect reduced motion */
+        @media (prefers-reduced-motion: no-preference) {
+            @keyframes pulse-slow { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+            .animate-pulse-slow { animation: pulse-slow 2s infinite; }
+            @keyframes slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+            .animate-slide-in { animation: slide-in 0.2s ease-out; }
+            @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+            .animate-fade-in { animation: fade-in 0.15s ease-out; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .animate-pulse-slow, .animate-slide-in, .animate-fade-in, .animate-spin { animation: none !important; }
+        }
+        
+        /* Log styling */
+        .log-line { font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; }
+        
+        /* Keyboard hints */
+        kbd { background: #30363d; padding: 2px 6px; border-radius: 4px; font-size: 11px; border: 1px solid #484f58; font-family: inherit; }
+        
+        /* Focus states for accessibility */
+        button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+            outline: 2px solid #f97316;
+            outline-offset: 2px;
+        }
+        
+        /* Tabular numbers for stats */
+        .tabular-nums { font-variant-numeric: tabular-nums; }
+        
+        /* Text balance for headings */
+        .text-balance { text-wrap: balance; }
+        
+        /* Loading skeleton */
+        .skeleton {
+            background: linear-gradient(90deg, #21262d 25%, #30363d 50%, #21262d 75%);
+            background-size: 200% 100%;
+            animation: skeleton-loading 1.5s infinite;
+        }
+        @keyframes skeleton-loading {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
     </style>
 </head>
-<body class="bg-dark-900 text-dark-200 min-h-screen" x-data="app()" x-init="init()">
+<body class="bg-dark-900 text-dark-200 min-h-dvh font-sans" x-data="app()" x-init="init()">
     
     <!-- Header -->
     <header class="bg-dark-800 border-b border-dark-600 sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
             <div class="flex items-center gap-3">
                 <span class="text-2xl">🦞</span>
-                <h1 class="text-xl font-bold text-dark-100">ProcClaw</h1>
+                <h1 class="text-xl font-semibold text-dark-100 text-balance">ProcClaw</h1>
                 <span class="text-xs text-dark-400 bg-dark-700 px-2 py-0.5 rounded" x-text="version"></span>
             </div>
             <div class="flex items-center gap-4">
@@ -68,8 +113,8 @@
                     <span class="text-sm text-red-400">Offline</span>
                 </div>
                 <span class="text-xs text-dark-500" x-show="lastUpdate" x-text="'Updated ' + (lastUpdate ? formatTime(lastUpdate) : '')"></span>
-                <button @click="refresh()" class="p-2 hover:bg-dark-700 rounded-lg transition">
-                    <svg class="w-5 h-5" :class="loading && 'animate-spin'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <button @click="refresh()" class="p-2 hover:bg-dark-700 rounded-lg transition" aria-label="Refresh data">
+                    <svg class="w-5 h-5" :class="loading && 'animate-spin'" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                     </svg>
                 </button>
@@ -120,19 +165,23 @@
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
                     <div class="text-dark-400 text-sm mb-1">Total Jobs</div>
-                    <div class="text-3xl font-bold text-dark-100" x-text="stats.total"></div>
+                    <div x-show="!loading" class="text-3xl font-semibold text-dark-100 tabular-nums animate-fade-in" x-text="stats.total"></div>
+                    <div x-show="loading" class="h-9 w-12 skeleton rounded"></div>
                 </div>
                 <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
                     <div class="text-dark-400 text-sm mb-1">Running</div>
-                    <div class="text-3xl font-bold text-green-400" x-text="stats.running"></div>
+                    <div x-show="!loading" class="text-3xl font-semibold text-green-400 tabular-nums animate-fade-in" x-text="stats.running"></div>
+                    <div x-show="loading" class="h-9 w-12 skeleton rounded"></div>
                 </div>
                 <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
                     <div class="text-dark-400 text-sm mb-1">Failed</div>
-                    <div class="text-3xl font-bold" :class="stats.failed > 0 ? 'text-red-400' : 'text-dark-400'" x-text="stats.failed"></div>
+                    <div x-show="!loading" class="text-3xl font-semibold tabular-nums animate-fade-in" :class="stats.failed > 0 ? 'text-red-400' : 'text-dark-400'" x-text="stats.failed"></div>
+                    <div x-show="loading" class="h-9 w-12 skeleton rounded"></div>
                 </div>
                 <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
                     <div class="text-dark-400 text-sm mb-1">In DLQ</div>
-                    <div class="text-3xl font-bold" :class="dlqStats.pending > 0 ? 'text-yellow-400' : 'text-dark-400'" x-text="dlqStats.pending || 0"></div>
+                    <div x-show="!loading" class="text-3xl font-semibold tabular-nums animate-fade-in" :class="dlqStats.pending > 0 ? 'text-yellow-400' : 'text-dark-400'" x-text="dlqStats.pending || 0"></div>
+                    <div x-show="loading" class="h-9 w-12 skeleton rounded"></div>
                 </div>
             </div>
 
@@ -178,15 +227,15 @@
                 <h3 class="text-sm font-medium text-dark-300 mb-4">📊 Recent Activity</h3>
                 <div class="grid grid-cols-3 gap-4 text-center">
                     <div class="bg-dark-700 rounded-lg p-3">
-                        <div class="text-2xl font-bold text-green-400" x-text="recentStats.success"></div>
+                        <div class="text-2xl font-semibold text-green-400 tabular-nums" x-text="recentStats.success"></div>
                         <div class="text-xs text-dark-400">Successful (24h)</div>
                     </div>
                     <div class="bg-dark-700 rounded-lg p-3">
-                        <div class="text-2xl font-bold text-red-400" x-text="recentStats.failed"></div>
+                        <div class="text-2xl font-semibold text-red-400 tabular-nums" x-text="recentStats.failed"></div>
                         <div class="text-xs text-dark-400">Failed (24h)</div>
                     </div>
                     <div class="bg-dark-700 rounded-lg p-3">
-                        <div class="text-2xl font-bold text-blue-400" x-text="recentStats.runs"></div>
+                        <div class="text-2xl font-semibold text-blue-400 tabular-nums" x-text="recentStats.runs"></div>
                         <div class="text-xs text-dark-400">Total Runs (24h)</div>
                     </div>
                 </div>
@@ -466,8 +515,9 @@
                     </div>
                 </template>
                 <div x-show="dlqEntries.length === 0" class="text-center py-12 text-dark-400">
-                    <div class="text-4xl mb-2">✨</div>
-                    Dead Letter Queue is empty
+                    <div class="text-4xl mb-3">✨</div>
+                    <p class="text-dark-300 font-medium">Dead Letter Queue is empty</p>
+                    <p class="text-sm mt-1">All jobs are running smoothly</p>
                 </div>
             </div>
         </div>
