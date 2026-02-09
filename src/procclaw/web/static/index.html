@@ -647,9 +647,14 @@
                     <div x-show="filteredLogs.length === 0 && logContent.length > 0" class="text-dark-500 text-center py-8">No logs match filter</div>
                     <div x-show="logContent.length === 0" class="text-dark-500 text-center py-8">No logs available</div>
                 </div>
-                <div class="p-2 border-t border-dark-600 bg-dark-800 text-xs text-dark-400 flex justify-between">
+                <div class="p-2 border-t border-dark-600 bg-dark-800 text-xs text-dark-400 flex justify-between items-center">
                     <span x-text="`Showing ${filteredLogs.length} of ${logContent.length} lines`"></span>
-                    <span x-show="logFilter" class="text-accent-400">Filtered</span>
+                    <div class="flex items-center gap-3">
+                        <span x-show="logSource === 'sqlite'" class="text-yellow-400" title="Historical logs from database">💾 SQLite</span>
+                        <span x-show="logSource === 'file'" class="text-green-400" title="Live logs from file">📄 File</span>
+                        <span x-show="logSource === 'none'" class="text-dark-500">No logs</span>
+                        <span x-show="logFilter" class="text-accent-400">Filtered</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1190,6 +1195,7 @@
                 runLogContent: [],
                 runLogRun: null,
                 logContent: [],
+                logSource: 'file',
                 logLoadedAt: null,
                 selectedJob: null,
                 showCreateModal: false,
@@ -1710,9 +1716,11 @@
                         const res = await this.api(endpoint);
                         // Reverse to show newest first
                         this.logContent = (res.lines || []).reverse();
+                        this.logSource = res.source || 'file';
                         this.logLoadedAt = new Date();
                     } catch (e) {
                         this.logContent = ['Failed to load logs'];
+                        this.logSource = 'error';
                     }
                 },
 
