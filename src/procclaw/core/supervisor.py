@@ -861,9 +861,10 @@ class Supervisor:
             )
             
             # Send to session
-            logger.info(f"Firing session trigger for job '{job_id}' -> {trigger.session}")
+            logger.info(f"Firing session trigger for job '{job_id}' -> {trigger.session}" + 
+                       (" (immediate)" if trigger.immediate else ""))
             try:
-                await send_to_session(trigger.session, message)
+                await send_to_session(trigger.session, message, immediate=trigger.immediate)
             except Exception as e:
                 logger.error(f"Failed to send session trigger for job '{job_id}': {e}")
 

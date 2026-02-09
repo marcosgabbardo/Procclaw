@@ -380,11 +380,12 @@ async def send_to_session(
     session: str,
     message: str,
     timeout: float = 30.0,
+    immediate: bool = False,
 ) -> bool:
     """Send a message to an OpenClaw session.
     
     Writes to a trigger file that the heartbeat picks up.
-    For immediate delivery, also attempts to wake the gateway.
+    For immediate delivery, also attempts to wake the agent.
     
     Args:
         session: Session identifier:
@@ -393,6 +394,7 @@ async def send_to_session(
             - Full key like "agent:main:..." used as-is
         message: Message to send
         timeout: Timeout in seconds
+        immediate: If True, try to wake agent for immediate delivery
         
     Returns:
         True if message was queued successfully
@@ -421,18 +423,26 @@ async def send_to_session(
         
         logger.info(f"Session trigger queued for {session_key}")
         
-        # Try to wake the gateway for immediate pickup
-        try:
-            cmd = ["openclaw", "cron", "wake", "--mode", "now"]
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(process.communicate(), timeout=5.0)
-        except Exception:
-            # Wake is best-effort, don't fail if it doesn't work
-            pass
+        # Try to wake the agent for immediate pickup (if requested)
+        if immediate:
+            try:
+                wake_msg = "[ProcClaw Trigger] Check memory/procclaw-session-triggers.md"
+                cmd = [
+                    "openclaw", "agent",
+                    "--message", wake_msg,
+                    "--timeout", "10",
+                ]
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(process.communicate(), timeout=15.0)
+                logger.info("Agent wake successful - immediate delivery attempted")
+            except asyncio.TimeoutError:
+                logger.debug("Agent wake timed out (best-effort)")
+            except Exception as e:
+                logger.debug(f"Agent wake failed (best-effort): {e}")
         
         return True
         

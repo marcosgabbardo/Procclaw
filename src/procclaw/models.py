@@ -269,6 +269,7 @@ class SessionTrigger(BaseModel):
     session: str = "main"  # "main", "cron:<id>", or full session key
     message: str  # Message template
     enabled: bool = True
+    immediate: bool = False  # If True, try to wake agent for immediate delivery
 
 
 class JobDependency(BaseModel):
