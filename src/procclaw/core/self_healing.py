@@ -388,8 +388,9 @@ When done, respond with one of:
 - "HEALING_GAVE_UP: <reason>" if you couldn't determine the issue
 """
         
-        # Send to main session with immediate wake
-        await send_to_session("main", healing_msg, immediate=True)
+        # Send to main session (no immediate wake to avoid API overload)
+        # The request will be picked up on next heartbeat
+        await send_to_session("main", healing_msg, immediate=False)
         
         # For now, we return "in_progress" and let the human/agent handle it
         # In a more sophisticated implementation, we'd poll for a response
