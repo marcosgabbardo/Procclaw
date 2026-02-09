@@ -363,6 +363,7 @@ class JobRun(BaseModel):
     duration_seconds: float | None = None
     trigger: str = "manual"  # manual, scheduled, restart, dependency
     error: str | None = None
+    composite_id: str | None = None  # workflow ID if run as part of chain/group/chord
 
 
 class FileLogMode(str, Enum):

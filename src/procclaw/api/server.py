@@ -122,6 +122,7 @@ class RunSummary(BaseModel):
     status: str  # running, success, failed
     error: str | None = None
     cmd: str | None = None
+    composite_id: str | None = None  # workflow ID if part of chain/group/chord
 
 
 class RunListResponse(BaseModel):
@@ -394,6 +395,7 @@ def create_app() -> FastAPI:
                 status=run_status,
                 error=run.error,
                 cmd=job.cmd if job else None,
+                composite_id=run.composite_id,
             ))
         
         return RunListResponse(runs=result, total=len(result))

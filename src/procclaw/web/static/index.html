@@ -427,6 +427,7 @@
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Job</th>
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Status</th>
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Trigger</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Workflow</th>
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Started</th>
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Duration</th>
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Exit Code</th>
@@ -450,6 +451,10 @@
                                 </td>
                                 <td class="px-4 py-3">
                                     <span class="text-xs px-2 py-1 rounded-full bg-dark-600 text-dark-300" x-text="run.trigger"></span>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span x-show="run.composite_id" class="text-xs px-2 py-1 rounded-full bg-purple-500/20 text-purple-300 font-mono" x-text="run.composite_id"></span>
+                                    <span x-show="!run.composite_id" class="text-dark-500">-</span>
                                 </td>
                                 <td class="px-4 py-3">
                                     <span class="text-sm text-dark-300" x-text="formatDateFull(run.started_at)"></span>
@@ -516,6 +521,10 @@
                             <div class="text-xs text-dark-400 mb-1">Exit Code</div>
                             <span class="font-mono" :class="selectedRun?.exit_code === 0 ? 'text-green-400' : 'text-red-400'" x-text="selectedRun?.exit_code ?? '-'"></span>
                         </div>
+                    </div>
+                    <div x-show="selectedRun?.composite_id" class="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
+                        <div class="text-xs text-purple-400 mb-1">⛓️ Part of Workflow</div>
+                        <span class="font-mono text-purple-300" x-text="selectedRun?.composite_id"></span>
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                         <div class="bg-dark-700 rounded-lg p-3">

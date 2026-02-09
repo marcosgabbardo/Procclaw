@@ -284,6 +284,7 @@ class Supervisor:
         trigger: str = "manual",
         params: dict | None = None,
         idempotency_key: str | None = None,
+        composite_id: str | None = None,
     ) -> bool:
         """Start a job.
         
@@ -292,6 +293,7 @@ class Supervisor:
             trigger: What triggered this start (manual, schedule, retry, api, webhook)
             params: Optional parameters for the job
             idempotency_key: Optional idempotency key for deduplication
+            composite_id: Workflow ID if run as part of chain/group/chord
             
         Returns:
             True if job was started, False otherwise
@@ -394,6 +396,7 @@ class Supervisor:
                 job_id=job_id,
                 started_at=handle.started_at,
                 trigger=trigger,
+                composite_id=composite_id,
             )
             run.id = self.db.add_run(run)
 
@@ -1378,7 +1381,9 @@ class Supervisor:
             idempotency_key=idempotency_key,
         )
 
-    def _start_job_for_workflow(self, job_id: str, trigger: str, env: dict | None) -> bool:
+    def _start_job_for_workflow(
+        self, job_id: str, trigger: str, env: dict | None, composite_id: str | None = None
+    ) -> bool:
         """Start a job as part of a workflow (with env vars)."""
         job = self.jobs.get_job(job_id)
         if not job:
@@ -1390,7 +1395,7 @@ class Supervisor:
             original_env = job.env.copy()
             job.env.update(env)
         
-        success = self.start_job(job_id, trigger=trigger)
+        success = self.start_job(job_id, trigger=trigger, composite_id=composite_id)
         
         # Restore original env
         if env:

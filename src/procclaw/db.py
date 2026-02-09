@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS job_runs (
     trigger TEXT DEFAULT 'manual',
     error TEXT,
     fingerprint TEXT,
-    idempotency_key TEXT
+    idempotency_key TEXT,
+    composite_id TEXT
 );
 
 -- Metrics (for historical queries)
@@ -321,6 +322,14 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_job_queue_priority ON job_queue(priority, queued_at);
             """)
         
+        if from_version < 5 and to_version >= 5:
+            # Migration to version 5: Add composite_id to track workflow runs
+            logger.info("Migrating to version 5: Adding composite_id to job_runs")
+            try:
+                conn.execute("ALTER TABLE job_runs ADD COLUMN composite_id TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+        
         conn.execute("UPDATE schema_version SET version = ?", (to_version,))
 
     @contextmanager
@@ -416,8 +425,8 @@ class Database:
                 """
                 INSERT INTO job_runs (
                     job_id, started_at, finished_at, exit_code,
-                    duration_seconds, trigger, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    duration_seconds, trigger, error, composite_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run.job_id,
@@ -427,6 +436,7 @@ class Database:
                     run.duration_seconds,
                     run.trigger,
                     run.error,
+                    run.composite_id,
                 ),
             )
             return cursor.lastrowid or 0
@@ -498,6 +508,7 @@ class Database:
             duration_seconds=row["duration_seconds"],
             trigger=row["trigger"],
             error=row["error"],
+            composite_id=row["composite_id"] if "composite_id" in row.keys() else None,
         )
 
     # Log Methods

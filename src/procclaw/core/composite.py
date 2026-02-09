@@ -65,7 +65,7 @@ class CompositeExecutor:
             logger.info(f"Chain '{composite_id}' step {i+1}/{len(job_ids)}: {job_id}")
             
             # Start job and wait for completion
-            exit_code = await self._run_and_wait(job_id, trigger)
+            exit_code = await self._run_and_wait(job_id, trigger, composite_id)
             run.results[job_id] = exit_code
             
             if exit_code != 0:
@@ -94,7 +94,7 @@ class CompositeExecutor:
         logger.info(f"Starting group '{composite_id}': {' + '.join(job_ids)}")
         
         # Start all jobs in parallel
-        tasks = [self._run_and_wait(job_id, trigger) for job_id in job_ids]
+        tasks = [self._run_and_wait(job_id, trigger, composite_id) for job_id in job_ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Collect results
@@ -130,7 +130,7 @@ class CompositeExecutor:
         logger.info(f"Starting chord '{composite_id}': ({' + '.join(job_ids)}) → {callback}")
         
         # First, run the group
-        tasks = [self._run_and_wait(job_id, trigger) for job_id in job_ids]
+        tasks = [self._run_and_wait(job_id, trigger, composite_id) for job_id in job_ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Collect results
@@ -149,7 +149,7 @@ class CompositeExecutor:
         
         # Run callback
         logger.info(f"Chord '{composite_id}' running callback: {callback}")
-        callback_exit = await self._run_and_wait(callback, trigger)
+        callback_exit = await self._run_and_wait(callback, trigger, composite_id)
         run.results[callback] = callback_exit
         
         run.status = CompositeStatus.COMPLETED if (all_success and callback_exit == 0) else CompositeStatus.FAILED
@@ -157,7 +157,7 @@ class CompositeExecutor:
         logger.info(f"Chord '{composite_id}' {'completed' if run.status == CompositeStatus.COMPLETED else 'finished with failures'}")
         return run
     
-    async def _run_and_wait(self, job_id: str, trigger: str) -> int:
+    async def _run_and_wait(self, job_id: str, trigger: str, composite_id: str | None = None) -> int:
         """Start a job and wait for it to complete. Returns exit code."""
         job = self.supervisor.jobs.get_job(job_id)
         if not job:
@@ -165,7 +165,7 @@ class CompositeExecutor:
             return -1
         
         # Start the job
-        self.supervisor.start_job(job_id, trigger=trigger)
+        self.supervisor.start_job(job_id, trigger=trigger, composite_id=composite_id)
         
         # Wait for completion by polling state
         while True:
