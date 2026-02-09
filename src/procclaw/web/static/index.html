@@ -148,7 +148,7 @@
                     💀 DLQ
                     <span x-show="dlqStats.pending > 0" class="ml-1 px-1.5 py-0.5 bg-red-500 text-white text-xs rounded-full" x-text="dlqStats.pending"></span>
                 </button>
-                <button @click="currentTab = 'config'" 
+                <button @click="currentTab = 'config'; loadFullYaml()" 
                     :class="currentTab === 'config' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
                     class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
                     🔧 Config
@@ -768,6 +768,23 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Full YAML Editor -->
+            <div class="mt-6 bg-dark-800 border border-dark-600 rounded-xl p-4">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-medium">📄 jobs.yaml Editor</h3>
+                    <div class="flex gap-2">
+                        <button @click="loadFullYaml()" class="px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-sm transition">🔄 Reload</button>
+                        <button @click="saveFullYaml()" class="px-3 py-1 bg-accent-500 hover:bg-accent-600 text-white rounded text-sm transition">💾 Save & Apply</button>
+                    </div>
+                </div>
+                <div class="text-xs text-dark-500 mb-2" x-text="fullYamlPath || 'Loading...'"></div>
+                <textarea x-model="fullYamlContent" 
+                    class="w-full h-96 bg-dark-900 border border-dark-600 rounded-lg p-3 focus:outline-none focus:border-accent-500 font-mono text-sm resize-y"
+                    placeholder="Loading jobs.yaml..."></textarea>
+                <div class="mt-2 text-xs text-dark-500">⚠️ Edit with care. Invalid YAML will be rejected. A backup is created before saving.</div>
+            </div>
+            </div>
         </div>
     </main>
 
@@ -961,62 +978,108 @@
 
     <!-- Create Job Modal -->
     <div x-show="showCreateModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="showCreateModal = false">
-        <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-lg" @click.stop>
+        <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-hidden" @click.stop>
             <div class="p-4 border-b border-dark-600 flex items-center justify-between">
                 <h2 class="text-lg font-medium">Create New Job</h2>
-                <button @click="showCreateModal = false" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
+                <div class="flex items-center gap-2">
+                    <div class="flex bg-dark-700 rounded-lg p-1">
+                        <button type="button" @click="createMode = 'form'" 
+                            :class="createMode === 'form' ? 'bg-dark-600 text-white' : 'text-dark-400 hover:text-white'"
+                            class="px-3 py-1 rounded text-sm transition">📝 Form</button>
+                        <button type="button" @click="createMode = 'yaml'; syncFormToYaml()" 
+                            :class="createMode === 'yaml' ? 'bg-dark-600 text-white' : 'text-dark-400 hover:text-white'"
+                            class="px-3 py-1 rounded text-sm transition">📄 YAML</button>
+                    </div>
+                    <button @click="showCreateModal = false" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
+                </div>
             </div>
-            <form @submit.prevent="createJob()" class="p-4 space-y-4">
-                <div>
-                    <label class="block text-sm text-dark-400 mb-1">Job ID *</label>
-                    <input type="text" x-model="newJob.id" required class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
+            
+            <div class="flex h-[70vh]">
+                <!-- Form View -->
+                <div x-show="createMode === 'form'" class="flex-1 overflow-auto p-4">
+                    <form @submit.prevent="createJob()" class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-dark-400 mb-1">Job ID *</label>
+                            <input type="text" x-model="newJob.id" required class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" @input="syncFormToYaml()">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-dark-400 mb-1">Name</label>
+                            <input type="text" x-model="newJob.name" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" @input="syncFormToYaml()">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-dark-400 mb-1">Command *</label>
+                            <input type="text" x-model="newJob.cmd" required class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="python script.py" @input="syncFormToYaml()">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-dark-400 mb-1">Working Directory</label>
+                            <input type="text" x-model="newJob.cwd" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="/path/to/dir" @input="syncFormToYaml()">
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm text-dark-400 mb-1">Type</label>
+                                <select x-model="newJob.type" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none" @change="syncFormToYaml()">
+                                    <option value="manual">Manual</option>
+                                    <option value="continuous">Continuous</option>
+                                    <option value="scheduled">Scheduled</option>
+                                    <option value="oneshot">One-shot</option>
+                                    <option value="openclaw">OpenClaw</option>
+                                </select>
+                            </div>
+                            <div x-show="newJob.type === 'scheduled'">
+                                <label class="block text-sm text-dark-400 mb-1">Schedule (cron)</label>
+                                <input type="text" x-model="newJob.schedule" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="0 * * * *" @input="syncFormToYaml()">
+                            </div>
+                            <div x-show="newJob.type === 'oneshot'">
+                                <label class="block text-sm text-dark-400 mb-1">Run At</label>
+                                <input type="datetime-local" x-model="newJob.run_at" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" @input="syncFormToYaml()">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm text-dark-400 mb-1">Tags (comma-separated)</label>
+                            <input type="text" x-model="newJob.tags" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="tag1, tag2" @input="syncFormToYaml()">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-dark-400 mb-1">Environment Variables</label>
+                            <textarea x-model="newJob.env" rows="3" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500 font-mono text-sm" placeholder="KEY=value&#10;SECRET_TOKEN=abc123" @input="syncFormToYaml()"></textarea>
+                        </div>
+                        <div class="flex gap-2 pt-4">
+                            <button type="button" @click="showCreateModal = false" class="flex-1 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg transition">Cancel</button>
+                            <button type="submit" class="flex-1 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg transition">Create Job</button>
+                        </div>
+                    </form>
                 </div>
-                <div>
-                    <label class="block text-sm text-dark-400 mb-1">Name</label>
-                    <input type="text" x-model="newJob.name" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
-                </div>
-                <div>
-                    <label class="block text-sm text-dark-400 mb-1">Command *</label>
-                    <input type="text" x-model="newJob.cmd" required class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="python script.py">
-                </div>
-                <div>
-                    <label class="block text-sm text-dark-400 mb-1">Working Directory</label>
-                    <input type="text" x-model="newJob.cwd" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="/path/to/dir">
-                </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm text-dark-400 mb-1">Type</label>
-                        <select x-model="newJob.type" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none">
-                            <option value="manual">Manual</option>
-                            <option value="continuous">Continuous</option>
-                            <option value="scheduled">Scheduled</option>
-                            <option value="oneshot">One-shot</option>
-                            <option value="openclaw">OpenClaw</option>
-                        </select>
+                
+                <!-- YAML View -->
+                <div x-show="createMode === 'yaml'" class="flex-1 flex flex-col p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="text-sm text-dark-400">Edit YAML directly</label>
+                        <button type="button" @click="syncYamlToForm()" class="text-xs text-accent-400 hover:text-accent-300">↩️ Sync to Form</button>
                     </div>
-                    <div x-show="newJob.type === 'scheduled'">
-                        <label class="block text-sm text-dark-400 mb-1">Schedule (cron)</label>
-                        <input type="text" x-model="newJob.schedule" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="0 * * * *">
+                    <textarea x-model="newJobYaml" 
+                        class="flex-1 w-full bg-dark-900 border border-dark-600 rounded-lg p-3 focus:outline-none focus:border-accent-500 font-mono text-sm resize-none"
+                        placeholder="job-id:
+  name: My Job
+  cmd: python script.py
+  cwd: /path/to/dir
+  type: manual
+  enabled: true
+  tags:
+    - tag1
+    - tag2
+  env:
+    KEY: value"></textarea>
+                    <div class="flex gap-2 pt-4">
+                        <button type="button" @click="showCreateModal = false" class="flex-1 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg transition">Cancel</button>
+                        <button type="button" @click="createJobFromYaml()" class="flex-1 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg transition">Create from YAML</button>
                     </div>
-                    <div x-show="newJob.type === 'oneshot'">
-                        <label class="block text-sm text-dark-400 mb-1">Run At</label>
-                        <input type="datetime-local" x-model="newJob.run_at" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
-                    </div>
                 </div>
-                <div>
-                    <label class="block text-sm text-dark-400 mb-1">Tags (comma-separated)</label>
-                    <input type="text" x-model="newJob.tags" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="tag1, tag2">
+                
+                <!-- Live Preview (always visible) -->
+                <div class="w-80 border-l border-dark-600 bg-dark-900 p-4 overflow-auto">
+                    <div class="text-sm text-dark-400 mb-2">📄 YAML Preview</div>
+                    <pre class="font-mono text-xs text-dark-300 whitespace-pre-wrap" x-text="newJobYaml || '# Fill the form to see preview'"></pre>
                 </div>
-                <div>
-                    <label class="block text-sm text-dark-400 mb-1">Environment Variables</label>
-                    <textarea x-model="newJob.env" rows="3" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500 font-mono text-sm" placeholder="KEY=value&#10;SECRET_TOKEN=abc123&#10;API_KEY=xyz"></textarea>
-                    <p class="text-xs text-dark-500 mt-1">One per line: KEY=value. For secrets, reference from ~/.procclaw/secrets.env</p>
-                </div>
-                <div class="flex gap-2 pt-4">
-                    <button type="button" @click="showCreateModal = false" class="flex-1 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg transition">Cancel</button>
-                    <button type="submit" class="flex-1 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg transition">Create Job</button>
-                </div>
-            </form>
+            </div>
         </div>
     </div>
 
@@ -1153,6 +1216,10 @@
                 
                 // Forms
                 newJob: { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '' },
+                newJobYaml: '',
+                createMode: 'form',
+                fullYamlContent: '',
+                fullYamlPath: '',
                 editJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: '', schedule: '', run_at: '', tagsStr: '' },
                 
                 // Computed
@@ -1505,6 +1572,8 @@
                             this.toast(`Job '${this.newJob.id}' created!`, 'success');
                             this.showCreateModal = false;
                             this.newJob = { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '' };
+                            this.newJobYaml = '';
+                            this.createMode = 'form';
                             await this.refresh();
                         } else {
                             this.toast(res.detail || res.message || 'Failed to create job', 'error');
@@ -1512,6 +1581,88 @@
                     } catch (e) {
                         this.toast(`Error: ${e.message}`, 'error');
                     }
+                },
+
+                // YAML sync helpers
+                syncFormToYaml() {
+                    const job = this.newJob;
+                    let yaml = '';
+                    if (job.id) {
+                        yaml += `${job.id}:\n`;
+                        if (job.name) yaml += `  name: "${job.name}"\n`;
+                        if (job.cmd) yaml += `  cmd: ${job.cmd.includes(' ') ? '"' + job.cmd + '"' : job.cmd}\n`;
+                        if (job.cwd) yaml += `  cwd: ${job.cwd}\n`;
+                        yaml += `  type: ${job.type}\n`;
+                        yaml += `  enabled: true\n`;
+                        if (job.type === 'scheduled' && job.schedule) yaml += `  schedule: "${job.schedule}"\n`;
+                        if (job.type === 'oneshot' && job.run_at) yaml += `  run_at: "${job.run_at}"\n`;
+                        if (job.tags) {
+                            yaml += `  tags:\n`;
+                            job.tags.split(',').forEach(t => {
+                                if (t.trim()) yaml += `    - ${t.trim()}\n`;
+                            });
+                        }
+                        if (job.env) {
+                            yaml += `  env:\n`;
+                            job.env.split('\n').forEach(line => {
+                                const [k, ...v] = line.split('=');
+                                if (k && v.length) yaml += `    ${k.trim()}: ${v.join('=').trim()}\n`;
+                            });
+                        }
+                    }
+                    this.newJobYaml = yaml || '# Enter job details in the form';
+                },
+                
+                syncYamlToForm() {
+                    // Simple YAML parsing for single job
+                    const lines = this.newJobYaml.split('\n');
+                    const job = { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '' };
+                    let inTags = false, inEnv = false;
+                    let tags = [], envLines = [];
+                    
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed || trimmed.startsWith('#')) continue;
+                        
+                        // Top-level job ID
+                        if (!line.startsWith(' ') && trimmed.endsWith(':')) {
+                            job.id = trimmed.slice(0, -1);
+                            inTags = inEnv = false;
+                            continue;
+                        }
+                        
+                        // Array items
+                        if (trimmed.startsWith('- ')) {
+                            if (inTags) tags.push(trimmed.slice(2));
+                            continue;
+                        }
+                        
+                        // Key-value pairs
+                        const match = trimmed.match(/^(\w+):\s*(.*)$/);
+                        if (match) {
+                            const [, key, val] = match;
+                            const cleanVal = val.replace(/^["']|["']$/g, '');
+                            inTags = key === 'tags';
+                            inEnv = key === 'env';
+                            if (key === 'name') job.name = cleanVal;
+                            else if (key === 'cmd') job.cmd = cleanVal;
+                            else if (key === 'cwd') job.cwd = cleanVal;
+                            else if (key === 'type') job.type = cleanVal;
+                            else if (key === 'schedule') job.schedule = cleanVal;
+                            else if (key === 'run_at') job.run_at = cleanVal;
+                            else if (inEnv && key !== 'env') envLines.push(`${key}=${cleanVal}`);
+                        }
+                    }
+                    
+                    job.tags = tags.join(', ');
+                    job.env = envLines.join('\n');
+                    this.newJob = job;
+                    this.toast('Form synced from YAML', 'success');
+                },
+                
+                async createJobFromYaml() {
+                    this.syncYamlToForm();
+                    await this.createJob();
                 },
 
                 async deleteJob(id) {
@@ -1704,6 +1855,31 @@
                     const res = await this.api('/reload', 'POST');
                     this.toast(res.success ? 'Config reloaded' : 'Failed', res.success ? 'success' : 'error');
                     await this.refresh();
+                },
+                
+                async loadFullYaml() {
+                    try {
+                        const res = await this.api('/config/jobs');
+                        this.fullYamlContent = res.content || '';
+                        this.fullYamlPath = res.path || '';
+                    } catch (e) {
+                        this.toast('Failed to load YAML', 'error');
+                    }
+                },
+                
+                async saveFullYaml() {
+                    if (!confirm('Save changes to jobs.yaml? A backup will be created.')) return;
+                    try {
+                        const res = await this.api('/config/jobs', 'PUT', { content: this.fullYamlContent });
+                        if (res.success) {
+                            this.toast('YAML saved and config reloaded!', 'success');
+                            await this.refresh();
+                        } else {
+                            this.toast(res.detail || 'Failed to save', 'error');
+                        }
+                    } catch (e) {
+                        this.toast(`Error: ${e.message}`, 'error');
+                    }
                 },
 
                 async restartDaemon() {

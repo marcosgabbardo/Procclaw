@@ -748,6 +748,60 @@ def create_app() -> FastAPI:
         supervisor.reload_jobs()
         return {"success": True, "message": "Configuration reloaded"}
 
+    @app.get("/api/v1/config/jobs")
+    async def get_jobs_yaml(_auth: bool = Depends(verify_token)):
+        """Get the full jobs.yaml content."""
+        from procclaw.config import DEFAULT_JOBS_FILE
+        try:
+            with open(DEFAULT_JOBS_FILE, "r") as f:
+                content = f.read()
+            return {"content": content, "path": str(DEFAULT_JOBS_FILE)}
+        except FileNotFoundError:
+            return {"content": "jobs: {}\n", "path": str(DEFAULT_JOBS_FILE)}
+
+    @app.put("/api/v1/config/jobs")
+    async def update_jobs_yaml(
+        data: dict,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Update the full jobs.yaml content."""
+        import yaml
+        from procclaw.config import DEFAULT_JOBS_FILE
+        from datetime import datetime
+        
+        content = data.get("content", "")
+        
+        # Validate YAML syntax
+        try:
+            parsed = yaml.safe_load(content)
+            if not isinstance(parsed, dict):
+                raise HTTPException(status_code=400, detail="YAML must be a dictionary")
+        except yaml.YAMLError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
+        
+        # Backup current file
+        backup_path = DEFAULT_JOBS_FILE.with_suffix(".yaml.bak")
+        try:
+            if DEFAULT_JOBS_FILE.exists():
+                import shutil
+                shutil.copy(DEFAULT_JOBS_FILE, backup_path)
+        except Exception:
+            pass
+        
+        # Write new content
+        with open(DEFAULT_JOBS_FILE, "w") as f:
+            f.write(content)
+        
+        # Reload config
+        supervisor = get_supervisor()
+        supervisor.reload_jobs()
+        
+        return {
+            "success": True, 
+            "message": "Configuration updated and reloaded",
+            "backup": str(backup_path),
+        }
+
     # DLQ Endpoints
 
     @app.get("/api/v1/dlq")
