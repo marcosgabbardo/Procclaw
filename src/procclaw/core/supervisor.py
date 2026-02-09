@@ -760,30 +760,26 @@ class Supervisor:
         """Extract OpenClaw session info from job logs.
         
         Looks for SESSION_KEY= and SESSION_TRANSCRIPT= lines in the log output
-        and updates the run record with the session info.
+        stored in SQLite and updates the run record with the session info.
         """
         from procclaw.models import JobRun
         
         try:
-            job = self.jobs.get_job(job_id)
-            if not job:
-                return
-            
-            log_path = job.get_log_stdout_path(DEFAULT_LOGS_DIR, job_id)
-            if not log_path.exists():
+            # Read from SQLite logs (file may already be deleted)
+            logs = self.db.get_logs(run_id=run.id, limit=5000)
+            if not logs:
                 return
             
             session_key = None
             session_transcript = None
             
-            # Read log file and look for session markers
-            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("SESSION_KEY="):
-                        session_key = line.split("=", 1)[1]
-                    elif line.startswith("SESSION_TRANSCRIPT="):
-                        session_transcript = line.split("=", 1)[1]
+            # Search through log lines for session markers
+            for log_entry in logs:
+                line = log_entry.get("line", "").strip()
+                if line.startswith("SESSION_KEY="):
+                    session_key = line.split("=", 1)[1]
+                elif line.startswith("SESSION_TRANSCRIPT="):
+                    session_transcript = line.split("=", 1)[1]
             
             # Update run if we found session info
             if session_key or session_transcript:
