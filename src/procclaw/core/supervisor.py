@@ -303,12 +303,13 @@ class Supervisor:
 
         # Check deduplication
         if job.dedup.enabled:
-            if self._dedup_manager.is_duplicate(
+            dedup_result = self._dedup_manager.check(
                 job_id=job_id,
                 params=params if job.dedup.use_params else None,
                 idempotency_key=idempotency_key,
                 window_seconds=job.dedup.window_seconds,
-            ):
+            )
+            if dedup_result.is_duplicate:
                 logger.info(f"Job '{job_id}' skipped - duplicate within {job.dedup.window_seconds}s window")
                 return False
 
@@ -385,8 +386,9 @@ class Supervisor:
 
             # Record execution for deduplication
             if job.dedup.enabled:
-                self._dedup_manager.record_execution(
+                self._dedup_manager.record(
                     job_id=job_id,
+                    run_id=run.id,
                     params=params if job.dedup.use_params else None,
                     idempotency_key=idempotency_key,
                 )
