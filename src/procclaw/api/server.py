@@ -399,6 +399,121 @@ def create_app() -> FastAPI:
         supervisor.reload_jobs()
         return {"success": True, "message": "Configuration reloaded"}
 
+    # DLQ Endpoints
+
+    @app.get("/api/v1/dlq")
+    async def list_dlq(
+        pending_only: bool = Query(True, description="Only show pending entries"),
+        _auth: bool = Depends(verify_token),
+    ):
+        """List dead letter queue entries."""
+        supervisor = get_supervisor()
+        entries = supervisor.get_dlq_entries(pending_only=pending_only)
+        return {
+            "entries": [
+                {
+                    "id": e.id,
+                    "job_id": e.job_id,
+                    "failed_at": e.failed_at.isoformat(),
+                    "attempts": e.attempts,
+                    "last_error": e.last_error,
+                    "is_reinjected": e.is_reinjected,
+                    "reinjected_at": e.reinjected_at.isoformat() if e.reinjected_at else None,
+                }
+                for e in entries
+            ],
+            "total": len(entries),
+        }
+
+    @app.get("/api/v1/dlq/stats")
+    async def dlq_stats(_auth: bool = Depends(verify_token)):
+        """Get DLQ statistics."""
+        supervisor = get_supervisor()
+        return supervisor.get_dlq_stats()
+
+    @app.post("/api/v1/dlq/{entry_id}/reinject")
+    async def reinject_dlq(
+        entry_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Reinject a DLQ entry for retry."""
+        supervisor = get_supervisor()
+        success = supervisor.reinject_dlq_entry(entry_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail=f"Failed to reinject DLQ entry {entry_id}")
+        
+        return {"success": True, "message": f"DLQ entry {entry_id} reinjected"}
+
+    @app.delete("/api/v1/dlq")
+    async def purge_dlq(
+        job_id: str | None = Query(None, description="Only purge for this job"),
+        older_than_days: int | None = Query(None, description="Only purge older than N days"),
+        _auth: bool = Depends(verify_token),
+    ):
+        """Purge DLQ entries."""
+        supervisor = get_supervisor()
+        count = supervisor.purge_dlq(job_id=job_id, older_than_days=older_than_days)
+        return {"success": True, "purged": count}
+
+    # Webhook Trigger Endpoint
+
+    @app.post("/api/v1/trigger/{job_id}")
+    async def webhook_trigger(
+        job_id: str,
+        payload: dict | None = None,
+        idempotency_key: str | None = Query(None, description="Idempotency key"),
+        credentials: HTTPAuthorizationCredentials | None = Security(security),
+    ):
+        """Trigger a job via webhook."""
+        supervisor = get_supervisor()
+        
+        job = supervisor.jobs.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        if not job.trigger.enabled or job.trigger.type.value != "webhook":
+            raise HTTPException(status_code=400, detail=f"Job '{job_id}' does not have webhook trigger enabled")
+        
+        # Extract auth token
+        auth_token = credentials.credentials if credentials else None
+        
+        success = supervisor.trigger_job_webhook(
+            job_id=job_id,
+            payload=payload,
+            idempotency_key=idempotency_key,
+            auth_token=auth_token,
+        )
+        
+        if not success:
+            raise HTTPException(status_code=500, detail=f"Failed to trigger job '{job_id}'")
+        
+        state = supervisor.db.get_state(job_id)
+        pid = state.pid if state else None
+        
+        return ActionResponse(
+            success=True,
+            message=f"Job '{job_id}' triggered via webhook",
+            job_id=job_id,
+            pid=pid,
+        )
+
+    # Concurrency Endpoint
+
+    @app.get("/api/v1/jobs/{job_id}/concurrency")
+    async def job_concurrency(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get concurrency stats for a job."""
+        supervisor = get_supervisor()
+        
+        job = supervisor.jobs.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        return supervisor.get_concurrency_stats(job_id)
+
     return app
 
 

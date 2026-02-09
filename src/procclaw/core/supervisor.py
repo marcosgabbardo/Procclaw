@@ -23,15 +23,22 @@ from procclaw.models import (
     JobState,
     JobStatus,
     JobType,
+    Priority,
     ProcClawConfig,
 )
+from procclaw.core.concurrency import ConcurrencyLimiter
+from procclaw.core.dedup import DeduplicationManager
 from procclaw.core.dependencies import DependencyManager, DependencyStatus
+from procclaw.core.dlq import DeadLetterQueue, DLQEntry
 from procclaw.core.health import HealthChecker, HealthCheckResult
+from procclaw.core.locks import LockManager
 from procclaw.core.log_utils import LogRotator
 from procclaw.core.output_parser import JobOutputChecker, OutputMatch
+from procclaw.core.priority import PriorityQueue, PrioritizedJob
 from procclaw.core.resources import ResourceMonitor, ResourceViolation
 from procclaw.core.retry import RetryManager
 from procclaw.core.scheduler import Scheduler
+from procclaw.core.triggers import TriggerManager, TriggerEvent
 from procclaw.core.watchdog import Watchdog, MissedRunInfo
 from procclaw.openclaw import OpenClawIntegration, init_integration, AlertType
 
@@ -173,6 +180,40 @@ class Supervisor:
             default_check_interval=30,
         )
 
+        # Initialize deduplication manager
+        self._dedup_manager = DeduplicationManager(
+            db=self.db,
+            default_window=60,
+        )
+
+        # Initialize concurrency limiter
+        self._concurrency_limiter = ConcurrencyLimiter(
+            db=self.db,
+            on_job_queued=self._on_job_queued,
+            on_queue_timeout=self._on_queue_timeout,
+            global_max=self.config.daemon.max_concurrent_jobs if hasattr(self.config.daemon, 'max_concurrent_jobs') else 50,
+        )
+
+        # Initialize priority queue
+        self._priority_queue = PriorityQueue(max_size=10000)
+
+        # Initialize dead letter queue
+        self._dlq = DeadLetterQueue(
+            db=self.db,
+            on_dlq_entry=self._on_dlq_entry,
+        )
+
+        # Initialize lock manager
+        self._lock_manager = LockManager(
+            db=self.db,
+            holder_id=f"procclaw-{os.getpid()}",
+        )
+
+        # Initialize trigger manager
+        self._trigger_manager = TriggerManager(
+            on_trigger=self._on_trigger_event,
+        )
+
         # Ensure directories exist
         ensure_config_dir()
 
@@ -191,8 +232,24 @@ class Supervisor:
 
     # Process Management
 
-    def start_job(self, job_id: str, trigger: str = "manual") -> bool:
-        """Start a job."""
+    def start_job(
+        self,
+        job_id: str,
+        trigger: str = "manual",
+        params: dict | None = None,
+        idempotency_key: str | None = None,
+    ) -> bool:
+        """Start a job.
+        
+        Args:
+            job_id: The job ID to start
+            trigger: What triggered this start (manual, schedule, retry, api, webhook)
+            params: Optional parameters for the job
+            idempotency_key: Optional idempotency key for deduplication
+            
+        Returns:
+            True if job was started, False otherwise
+        """
         job = self.jobs.get_job(job_id)
         if not job:
             logger.error(f"Job '{job_id}' not found")
@@ -206,6 +263,36 @@ class Supervisor:
             logger.warning(f"Job '{job_id}' is already running")
             return False
 
+        # Check deduplication
+        if job.dedup.enabled:
+            if self._dedup_manager.is_duplicate(
+                job_id=job_id,
+                params=params if job.dedup.use_params else None,
+                idempotency_key=idempotency_key,
+                window_seconds=job.dedup.window_seconds,
+            ):
+                logger.info(f"Job '{job_id}' skipped - duplicate within {job.dedup.window_seconds}s window")
+                return False
+
+        # Check concurrency limits
+        if job.concurrency.max_instances > 0:
+            running_count = self._concurrency_limiter.get_running_count(job_id)
+            if running_count >= job.concurrency.max_instances:
+                if job.concurrency.queue_excess:
+                    # Queue the job for later execution
+                    self._concurrency_limiter.queue_job(
+                        job_id=job_id,
+                        trigger=trigger,
+                        params=params,
+                        idempotency_key=idempotency_key,
+                        timeout=job.concurrency.queue_timeout,
+                    )
+                    logger.info(f"Job '{job_id}' queued - max instances ({job.concurrency.max_instances}) reached")
+                    return False
+                else:
+                    logger.warning(f"Job '{job_id}' rejected - max instances ({job.concurrency.max_instances}) reached")
+                    return False
+
         # Check dependencies (sync check, not async wait)
         if job.depends_on:
             satisfied, results = self._dependency_manager.check_all_dependencies(job_id, job)
@@ -217,6 +304,17 @@ class Supervisor:
                     elif result.status == DependencyStatus.WAITING:
                         logger.warning(f"Cannot start '{job_id}': {result.message}")
                         return False
+
+        # Acquire lock if enabled
+        lock_acquired = False
+        if job.lock.enabled:
+            lock_acquired = self._lock_manager.try_acquire(
+                job_id=job_id,
+                timeout_seconds=job.lock.timeout_seconds,
+            )
+            if not lock_acquired:
+                logger.warning(f"Job '{job_id}' could not acquire lock")
+                return False
 
         try:
             handle = self._spawn_process(job_id, job)
@@ -247,6 +345,17 @@ class Supervisor:
             )
             run.id = self.db.add_run(run)
 
+            # Record execution for deduplication
+            if job.dedup.enabled:
+                self._dedup_manager.record_execution(
+                    job_id=job_id,
+                    params=params if job.dedup.use_params else None,
+                    idempotency_key=idempotency_key,
+                )
+
+            # Increment concurrency counter
+            self._concurrency_limiter.increment_running(job_id)
+
             logger.info(f"Started job '{job_id}' (PID: {handle.pid})")
             self._audit_log(job_id, "started", f"PID: {handle.pid}, trigger: {trigger}")
 
@@ -274,6 +383,10 @@ class Supervisor:
             return True
 
         except Exception as e:
+            # Release lock on failure
+            if lock_acquired:
+                self._lock_manager.release(job_id)
+            
             logger.error(f"Failed to start job '{job_id}': {e}")
             state = JobState(
                 job_id=job_id,
@@ -501,6 +614,17 @@ class Supervisor:
         # Record completion for dependency tracking
         self._dependency_manager.record_job_complete(job_id)
 
+        # Release lock if held
+        job = self.jobs.get_job(job_id)
+        if job and job.lock.enabled:
+            self._lock_manager.release(job_id)
+
+        # Decrement concurrency counter
+        self._concurrency_limiter.decrement_running(job_id)
+
+        # Process queued jobs for this job type
+        self._process_queued_jobs(job_id)
+
         # Update state
         state = self.db.get_state(job_id) or JobState(job_id=job_id)
         state.status = JobStatus.STOPPED if exit_code == 0 else JobStatus.FAILED
@@ -531,7 +655,6 @@ class Supervisor:
         if exit_code == 0:
             self._openclaw.on_job_stopped(job_id, exit_code, duration)
         else:
-            job = self.jobs.get_job(job_id)
             should_alert = job.alerts.on_failure if job else True
             self._openclaw.on_job_failed(
                 job_id,
@@ -541,13 +664,11 @@ class Supervisor:
             )
 
         # Check output for errors (even if exit code is 0)
-        job = self.jobs.get_job(job_id)
         if job:
             self._output_checker.check_job_output(job_id, job, exit_code)
 
         # Handle retry for failed jobs
         if exit_code != 0:
-            job = self.jobs.get_job(job_id)
             if job and job.retry.enabled:
                 retry_time = self._retry_manager.schedule_retry(
                     job_id, job, state.retry_attempt
@@ -556,10 +677,29 @@ class Supervisor:
                     state.retry_attempt += 1
                     state.next_retry = retry_time
                 else:
-                    # Max retries reached
+                    # Max retries reached - move to DLQ
                     state.retry_attempt = 0
+                    self._dlq.add_entry(
+                        job_id=job_id,
+                        run_id=last_run.id if last_run else None,
+                        error=state.last_error or f"Exit code: {exit_code}",
+                        job_config=job.model_dump() if job else None,
+                        attempts=job.retry.max_attempts if job else 0,
+                    )
 
         self.db.save_state(state)
+
+    def _process_queued_jobs(self, job_id: str) -> None:
+        """Process queued jobs after a job completes."""
+        queued = self._concurrency_limiter.dequeue_job(job_id)
+        if queued:
+            logger.info(f"Starting queued job '{job_id}' (was queued at {queued.queued_at})")
+            self.start_job(
+                job_id=job_id,
+                trigger=queued.trigger,
+                params=queued.params,
+                idempotency_key=queued.idempotency_key,
+            )
 
     # Callbacks
 
@@ -668,6 +808,169 @@ class Supervisor:
             details={"reason": reason},
         )
 
+    def _on_job_queued(self, job_id: str, queue_position: int) -> None:
+        """Called when a job is queued due to concurrency limits."""
+        logger.info(f"Job '{job_id}' queued at position {queue_position}")
+        self._audit_log(job_id, "queued", f"Position: {queue_position}")
+
+    def _on_queue_timeout(self, job_id: str, waited_seconds: float) -> None:
+        """Called when a queued job times out."""
+        logger.warning(f"Job '{job_id}' timed out in queue after {waited_seconds:.1f}s")
+        self._audit_log(job_id, "queue_timeout", f"Waited: {waited_seconds:.1f}s")
+        
+        # Send alert
+        self._openclaw.queue_alert(
+            job_id=job_id,
+            alert_type=AlertType.FAILURE,
+            message=f"Job timed out in queue after {waited_seconds:.1f}s",
+            details={"waited_seconds": waited_seconds},
+        )
+
+    def _on_dlq_entry(self, entry: DLQEntry) -> None:
+        """Called when a job is added to the dead letter queue."""
+        logger.error(f"Job '{entry.job_id}' moved to DLQ after {entry.attempts} attempts")
+        self._audit_log(entry.job_id, "dlq_entry", f"Attempts: {entry.attempts}, Error: {entry.last_error}")
+        
+        # Send alert
+        self._openclaw.queue_alert(
+            job_id=entry.job_id,
+            alert_type=AlertType.MAX_RETRIES,
+            message=f"Job moved to DLQ after {entry.attempts} failed attempts",
+            details={"attempts": entry.attempts, "error": entry.last_error},
+        )
+
+    def _on_trigger_event(self, event: TriggerEvent) -> None:
+        """Called when an external trigger fires."""
+        logger.info(f"Trigger event for '{event.job_id}': {event.trigger_type}")
+        self._audit_log(event.job_id, "trigger", f"Type: {event.trigger_type}, Source: {event.source}")
+        
+        # Start the job
+        self.start_job(
+            job_id=event.job_id,
+            trigger=f"trigger:{event.trigger_type}",
+            params=event.payload,
+            idempotency_key=event.idempotency_key,
+        )
+
+    # DLQ Management
+
+    def get_dlq_entries(self, pending_only: bool = True) -> list[DLQEntry]:
+        """Get entries from the dead letter queue.
+        
+        Args:
+            pending_only: If True, only return entries not yet reinjected
+            
+        Returns:
+            List of DLQ entries
+        """
+        return self._dlq.get_entries(pending_only=pending_only)
+
+    def get_dlq_stats(self) -> dict:
+        """Get DLQ statistics."""
+        stats = self._dlq.get_stats()
+        return {
+            "total_entries": stats.total_entries,
+            "pending_entries": stats.pending_entries,
+            "reinjected_entries": stats.reinjected_entries,
+            "by_job": stats.by_job,
+        }
+
+    def reinject_dlq_entry(self, entry_id: int) -> bool:
+        """Reinject a DLQ entry for retry.
+        
+        Args:
+            entry_id: The DLQ entry ID
+            
+        Returns:
+            True if reinjection was successful
+        """
+        entry = self._dlq.get_entry(entry_id)
+        if not entry:
+            logger.error(f"DLQ entry {entry_id} not found")
+            return False
+
+        if entry.is_reinjected:
+            logger.warning(f"DLQ entry {entry_id} already reinjected")
+            return False
+
+        # Start the job
+        success = self.start_job(entry.job_id, trigger="dlq_reinject")
+        
+        if success:
+            # Get the new run ID
+            last_run = self.db.get_last_run(entry.job_id)
+            self._dlq.mark_reinjected(entry_id, last_run.id if last_run else None)
+            logger.info(f"Reinjected DLQ entry {entry_id} for job '{entry.job_id}'")
+
+        return success
+
+    def purge_dlq(self, job_id: str | None = None, older_than_days: int | None = None) -> int:
+        """Purge entries from the DLQ.
+        
+        Args:
+            job_id: Only purge entries for this job
+            older_than_days: Only purge entries older than this
+            
+        Returns:
+            Number of entries purged
+        """
+        return self._dlq.purge(job_id=job_id, older_than_days=older_than_days)
+
+    # Trigger Management
+
+    def trigger_job_webhook(
+        self,
+        job_id: str,
+        payload: dict | None = None,
+        idempotency_key: str | None = None,
+        auth_token: str | None = None,
+    ) -> bool:
+        """Trigger a job via webhook.
+        
+        Args:
+            job_id: The job to trigger
+            payload: Optional payload data
+            idempotency_key: Optional idempotency key
+            auth_token: Optional auth token for validation
+            
+        Returns:
+            True if trigger was accepted
+        """
+        job = self.jobs.get_job(job_id)
+        if not job:
+            logger.error(f"Job '{job_id}' not found")
+            return False
+
+        if not job.trigger.enabled or job.trigger.type.value != "webhook":
+            logger.error(f"Job '{job_id}' does not have webhook trigger enabled")
+            return False
+
+        # Validate auth token if configured
+        if job.trigger.auth_token and job.trigger.auth_token != auth_token:
+            logger.warning(f"Invalid auth token for job '{job_id}' webhook trigger")
+            return False
+
+        # Start the job
+        return self.start_job(
+            job_id=job_id,
+            trigger="webhook",
+            params=payload,
+            idempotency_key=idempotency_key,
+        )
+
+    # Concurrency Info
+
+    def get_concurrency_stats(self, job_id: str) -> dict:
+        """Get concurrency statistics for a job."""
+        stats = self._concurrency_limiter.get_stats(job_id)
+        job = self.jobs.get_job(job_id)
+        return {
+            "job_id": job_id,
+            "running_count": stats.running_count if stats else 0,
+            "max_instances": job.concurrency.max_instances if job else 1,
+            "queued_count": stats.queued_count if stats else 0,
+        }
+
     # Audit Logging
 
     def _audit_log(self, job_id: str, action: str, details: str = "") -> None:
@@ -716,6 +1019,16 @@ class Supervisor:
             )
         )
 
+        # Register file triggers for jobs that have them configured
+        for job_id, job in self.jobs.jobs.items():
+            if job.trigger.enabled and job.trigger.type.value == "file" and job.trigger.watch_path:
+                self._trigger_manager.register_file_trigger(
+                    job_id=job_id,
+                    watch_path=job.trigger.watch_path,
+                    pattern=job.trigger.pattern,
+                    delete_after=job.trigger.delete_after,
+                )
+
         # Start background tasks
         scheduler_task = asyncio.create_task(self._scheduler.run())
         health_task = asyncio.create_task(self._health_checker.run())
@@ -723,6 +1036,8 @@ class Supervisor:
         watchdog_task = asyncio.create_task(self._watchdog.run())
         log_rotator_task = asyncio.create_task(self._log_rotator.run())
         resource_task = asyncio.create_task(self._resource_monitor.run())
+        trigger_task = asyncio.create_task(self._trigger_manager.run())
+        concurrency_task = asyncio.create_task(self._concurrency_limiter.run())
 
         try:
             while not self._shutdown_event.is_set():
@@ -748,9 +1063,11 @@ class Supervisor:
             self._watchdog.stop()
             self._log_rotator.stop()
             self._resource_monitor.stop()
+            self._trigger_manager.stop()
+            self._concurrency_limiter.stop()
             await self._openclaw.stop()
 
-            for task in [api_task, scheduler_task, health_task, retry_task, watchdog_task, log_rotator_task, resource_task]:
+            for task in [api_task, scheduler_task, health_task, retry_task, watchdog_task, log_rotator_task, resource_task, trigger_task, concurrency_task]:
                 task.cancel()
                 try:
                     await task
