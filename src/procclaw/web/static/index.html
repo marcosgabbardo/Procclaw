@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProcClaw Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            900: '#0d1117',
+                            800: '#161b22',
+                            700: '#21262d',
+                            600: '#30363d',
+                            500: '#484f58',
+                            400: '#6e7681',
+                            300: '#8b949e',
+                            200: '#c9d1d9',
+                            100: '#f0f6fc',
+                        },
+                        accent: {
+                            500: '#f97316',
+                            400: '#fb923c',
+                            600: '#ea580c',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        [x-cloak] { display: none !important; }
+        .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: #21262d; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: #484f58; border-radius: 3px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #6e7681; }
+        @keyframes pulse-slow { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .animate-pulse-slow { animation: pulse-slow 2s infinite; }
+        .log-line { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; }
+        @keyframes slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .animate-slide-in { animation: slide-in 0.3s ease-out; }
+        /* Keyboard shortcuts hint */
+        kbd { background: #30363d; padding: 2px 6px; border-radius: 4px; font-size: 11px; border: 1px solid #484f58; }
+    </style>
+</head>
+<body class="bg-dark-900 text-dark-200 min-h-screen" x-data="app()" x-init="init()">
+    
+    <!-- Header -->
+    <header class="bg-dark-800 border-b border-dark-600 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <span class="text-2xl">🦞</span>
+                <h1 class="text-xl font-bold text-dark-100">ProcClaw</h1>
+                <span class="text-xs text-dark-400 bg-dark-700 px-2 py-0.5 rounded" x-text="version"></span>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2" x-show="health.status === 'healthy'">
+                    <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse-slow"></span>
+                    <span class="text-sm text-dark-300">Healthy</span>
+                </div>
+                <div class="flex items-center gap-2" x-show="health.status !== 'healthy'">
+                    <span class="w-2 h-2 bg-red-500 rounded-full"></span>
+                    <span class="text-sm text-red-400">Offline</span>
+                </div>
+                <span class="text-xs text-dark-500" x-show="lastUpdate" x-text="'Updated ' + (lastUpdate ? formatTime(lastUpdate) : '')"></span>
+                <button @click="refresh()" class="p-2 hover:bg-dark-700 rounded-lg transition">
+                    <svg class="w-5 h-5" :class="loading && 'animate-spin'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="bg-dark-800 border-b border-dark-600">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex gap-1">
+                <button @click="currentTab = 'dashboard'" 
+                    :class="currentTab === 'dashboard' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
+                    class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
+                    📊 Dashboard
+                </button>
+                <button @click="currentTab = 'jobs'" 
+                    :class="currentTab === 'jobs' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
+                    class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
+                    ⚙️ Jobs
+                </button>
+                <button @click="currentTab = 'logs'" 
+                    :class="currentTab === 'logs' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
+                    class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
+                    📜 Logs
+                </button>
+                <button @click="currentTab = 'dlq'" 
+                    :class="currentTab === 'dlq' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
+                    class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
+                    💀 DLQ
+                    <span x-show="dlqStats.pending > 0" class="ml-1 px-1.5 py-0.5 bg-red-500 text-white text-xs rounded-full" x-text="dlqStats.pending"></span>
+                </button>
+                <button @click="currentTab = 'config'" 
+                    :class="currentTab === 'config' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
+                    class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
+                    🔧 Config
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 py-6 pb-16">
+        
+        <!-- Dashboard Tab -->
+        <div x-show="currentTab === 'dashboard'" x-cloak>
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                    <div class="text-dark-400 text-sm mb-1">Total Jobs</div>
+                    <div class="text-3xl font-bold text-dark-100" x-text="stats.total"></div>
+                </div>
+                <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                    <div class="text-dark-400 text-sm mb-1">Running</div>
+                    <div class="text-3xl font-bold text-green-400" x-text="stats.running"></div>
+                </div>
+                <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                    <div class="text-dark-400 text-sm mb-1">Failed</div>
+                    <div class="text-3xl font-bold" :class="stats.failed > 0 ? 'text-red-400' : 'text-dark-400'" x-text="stats.failed"></div>
+                </div>
+                <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                    <div class="text-dark-400 text-sm mb-1">In DLQ</div>
+                    <div class="text-3xl font-bold" :class="dlqStats.pending > 0 ? 'text-yellow-400' : 'text-dark-400'" x-text="dlqStats.pending || 0"></div>
+                </div>
+            </div>
+
+            <!-- Charts Row -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <!-- Job Types -->
+                <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                    <h3 class="text-sm font-medium text-dark-300 mb-4">Jobs by Type</h3>
+                    <div class="flex items-end justify-around h-32">
+                        <template x-for="(count, type) in stats.byType" :key="type">
+                            <div class="flex flex-col items-center gap-2">
+                                <div class="w-16 bg-dark-600 rounded-t" 
+                                    :style="`height: ${Math.max(10, count / stats.total * 100)}%`"
+                                    :class="type === 'continuous' ? 'bg-green-500/50' : type === 'scheduled' ? 'bg-blue-500/50' : 'bg-purple-500/50'">
+                                </div>
+                                <span class="text-xs text-dark-400" x-text="type"></span>
+                                <span class="text-sm font-medium" x-text="count"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Status Distribution -->
+                <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                    <h3 class="text-sm font-medium text-dark-300 mb-4">Status Distribution</h3>
+                    <div class="flex items-end justify-around h-32">
+                        <template x-for="(count, status) in stats.byStatus" :key="status">
+                            <div class="flex flex-col items-center gap-2">
+                                <div class="w-16 rounded-t" 
+                                    :style="`height: ${Math.max(10, count / stats.total * 100)}%`"
+                                    :class="status === 'running' ? 'bg-green-500/50' : status === 'stopped' ? 'bg-dark-500' : status === 'failed' ? 'bg-red-500/50' : 'bg-yellow-500/50'">
+                                </div>
+                                <span class="text-xs text-dark-400" x-text="status"></span>
+                                <span class="text-sm font-medium" x-text="count"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Activity -->
+            <div class="bg-dark-800 border border-dark-600 rounded-xl p-4 mb-6">
+                <h3 class="text-sm font-medium text-dark-300 mb-4">📊 Recent Activity</h3>
+                <div class="grid grid-cols-3 gap-4 text-center">
+                    <div class="bg-dark-700 rounded-lg p-3">
+                        <div class="text-2xl font-bold text-green-400" x-text="recentStats.success"></div>
+                        <div class="text-xs text-dark-400">Successful (24h)</div>
+                    </div>
+                    <div class="bg-dark-700 rounded-lg p-3">
+                        <div class="text-2xl font-bold text-red-400" x-text="recentStats.failed"></div>
+                        <div class="text-xs text-dark-400">Failed (24h)</div>
+                    </div>
+                    <div class="bg-dark-700 rounded-lg p-3">
+                        <div class="text-2xl font-bold text-blue-400" x-text="recentStats.runs"></div>
+                        <div class="text-xs text-dark-400">Total Runs (24h)</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Running Jobs -->
+            <div class="bg-dark-800 border border-dark-600 rounded-xl p-4 mb-6">
+                <h3 class="text-sm font-medium text-dark-300 mb-4">🟢 Running Jobs</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <template x-for="job in jobs.filter(j => j.status === 'running')" :key="job.id">
+                        <div class="bg-dark-700 rounded-lg p-3 flex items-center justify-between">
+                            <div>
+                                <div class="font-medium text-dark-100" x-text="job.id"></div>
+                                <div class="text-xs text-dark-400" x-text="formatUptime(job.uptime_seconds)"></div>
+                            </div>
+                            <div class="flex gap-1">
+                                <button @click="restartJob(job.id)" class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-yellow-400" title="Restart">
+                                    🔄
+                                </button>
+                                <button @click="stopJob(job.id)" class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-red-400" title="Stop">
+                                    ⏹️
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                    <div x-show="jobs.filter(j => j.status === 'running').length === 0" class="text-dark-400 text-sm col-span-full">
+                        No jobs running
+                    </div>
+                </div>
+            </div>
+
+            <!-- Failed Jobs -->
+            <div x-show="jobs.filter(j => j.status === 'failed').length > 0" class="bg-dark-800 border border-red-500/30 rounded-xl p-4 mb-6">
+                <h3 class="text-sm font-medium text-red-400 mb-4">🔴 Failed Jobs</h3>
+                <div class="space-y-2">
+                    <template x-for="job in jobs.filter(j => j.status === 'failed')" :key="job.id">
+                        <div class="flex items-center justify-between py-2 border-b border-dark-700 last:border-0">
+                            <div class="flex items-center gap-3">
+                                <span class="text-red-400">❌</span>
+                                <div>
+                                    <span class="font-medium" x-text="job.id"></span>
+                                    <div class="text-xs text-dark-400" x-text="job.last_error || 'Exit code: ' + job.last_exit_code"></div>
+                                </div>
+                            </div>
+                            <div class="flex gap-1">
+                                <button @click="restartJob(job.id)" class="px-2 py-1 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded text-sm">
+                                    Retry
+                                </button>
+                                <button @click="viewLogs(job.id)" class="px-2 py-1 bg-dark-600 text-dark-300 hover:bg-dark-500 rounded text-sm">
+                                    Logs
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Upcoming Scheduled -->
+            <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                <h3 class="text-sm font-medium text-dark-300 mb-4">⏰ Upcoming Scheduled</h3>
+                <div class="space-y-2">
+                    <template x-for="job in getUpcomingJobs()" :key="job.id">
+                        <div class="flex items-center justify-between py-2 border-b border-dark-700 last:border-0">
+                            <div class="flex items-center gap-3">
+                                <span class="text-dark-400">⏰</span>
+                                <span class="font-medium" x-text="job.id"></span>
+                            </div>
+                            <div class="text-sm text-dark-400" x-text="formatNextRun(job.next_run)"></div>
+                        </div>
+                    </template>
+                    <div x-show="getUpcomingJobs().length === 0" class="text-dark-400 text-sm">
+                        No scheduled jobs
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Jobs Tab -->
+        <div x-show="currentTab === 'jobs'" x-cloak>
+            <!-- Filters -->
+            <div class="bg-dark-800 border border-dark-600 rounded-xl p-4 mb-4">
+                <div class="flex flex-wrap gap-3 items-center">
+                    <input type="text" x-model="filters.search" placeholder="Search jobs..." 
+                        class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-500 w-64">
+                    <select x-model="filters.type" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                        <option value="">All Types</option>
+                        <option value="continuous">Continuous</option>
+                        <option value="scheduled">Scheduled</option>
+                        <option value="manual">Manual</option>
+                    </select>
+                    <select x-model="filters.status" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                        <option value="">All Status</option>
+                        <option value="running">Running</option>
+                        <option value="stopped">Stopped</option>
+                        <option value="failed">Failed</option>
+                    </select>
+                    <select x-model="filters.tag" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                        <option value="">All Tags</option>
+                        <template x-for="tag in allTags" :key="tag">
+                            <option :value="tag" x-text="tag"></option>
+                        </template>
+                    </select>
+                    <button @click="showCreateModal = true" class="ml-auto bg-accent-500 hover:bg-accent-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
+                        + New Job
+                    </button>
+                </div>
+            </div>
+
+            <!-- Jobs Table -->
+            <div class="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+                <table class="w-full">
+                    <thead class="bg-dark-700">
+                        <tr>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Job</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Type</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Status</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Last Run</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Next Run</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Tags</th>
+                            <th class="text-right text-xs font-medium text-dark-400 uppercase px-4 py-3">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-dark-700">
+                        <template x-for="job in filteredJobs" :key="job.id">
+                            <tr class="hover:bg-dark-700/50 transition cursor-pointer" @click="selectJob(job)">
+                                <td class="px-4 py-3">
+                                    <div class="font-medium text-dark-100" x-text="job.id"></div>
+                                    <div class="text-xs text-dark-400" x-text="job.name"></div>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span class="text-xs px-2 py-1 rounded-full"
+                                        :class="job.type === 'continuous' ? 'bg-green-500/20 text-green-400' : job.type === 'scheduled' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'"
+                                        x-text="job.type">
+                                    </span>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <div class="flex items-center gap-2">
+                                        <span class="w-2 h-2 rounded-full"
+                                            :class="job.status === 'running' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : 'bg-dark-500'">
+                                        </span>
+                                        <span class="text-sm" :class="!job.enabled && 'text-dark-500'" x-text="job.enabled ? job.status : 'disabled'"></span>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-3 text-sm text-dark-400" x-text="job.started_at ? formatDate(job.started_at) : '-'"></td>
+                                <td class="px-4 py-3 text-sm text-dark-400" x-text="job.next_run ? formatDate(job.next_run) : '-'"></td>
+                                <td class="px-4 py-3">
+                                    <div class="flex flex-wrap gap-1">
+                                        <template x-for="tag in (job.tags || []).slice(0, 3)" :key="tag">
+                                            <span class="text-xs px-1.5 py-0.5 bg-dark-600 rounded text-dark-300" x-text="tag"></span>
+                                        </template>
+                                        <span x-show="(job.tags || []).length > 3" class="text-xs text-dark-500" x-text="'+' + ((job.tags || []).length - 3)"></span>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-3 text-right" @click.stop>
+                                    <div class="flex justify-end gap-1">
+                                        <button @click="toggleJob(job.id, job.enabled)" 
+                                            class="p-1.5 hover:bg-dark-600 rounded" 
+                                            :class="job.enabled ? 'text-green-400 hover:text-red-400' : 'text-dark-500 hover:text-green-400'"
+                                            :title="job.enabled ? 'Disable' : 'Enable'">
+                                            <span x-show="job.enabled">✅</span>
+                                            <span x-show="!job.enabled">⭕</span>
+                                        </button>
+                                        <button @click="startJob(job.id)" x-show="job.status !== 'running'" 
+                                            class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-green-400" title="Start">▶️</button>
+                                        <button @click="stopJob(job.id)" x-show="job.status === 'running'" 
+                                            class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-red-400" title="Stop">⏹️</button>
+                                        <button @click="restartJob(job.id)" 
+                                            class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-yellow-400" title="Restart">🔄</button>
+                                        <button @click="viewLogs(job.id)" 
+                                            class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-blue-400" title="Logs">📜</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <div x-show="filteredJobs.length === 0" class="text-center py-8 text-dark-400">
+                    No jobs match your filters
+                </div>
+            </div>
+        </div>
+
+        <!-- Logs Tab -->
+        <div x-show="currentTab === 'logs'" x-cloak>
+            <div class="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+                <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-dark-600">
+                    <div class="flex items-center gap-3">
+                        <select x-model="selectedLogJob" @change="loadLogs()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                            <option value="daemon">🦞 Daemon</option>
+                            <template x-for="job in jobs" :key="job.id">
+                                <option :value="job.id" x-text="job.id"></option>
+                            </template>
+                        </select>
+                        <select x-model="logType" @change="loadLogs()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                            <option value="stdout">stdout</option>
+                            <option value="stderr">stderr</option>
+                        </select>
+                        <input type="number" x-model="logLines" @change="loadLogs()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm w-20 focus:outline-none" placeholder="Lines">
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <input type="text" x-model="logFilter" placeholder="Filter logs..." 
+                            class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-500 w-48">
+                        <label class="flex items-center gap-2 text-sm text-dark-300">
+                            <input type="checkbox" x-model="autoRefreshLogs" class="rounded bg-dark-700 border-dark-600">
+                            Auto
+                        </label>
+                        <button @click="loadLogs()" class="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition">
+                            🔄
+                        </button>
+                        <button @click="downloadLogs()" class="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition" title="Download">
+                            📥
+                        </button>
+                    </div>
+                </div>
+                <div class="h-[500px] overflow-auto scrollbar-thin p-4 bg-dark-900 font-mono text-xs" id="log-container">
+                    <template x-for="(line, i) in filteredLogs" :key="i">
+                        <div class="log-line py-0.5 hover:bg-dark-800"
+                            :class="line.includes('ERROR') || line.includes('FAIL') || line.includes('Traceback') ? 'text-red-400' : line.includes('WARN') || line.includes('WARNING') ? 'text-yellow-400' : line.includes('✅') || line.includes('SUCCESS') ? 'text-green-400' : line.includes('🚀') || line.includes('Starting') ? 'text-blue-400' : 'text-dark-300'"
+                            x-text="line">
+                        </div>
+                    </template>
+                    <div x-show="filteredLogs.length === 0 && logContent.length > 0" class="text-dark-500 text-center py-8">
+                        No logs match filter
+                    </div>
+                    <div x-show="logContent.length === 0" class="text-dark-500 text-center py-8">
+                        No logs available
+                    </div>
+                </div>
+                <div class="p-2 border-t border-dark-600 bg-dark-800 text-xs text-dark-400 flex justify-between">
+                    <span x-text="`Showing ${filteredLogs.length} of ${logContent.length} lines`"></span>
+                    <span x-show="logFilter" class="text-accent-400">Filtered</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- DLQ Tab -->
+        <div x-show="currentTab === 'dlq'" x-cloak>
+            <div class="bg-dark-800 border border-dark-600 rounded-xl p-4 mb-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                        <div class="text-lg font-medium">Dead Letter Queue</div>
+                        <span class="px-2 py-1 bg-dark-700 rounded text-sm text-dark-400" x-text="dlqEntries.length + ' entries'"></span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button @click="reinjectAllDlq()" x-show="dlqEntries.length > 0" class="px-3 py-2 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-lg text-sm transition">
+                            Reinject All
+                        </button>
+                        <button @click="purgeDlq()" x-show="dlqEntries.length > 0" class="px-3 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg text-sm transition">
+                            Purge Old
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="space-y-3">
+                <template x-for="entry in dlqEntries" :key="entry.id">
+                    <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                        <div class="flex items-start justify-between mb-3">
+                            <div>
+                                <div class="font-medium text-dark-100" x-text="entry.job_id"></div>
+                                <div class="text-xs text-dark-400" x-text="formatDate(entry.failed_at)"></div>
+                            </div>
+                            <div class="flex gap-2">
+                                <button @click="reinjectDlq(entry.id)" class="px-3 py-1.5 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded text-sm transition">
+                                    Reinject
+                                </button>
+                                <button @click="deleteDlq(entry.id)" class="px-3 py-1.5 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded text-sm transition">
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                        <div class="bg-dark-900 rounded p-3 font-mono text-xs text-red-400" x-text="entry.error || 'No error message'"></div>
+                        <div class="mt-2 text-xs text-dark-500">
+                            Attempts: <span x-text="entry.attempts"></span> | 
+                            Exit code: <span x-text="entry.exit_code"></span>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="dlqEntries.length === 0" class="text-center py-12 text-dark-400">
+                    <div class="text-4xl mb-2">✨</div>
+                    Dead Letter Queue is empty
+                </div>
+            </div>
+        </div>
+
+        <!-- Config Tab -->
+        <div x-show="currentTab === 'config'" x-cloak>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Jobs Config -->
+                <div class="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+                    <div class="p-4 border-b border-dark-600 flex items-center justify-between">
+                        <h3 class="font-medium">jobs.yaml</h3>
+                        <button @click="reloadConfig()" class="px-3 py-1.5 bg-accent-500/20 text-accent-400 hover:bg-accent-500/30 rounded text-sm transition">
+                            Reload Config
+                        </button>
+                    </div>
+                    <div class="h-[400px] overflow-auto scrollbar-thin p-4 bg-dark-900">
+                        <pre class="font-mono text-xs text-dark-300 whitespace-pre-wrap" x-text="configYaml"></pre>
+                    </div>
+                </div>
+
+                <!-- Daemon Info -->
+                <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                    <h3 class="font-medium mb-4">Daemon Info</h3>
+                    <div class="space-y-3">
+                        <div class="flex justify-between py-2 border-b border-dark-700">
+                            <span class="text-dark-400">Status</span>
+                            <span class="text-green-400" x-text="health.status"></span>
+                        </div>
+                        <div class="flex justify-between py-2 border-b border-dark-700">
+                            <span class="text-dark-400">Version</span>
+                            <span x-text="health.version"></span>
+                        </div>
+                        <div class="flex justify-between py-2 border-b border-dark-700">
+                            <span class="text-dark-400">Uptime</span>
+                            <span x-text="formatUptime(health.uptime_seconds)"></span>
+                        </div>
+                        <div class="flex justify-between py-2 border-b border-dark-700">
+                            <span class="text-dark-400">Jobs Running</span>
+                            <span x-text="health.jobs_running"></span>
+                        </div>
+                        <div class="flex justify-between py-2 border-b border-dark-700">
+                            <span class="text-dark-400">Total Jobs</span>
+                            <span x-text="health.jobs_total"></span>
+                        </div>
+                        <div class="flex justify-between py-2">
+                            <span class="text-dark-400">API Endpoint</span>
+                            <span class="text-dark-300 font-mono text-sm">localhost:9876</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Daemon Actions -->
+                    <div class="mt-4 pt-4 border-t border-dark-700 space-y-2">
+                        <button @click="restartDaemon()" class="w-full py-2 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded-lg text-sm transition">
+                            🔄 Restart Daemon
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Job Types Legend -->
+            <div class="mt-6 bg-dark-800 border border-dark-600 rounded-xl p-4">
+                <h3 class="font-medium mb-4">Job Types</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="flex items-start gap-3">
+                        <span class="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded-full">continuous</span>
+                        <p class="text-sm text-dark-400">Long-running jobs that should always be running. Auto-restart on crash.</p>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <span class="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded-full">scheduled</span>
+                        <p class="text-sm text-dark-400">Jobs triggered by cron schedule. Run, complete, wait for next schedule.</p>
+                    </div>
+                    <div class="flex items-start gap-3">
+                        <span class="px-2 py-1 bg-purple-500/20 text-purple-400 text-xs rounded-full">manual</span>
+                        <p class="text-sm text-dark-400">Jobs triggered manually via API or CLI. No auto-scheduling.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Job Detail Modal -->
+    <div x-show="selectedJob" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="selectedJob = null">
+        <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-2xl max-h-[80vh] overflow-hidden" @click.stop>
+            <div class="p-4 border-b border-dark-600 flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-medium" x-text="selectedJob?.id"></h2>
+                    <p class="text-sm text-dark-400" x-text="selectedJob?.name"></p>
+                </div>
+                <button @click="selectedJob = null" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
+            </div>
+            <div class="p-4 overflow-auto max-h-[60vh] scrollbar-thin">
+                <template x-if="selectedJob">
+                    <div class="space-y-4">
+                        <!-- Status -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-dark-700 rounded-lg p-3">
+                                <div class="text-xs text-dark-400 mb-1">Status</div>
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 rounded-full" :class="selectedJob.status === 'running' ? 'bg-green-500' : selectedJob.status === 'failed' ? 'bg-red-500' : 'bg-dark-500'"></span>
+                                    <span x-text="selectedJob.status"></span>
+                                </div>
+                            </div>
+                            <div class="bg-dark-700 rounded-lg p-3">
+                                <div class="text-xs text-dark-400 mb-1">Type</div>
+                                <div x-text="selectedJob.type"></div>
+                            </div>
+                            <div class="bg-dark-700 rounded-lg p-3">
+                                <div class="text-xs text-dark-400 mb-1">PID</div>
+                                <div x-text="selectedJob.pid || '-'"></div>
+                            </div>
+                            <div class="bg-dark-700 rounded-lg p-3">
+                                <div class="text-xs text-dark-400 mb-1">Restarts</div>
+                                <div x-text="selectedJob.restart_count || 0"></div>
+                            </div>
+                        </div>
+
+                        <!-- Description -->
+                        <div x-show="selectedJob.description" class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">Description</div>
+                            <div x-text="selectedJob.description"></div>
+                        </div>
+
+                        <!-- Tags -->
+                        <div x-show="selectedJob.tags?.length" class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-2">Tags</div>
+                            <div class="flex flex-wrap gap-2">
+                                <template x-for="tag in selectedJob.tags" :key="tag">
+                                    <span class="px-2 py-1 bg-dark-600 rounded text-sm" x-text="tag"></span>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Timing -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-dark-700 rounded-lg p-3">
+                                <div class="text-xs text-dark-400 mb-1">Started At</div>
+                                <div x-text="selectedJob.started_at ? formatDate(selectedJob.started_at) : '-'"></div>
+                            </div>
+                            <div class="bg-dark-700 rounded-lg p-3">
+                                <div class="text-xs text-dark-400 mb-1">Next Run</div>
+                                <div x-text="selectedJob.next_run ? formatDate(selectedJob.next_run) : '-'"></div>
+                            </div>
+                        </div>
+
+                                <!-- Command -->
+                        <div class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">Command</div>
+                            <div class="font-mono text-sm text-dark-200 break-all" x-text="selectedJob.cmd || '-'"></div>
+                        </div>
+
+                        <!-- Working Directory -->
+                        <div x-show="selectedJob.cwd" class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">Working Directory</div>
+                            <div class="font-mono text-sm text-dark-300 break-all" x-text="selectedJob.cwd"></div>
+                        </div>
+
+                        <!-- Schedule -->
+                        <div x-show="selectedJob.schedule" class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">Schedule</div>
+                            <div class="font-mono text-sm text-dark-200" x-text="selectedJob.schedule"></div>
+                        </div>
+
+                        <!-- Retry Config -->
+                        <div class="grid grid-cols-3 gap-4">
+                            <div class="bg-dark-700 rounded-lg p-3">
+                                <div class="text-xs text-dark-400 mb-1">Max Retries</div>
+                                <div x-text="selectedJob.max_retries || 0"></div>
+                            </div>
+                            <div class="bg-dark-700 rounded-lg p-3">
+                                <div class="text-xs text-dark-400 mb-1">Timeout</div>
+                                <div x-text="selectedJob.timeout_seconds ? selectedJob.timeout_seconds + 's' : '-'"></div>
+                            </div>
+                            <div class="bg-dark-700 rounded-lg p-3">
+                                <div class="text-xs text-dark-400 mb-1">Enabled</div>
+                                <div x-text="selectedJob.enabled ? 'Yes' : 'No'" :class="selectedJob.enabled ? 'text-green-400' : 'text-red-400'"></div>
+                            </div>
+                        </div>
+
+                        <!-- Run History -->
+                        <div class="bg-dark-700 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-2">Recent Runs</div>
+                            <div x-show="selectedJob.last_run" class="space-y-1 text-sm">
+                                <div class="flex justify-between">
+                                    <span class="text-dark-400">Last Run:</span>
+                                    <span x-text="formatDate(selectedJob.last_run?.started_at)"></span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-dark-400">Duration:</span>
+                                    <span x-text="selectedJob.last_run?.duration_seconds ? selectedJob.last_run.duration_seconds.toFixed(1) + 's' : '-'"></span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-dark-400">Exit Code:</span>
+                                    <span :class="selectedJob.last_run?.exit_code === 0 ? 'text-green-400' : 'text-red-400'" 
+                                        x-text="selectedJob.last_run?.exit_code ?? '-'"></span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span class="text-dark-400">Trigger:</span>
+                                    <span x-text="selectedJob.last_run?.trigger || '-'"></span>
+                                </div>
+                            </div>
+                            <div x-show="!selectedJob.last_run" class="text-dark-500 text-sm">No runs yet</div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="flex gap-2 pt-4 border-t border-dark-700">
+                            <button @click="startJob(selectedJob.id)" x-show="selectedJob.status !== 'running'"
+                                class="flex-1 py-2 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-lg transition">
+                                ▶️ Start
+                            </button>
+                            <button @click="stopJob(selectedJob.id)" x-show="selectedJob.status === 'running'"
+                                class="flex-1 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">
+                                ⏹️ Stop
+                            </button>
+                            <button @click="restartJob(selectedJob.id)"
+                                class="flex-1 py-2 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded-lg transition">
+                                🔄 Restart
+                            </button>
+                            <button @click="viewLogs(selectedJob.id); selectedJob = null"
+                                class="flex-1 py-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition">
+                                📜 Logs
+                            </button>
+                            <button @click="deleteJob(selectedJob.id)"
+                                class="flex-1 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">
+                                🗑️ Delete
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Job Modal -->
+    <div x-show="showCreateModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="showCreateModal = false">
+        <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-lg" @click.stop>
+            <div class="p-4 border-b border-dark-600 flex items-center justify-between">
+                <h2 class="text-lg font-medium">Create New Job</h2>
+                <button @click="showCreateModal = false" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
+            </div>
+            <form @submit.prevent="createJob()" class="p-4 space-y-4">
+                <div>
+                    <label class="block text-sm text-dark-400 mb-1">Job ID *</label>
+                    <input type="text" x-model="newJob.id" required class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
+                </div>
+                <div>
+                    <label class="block text-sm text-dark-400 mb-1">Name</label>
+                    <input type="text" x-model="newJob.name" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
+                </div>
+                <div>
+                    <label class="block text-sm text-dark-400 mb-1">Command *</label>
+                    <input type="text" x-model="newJob.cmd" required class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="python script.py">
+                </div>
+                <div>
+                    <label class="block text-sm text-dark-400 mb-1">Working Directory</label>
+                    <input type="text" x-model="newJob.cwd" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="/path/to/dir">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm text-dark-400 mb-1">Type</label>
+                        <select x-model="newJob.type" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none">
+                            <option value="manual">Manual</option>
+                            <option value="continuous">Continuous</option>
+                            <option value="scheduled">Scheduled</option>
+                        </select>
+                    </div>
+                    <div x-show="newJob.type === 'scheduled'">
+                        <label class="block text-sm text-dark-400 mb-1">Schedule (cron)</label>
+                        <input type="text" x-model="newJob.schedule" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="0 * * * *">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm text-dark-400 mb-1">Tags (comma-separated)</label>
+                    <input type="text" x-model="newJob.tags" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="tag1, tag2">
+                </div>
+                <div class="flex gap-2 pt-4">
+                    <button type="button" @click="showCreateModal = false" class="flex-1 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg transition">
+                        Cancel
+                    </button>
+                    <button type="submit" class="flex-1 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg transition">
+                        Create Job
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="fixed bottom-0 left-0 right-0 bg-dark-800 border-t border-dark-600 py-2 px-4 text-xs text-dark-400 flex justify-between items-center">
+        <div class="flex gap-4">
+            <span><kbd>r</kbd> Refresh</span>
+            <span><kbd>1-5</kbd> Tabs</span>
+            <span><kbd>/</kbd> Search</span>
+            <span><kbd>Esc</kbd> Close</span>
+        </div>
+        <div class="flex items-center gap-3">
+            <span>🦞 ProcClaw</span>
+            <span x-text="'v' + version"></span>
+            <span class="text-dark-500">|</span>
+            <span x-text="new Date().toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})"></span>
+        </div>
+    </footer>
+
+    <!-- Toast Notifications -->
+    <div class="fixed bottom-12 right-4 space-y-2 z-50">
+        <template x-for="toast in toasts" :key="toast.id">
+            <div class="px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 animate-slide-in"
+                :class="toast.type === 'success' ? 'bg-green-500/90' : toast.type === 'error' ? 'bg-red-500/90' : 'bg-dark-700'"
+                x-show="toast.visible"
+                x-transition:enter="transition ease-out duration-300"
+                x-transition:leave="transition ease-in duration-200">
+                <span x-text="toast.message"></span>
+            </div>
+        </template>
+    </div>
+
+    <script>
+        function app() {
+            return {
+                // State
+                currentTab: 'dashboard',
+                loading: false,
+                version: '0.1.0',
+                lastUpdate: null,
+                health: { status: 'unknown', version: '', uptime_seconds: 0, jobs_running: 0, jobs_total: 0 },
+                jobs: [],
+                stats: { total: 0, running: 0, failed: 0, byType: {}, byStatus: {} },
+                recentStats: { success: 0, failed: 0, runs: 0 },
+                dlqStats: { pending: 0, total: 0 },
+                dlqEntries: [],
+                logContent: [],
+                configYaml: '',
+                selectedJob: null,
+                showCreateModal: false,
+                toasts: [],
+                
+                // Filters
+                filters: { search: '', type: '', status: '', tag: '' },
+                selectedLogJob: 'daemon',
+                logType: 'stdout',
+                logLines: 100,
+                logFilter: '',
+                autoRefreshLogs: false,
+                
+                // New job form
+                newJob: { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', tags: '' },
+                
+                // Computed
+                get filteredJobs() {
+                    return this.jobs.filter(job => {
+                        if (this.filters.search && !job.id.toLowerCase().includes(this.filters.search.toLowerCase()) && 
+                            !job.name?.toLowerCase().includes(this.filters.search.toLowerCase())) return false;
+                        if (this.filters.type && job.type !== this.filters.type) return false;
+                        if (this.filters.status && job.status !== this.filters.status) return false;
+                        if (this.filters.tag && !(job.tags || []).includes(this.filters.tag)) return false;
+                        return true;
+                    });
+                },
+                
+                get allTags() {
+                    const tags = new Set();
+                    this.jobs.forEach(job => (job.tags || []).forEach(tag => tags.add(tag)));
+                    return Array.from(tags).sort();
+                },
+
+                get filteredLogs() {
+                    if (!this.logFilter) return this.logContent;
+                    const filter = this.logFilter.toLowerCase();
+                    return this.logContent.filter(line => line.toLowerCase().includes(filter));
+                },
+
+                // Init
+                async init() {
+                    await this.refresh();
+                    setInterval(() => this.refresh(), 10000);
+                    setInterval(() => {
+                        if (this.autoRefreshLogs && this.currentTab === 'logs') this.loadLogs();
+                    }, 5000);
+                    
+                    // Keyboard shortcuts
+                    document.addEventListener('keydown', (e) => {
+                        // Ignore if typing in input
+                        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+                        
+                        if (e.key === 'r' && !e.metaKey && !e.ctrlKey) { this.refresh(); e.preventDefault(); }
+                        if (e.key === '1') { this.currentTab = 'dashboard'; e.preventDefault(); }
+                        if (e.key === '2') { this.currentTab = 'jobs'; e.preventDefault(); }
+                        if (e.key === '3') { this.currentTab = 'logs'; e.preventDefault(); }
+                        if (e.key === '4') { this.currentTab = 'dlq'; e.preventDefault(); }
+                        if (e.key === '5') { this.currentTab = 'config'; e.preventDefault(); }
+                        if (e.key === 'Escape') { this.selectedJob = null; this.showCreateModal = false; }
+                        if (e.key === '/' && this.currentTab === 'jobs') { 
+                            document.querySelector('input[placeholder="Search jobs..."]')?.focus(); 
+                            e.preventDefault(); 
+                        }
+                    });
+                },
+
+                // API
+                async api(endpoint, method = 'GET', body = null) {
+                    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+                    if (body) opts.body = JSON.stringify(body);
+                    const res = await fetch(`/api/v1${endpoint}`, opts);
+                    return res.json();
+                },
+
+                async refresh() {
+                    this.loading = true;
+                    try {
+                        const [healthRes, jobsRes, dlqRes, statsRes] = await Promise.all([
+                            fetch('/health').then(r => r.json()),
+                            this.api('/jobs'),
+                            this.api('/dlq/stats').catch(() => ({ pending: 0, total: 0 })),
+                            this.api('/stats/recent').catch(() => ({ success: 0, failed: 0, runs: 0 }))
+                        ]);
+                        
+                        this.recentStats = statsRes;
+                        
+                        this.health = healthRes;
+                        this.version = healthRes.version;
+                        this.jobs = jobsRes.jobs || [];
+                        this.dlqStats = dlqRes;
+                        
+                        // Calculate stats
+                        this.stats = {
+                            total: this.jobs.length,
+                            running: this.jobs.filter(j => j.status === 'running').length,
+                            failed: this.jobs.filter(j => j.status === 'failed').length,
+                            byType: {},
+                            byStatus: {}
+                        };
+                        this.jobs.forEach(j => {
+                            this.stats.byType[j.type] = (this.stats.byType[j.type] || 0) + 1;
+                            this.stats.byStatus[j.status] = (this.stats.byStatus[j.status] || 0) + 1;
+                        });
+                        
+                        // Load DLQ entries if on that tab
+                        if (this.currentTab === 'dlq') await this.loadDlq();
+                        
+                    this.lastUpdate = new Date();
+                        
+                    } catch (e) {
+                        console.error('Refresh failed:', e);
+                        this.health.status = 'offline';
+                    }
+                    this.loading = false;
+                },
+
+                // Jobs
+                async startJob(id) {
+                    const res = await this.api(`/jobs/${id}/start`, 'POST');
+                    this.toast(res.success ? `Started ${id}` : `Failed: ${res.message}`, res.success ? 'success' : 'error');
+                    await this.refresh();
+                },
+
+                async stopJob(id) {
+                    const res = await this.api(`/jobs/${id}/stop`, 'POST');
+                    this.toast(res.success ? `Stopped ${id}` : `Failed: ${res.message}`, res.success ? 'success' : 'error');
+                    await this.refresh();
+                },
+
+                async restartJob(id) {
+                    const res = await this.api(`/jobs/${id}/restart`, 'POST');
+                    this.toast(res.success ? `Restarted ${id}` : `Failed: ${res.message}`, res.success ? 'success' : 'error');
+                    await this.refresh();
+                },
+
+                selectJob(job) {
+                    this.selectedJob = job;
+                },
+
+                async createJob() {
+                    // For now, show instructions since we need to edit jobs.yaml
+                    this.toast('Add job to ~/.procclaw/jobs.yaml and reload config', 'info');
+                    this.showCreateModal = false;
+                },
+
+                async deleteJob(id) {
+                    if (!confirm(`Delete job "${id}"? This will remove it from jobs.yaml.`)) return;
+                    const res = await this.api(`/jobs/${id}`, 'DELETE');
+                    this.toast(res.success ? `Deleted ${id}` : `Failed: ${res.error || 'Unknown error'}`, res.success ? 'success' : 'error');
+                    this.selectedJob = null;
+                    await this.refresh();
+                },
+
+                async restartDaemon() {
+                    if (!confirm('Restart the daemon? All running jobs will be stopped and restarted.')) return;
+                    this.toast('Restarting daemon...', 'info');
+                    try {
+                        await fetch('/api/v1/daemon/restart', { method: 'POST' });
+                        await new Promise(r => setTimeout(r, 3000));
+                        await this.refresh();
+                        this.toast('Daemon restarted', 'success');
+                    } catch (e) {
+                        this.toast('Daemon restart initiated - refresh in a few seconds', 'info');
+                    }
+                },
+
+                async toggleJob(id, currentEnabled) {
+                    const action = currentEnabled ? 'disable' : 'enable';
+                    const res = await this.api(`/jobs/${id}/${action}`, 'POST');
+                    this.toast(res.success ? `Job ${action}d` : `Failed: ${res.error || 'Unknown error'}`, res.success ? 'success' : 'error');
+                    await this.refresh();
+                },
+
+                // Logs
+                async loadLogs() {
+                    try {
+                        const endpoint = this.selectedLogJob === 'daemon' 
+                            ? `/daemon/logs?lines=${this.logLines}&type=${this.logType}`
+                            : `/jobs/${this.selectedLogJob}/logs?lines=${this.logLines}&type=${this.logType}`;
+                        const res = await this.api(endpoint);
+                        this.logContent = res.lines || [];
+                    } catch (e) {
+                        this.logContent = ['Failed to load logs'];
+                    }
+                },
+
+                viewLogs(jobId) {
+                    this.selectedLogJob = jobId;
+                    this.currentTab = 'logs';
+                    this.loadLogs();
+                },
+
+                downloadLogs() {
+                    const content = this.filteredLogs.join('\n');
+                    const blob = new Blob([content], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${this.selectedLogJob}-${this.logType}-${new Date().toISOString().slice(0,10)}.log`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    this.toast('Logs downloaded', 'success');
+                },
+
+                // DLQ
+                async loadDlq() {
+                    try {
+                        const res = await this.api('/dlq');
+                        this.dlqEntries = res.entries || [];
+                    } catch (e) {
+                        this.dlqEntries = [];
+                    }
+                },
+
+                async reinjectDlq(id) {
+                    const res = await this.api(`/dlq/${id}/reinject`, 'POST');
+                    this.toast(res.success ? 'Reinjected' : 'Failed', res.success ? 'success' : 'error');
+                    await this.loadDlq();
+                },
+
+                async deleteDlq(id) {
+                    await this.api(`/dlq/${id}`, 'DELETE');
+                    await this.loadDlq();
+                },
+
+                async reinjectAllDlq() {
+                    for (const entry of this.dlqEntries) {
+                        await this.api(`/dlq/${entry.id}/reinject`, 'POST');
+                    }
+                    this.toast('Reinjected all', 'success');
+                    await this.loadDlq();
+                },
+
+                async purgeDlq() {
+                    await this.api('/dlq?older_than_days=7', 'DELETE');
+                    this.toast('Purged old entries', 'success');
+                    await this.loadDlq();
+                },
+
+                // Config
+                async reloadConfig() {
+                    const res = await this.api('/reload', 'POST');
+                    this.toast(res.success ? 'Config reloaded' : 'Failed', res.success ? 'success' : 'error');
+                    await this.refresh();
+                },
+
+                // Helpers
+                getUpcomingJobs() {
+                    return this.jobs
+                        .filter(j => j.next_run && j.enabled)
+                        .sort((a, b) => new Date(a.next_run) - new Date(b.next_run))
+                        .slice(0, 5);
+                },
+
+                formatDate(dateStr) {
+                    if (!dateStr) return '-';
+                    const d = new Date(dateStr);
+                    return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+                },
+
+                formatNextRun(dateStr) {
+                    if (!dateStr) return '-';
+                    const d = new Date(dateStr);
+                    const now = new Date();
+                    const diff = d - now;
+                    if (diff < 0) return 'overdue';
+                    if (diff < 3600000) return `in ${Math.round(diff / 60000)}m`;
+                    if (diff < 86400000) return `in ${Math.round(diff / 3600000)}h`;
+                    return d.toLocaleDateString('pt-BR');
+                },
+
+                formatUptime(seconds) {
+                    if (!seconds) return '-';
+                    const h = Math.floor(seconds / 3600);
+                    const m = Math.floor((seconds % 3600) / 60);
+                    if (h > 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+                    if (h > 0) return `${h}h ${m}m`;
+                    return `${m}m`;
+                },
+
+                formatTime(date) {
+                    if (!date) return '';
+                    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                },
+
+                toast(message, type = 'info') {
+                    const id = Date.now();
+                    this.toasts.push({ id, message, type, visible: true });
+                    setTimeout(() => {
+                        const idx = this.toasts.findIndex(t => t.id === id);
+                        if (idx > -1) this.toasts.splice(idx, 1);
+                    }, 3000);
+                }
+            };
+        }
+    </script>
+</body>
+</html>

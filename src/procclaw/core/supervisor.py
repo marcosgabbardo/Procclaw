@@ -483,6 +483,99 @@ class Supervisor:
         
         return result
 
+    def set_job_enabled(self, job_id: str, enabled: bool) -> bool:
+        """Enable or disable a job.
+        
+        Args:
+            job_id: The job to enable/disable
+            enabled: True to enable, False to disable
+            
+        Returns:
+            True if the job was updated
+        """
+        import yaml
+        
+        job = self.jobs.get_job(job_id)
+        if not job:
+            return False
+        
+        from procclaw.config import DEFAULT_JOBS_FILE
+        
+        jobs_file = DEFAULT_JOBS_FILE
+        if not jobs_file.exists():
+            return False
+        
+        try:
+            with open(jobs_file) as f:
+                config = yaml.safe_load(f)
+            
+            if "jobs" not in config or job_id not in config["jobs"]:
+                return False
+            
+            config["jobs"][job_id]["enabled"] = enabled
+            
+            with open(jobs_file, "w") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            
+            # Reload config
+            self.reload_jobs()
+            
+            logger.info(f"Job '{job_id}' {'enabled' if enabled else 'disabled'}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to set job '{job_id}' enabled={enabled}: {e}")
+            return False
+
+    def delete_job(self, job_id: str) -> bool:
+        """Delete a job from the configuration.
+        
+        Args:
+            job_id: The job to delete
+            
+        Returns:
+            True if the job was deleted
+        """
+        import yaml
+        from procclaw.config import DEFAULT_JOBS_FILE
+        
+        job = self.jobs.get_job(job_id)
+        if not job:
+            return False
+        
+        # Stop if running
+        if self.is_job_running(job_id):
+            self.stop_job(job_id, force=True)
+        
+        # Remove from jobs config
+        jobs_file = DEFAULT_JOBS_FILE
+        if not jobs_file.exists():
+            return False
+        
+        try:
+            with open(jobs_file) as f:
+                config = yaml.safe_load(f)
+            
+            if "jobs" not in config or job_id not in config["jobs"]:
+                return False
+            
+            # Remove the job
+            del config["jobs"][job_id]
+            
+            # Write back
+            with open(jobs_file, "w") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            
+            # Reload config
+            self.reload_jobs()
+            
+            logger.info(f"Deleted job '{job_id}'")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to delete job '{job_id}': {e}")
+            return False
+
     def get_job_status(self, job_id: str) -> dict | None:
         """Get detailed status of a job."""
         job = self.jobs.get_job(job_id)
@@ -544,6 +637,12 @@ class Supervisor:
                 "trigger": last_run.trigger if last_run else None,
             } if last_run else None,
             "tags": job.tags,
+            # Additional fields for detail view
+            "cmd": job.cmd,
+            "cwd": job.cwd,
+            "schedule": job.schedule,
+            "max_retries": job.retry.max_attempts if job.retry else 0,
+            "timeout_seconds": job.shutdown.grace_period if job.shutdown else 60,
         }
 
     def list_jobs(self) -> list[dict]:
@@ -953,6 +1052,71 @@ class Supervisor:
             List of DLQ entries
         """
         return self._dlq.list(include_reinjected=not pending_only)
+
+    def list_dlq_entries(self, pending_only: bool = True, job_id: str | None = None) -> list[dict]:
+        """Get entries from the DLQ as dicts for API.
+        
+        Args:
+            pending_only: If True, only return entries not yet reinjected
+            job_id: Filter by job ID
+            
+        Returns:
+            List of DLQ entry dicts
+        """
+        entries = self.get_dlq_entries(pending_only=pending_only)
+        result = []
+        for e in entries:
+            if job_id and e.job_id != job_id:
+                continue
+            result.append({
+                "id": str(e.id),
+                "job_id": e.job_id,
+                "error": e.error,
+                "attempts": e.attempt_count,
+                "exit_code": e.exit_code,
+                "failed_at": e.failed_at.isoformat() if e.failed_at else None,
+                "reinjected": e.reinjected,
+            })
+        return result
+
+    def delete_dlq_entry(self, entry_id: str) -> bool:
+        """Delete a single DLQ entry.
+        
+        Args:
+            entry_id: The DLQ entry ID
+            
+        Returns:
+            True if deletion was successful
+        """
+        try:
+            # Mark as reinjected to effectively "delete" it from pending
+            self._dlq.reinject(int(entry_id), on_reinject=lambda *args: 0)
+            return True
+        except Exception:
+            return False
+
+    def get_recent_stats(self, hours: int = 24) -> dict:
+        """Get run statistics for the last N hours.
+        
+        Args:
+            hours: Number of hours to look back
+            
+        Returns:
+            Dict with success, failed, and total runs count
+        """
+        from datetime import timedelta
+        
+        cutoff = datetime.now() - timedelta(hours=hours)
+        runs = self.db.get_runs(since=cutoff, limit=1000)
+        
+        success = sum(1 for r in runs if r.exit_code == 0)
+        failed = sum(1 for r in runs if r.exit_code != 0 and r.exit_code is not None)
+        
+        return {
+            "success": success,
+            "failed": failed,
+            "runs": len(runs),
+        }
 
     def get_dlq_stats(self) -> dict:
         """Get DLQ statistics."""

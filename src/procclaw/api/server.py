@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Security
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from procclaw.core.supervisor import Supervisor
+
+# Static files directory
+STATIC_DIR = Path(__file__).parent.parent / "web" / "static"
 
 # Global supervisor reference (set by daemon)
 _supervisor: "Supervisor | None" = None
@@ -85,6 +91,12 @@ class JobDetail(JobSummary):
     cpu_percent: float | None = None
     memory_mb: float | None = None
     last_run: dict | None = None
+    # Additional fields for detail view
+    cmd: str | None = None
+    cwd: str | None = None
+    schedule: str | None = None
+    max_retries: int | None = None
+    timeout_seconds: int | None = None
 
 
 class JobListResponse(BaseModel):
@@ -227,6 +239,11 @@ def create_app() -> FastAPI:
             memory_mb=job_status.get("memory_mb"),
             last_run=job_status.get("last_run"),
             tags=job_status.get("tags", []),
+            cmd=job_status.get("cmd"),
+            cwd=job_status.get("cwd"),
+            schedule=job_status.get("schedule"),
+            max_retries=job_status.get("max_retries"),
+            timeout_seconds=job_status.get("timeout_seconds"),
         )
 
     @app.post("/api/v1/jobs/{job_id}/start", response_model=ActionResponse)
@@ -306,6 +323,73 @@ def create_app() -> FastAPI:
             job_id=job_id,
             pid=pid,
         )
+
+    @app.delete("/api/v1/jobs/{job_id}")
+    async def delete_job(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Delete a job from the configuration."""
+        supervisor = get_supervisor()
+        
+        # Stop if running
+        if supervisor.is_job_running(job_id):
+            supervisor.stop_job(job_id, force=True)
+        
+        try:
+            success = supervisor.delete_job(job_id)
+            if success:
+                return {"success": True, "message": f"Job '{job_id}' deleted"}
+            else:
+                return {"success": False, "error": f"Job '{job_id}' not found"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.post("/api/v1/jobs/{job_id}/enable")
+    async def enable_job(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Enable a job."""
+        supervisor = get_supervisor()
+        
+        try:
+            success = supervisor.set_job_enabled(job_id, True)
+            return {"success": success}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.post("/api/v1/jobs/{job_id}/disable")
+    async def disable_job(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Disable a job."""
+        supervisor = get_supervisor()
+        
+        # Stop if running
+        if supervisor.is_job_running(job_id):
+            supervisor.stop_job(job_id)
+        
+        try:
+            success = supervisor.set_job_enabled(job_id, False)
+            return {"success": success}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.post("/api/v1/daemon/restart")
+    async def restart_daemon(_auth: bool = Depends(verify_token)):
+        """Restart the daemon (all jobs will be stopped and restarted)."""
+        import os
+        import signal
+        
+        # Schedule a delayed restart
+        async def do_restart():
+            await asyncio.sleep(1)
+            os.kill(os.getpid(), signal.SIGTERM)
+        
+        asyncio.create_task(do_restart())
+        return {"success": True, "message": "Daemon restarting..."}
 
     @app.post("/api/v1/jobs/{job_id}/run", response_model=ActionResponse)
     async def run_job(
@@ -790,6 +874,157 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"No results for job '{job_id}'")
         
         return result.to_dict()
+
+    # =========================================================================
+    # Static Files & Web UI
+    # =========================================================================
+
+    @app.get("/", response_class=HTMLResponse)
+    async def index():
+        """Serve the web UI."""
+        index_file = STATIC_DIR / "index.html"
+        if index_file.exists():
+            return FileResponse(index_file)
+        return HTMLResponse("<h1>ProcClaw</h1><p>Web UI not found</p>")
+
+    # Mount static files if directory exists
+    if STATIC_DIR.exists():
+        app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    # =========================================================================
+    # Additional Endpoints for Web UI
+    # =========================================================================
+
+    @app.get("/api/v1/jobs/{job_id}/logs")
+    async def get_job_logs(
+        job_id: str,
+        lines: int = Query(100, description="Number of lines"),
+        type: str = Query("stdout", description="Log type: stdout or stderr"),
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get job logs."""
+        from procclaw.config import DEFAULT_LOGS_DIR
+        
+        log_file = DEFAULT_LOGS_DIR / f"{job_id}.{'error.' if type == 'stderr' else ''}log"
+        
+        if not log_file.exists():
+            return {"job_id": job_id, "lines": [], "total_lines": 0}
+        
+        try:
+            with open(log_file, "r") as f:
+                all_lines = f.readlines()
+                return {
+                    "job_id": job_id,
+                    "lines": [l.rstrip() for l in all_lines[-lines:]],
+                    "total_lines": len(all_lines),
+                }
+        except Exception as e:
+            return {"job_id": job_id, "lines": [f"Error reading logs: {e}"], "total_lines": 0}
+
+    @app.get("/api/v1/daemon/logs")
+    async def get_daemon_logs(
+        lines: int = Query(100, description="Number of lines"),
+        type: str = Query("stdout", description="Log type: stdout or stderr"),
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get daemon logs."""
+        from procclaw.config import DEFAULT_LOGS_DIR
+        
+        log_file = DEFAULT_LOGS_DIR / f"daemon.{'error.' if type == 'stderr' else ''}log"
+        
+        if not log_file.exists():
+            return {"job_id": "daemon", "lines": [], "total_lines": 0}
+        
+        try:
+            with open(log_file, "r") as f:
+                all_lines = f.readlines()
+                return {
+                    "job_id": "daemon",
+                    "lines": [l.rstrip() for l in all_lines[-lines:]],
+                    "total_lines": len(all_lines),
+                }
+        except Exception as e:
+            return {"job_id": "daemon", "lines": [f"Error reading logs: {e}"], "total_lines": 0}
+
+    @app.get("/api/v1/dlq")
+    async def list_dlq(
+        pending_only: bool = Query(False),
+        job_id: str | None = Query(None),
+        _auth: bool = Depends(verify_token),
+    ):
+        """List DLQ entries."""
+        supervisor = get_supervisor()
+        
+        try:
+            entries = supervisor.list_dlq_entries(pending_only=pending_only, job_id=job_id)
+            return {"entries": entries, "total": len(entries)}
+        except Exception:
+            return {"entries": [], "total": 0}
+
+    @app.get("/api/v1/dlq/stats")
+    async def dlq_stats(_auth: bool = Depends(verify_token)):
+        """Get DLQ statistics."""
+        supervisor = get_supervisor()
+        
+        try:
+            stats = supervisor.get_dlq_stats()
+            return stats
+        except Exception:
+            return {"pending": 0, "total": 0}
+
+    @app.get("/api/v1/stats/recent")
+    async def recent_stats(_auth: bool = Depends(verify_token)):
+        """Get recent run statistics (last 24h)."""
+        supervisor = get_supervisor()
+        
+        try:
+            stats = supervisor.get_recent_stats(hours=24)
+            return stats
+        except Exception:
+            return {"success": 0, "failed": 0, "runs": 0}
+
+    @app.post("/api/v1/dlq/{entry_id}/reinject")
+    async def reinject_dlq(
+        entry_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Reinject a DLQ entry."""
+        supervisor = get_supervisor()
+        
+        try:
+            success = supervisor.reinject_dlq_entry(entry_id)
+            return {"success": success, "entry_id": entry_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.delete("/api/v1/dlq/{entry_id}")
+    async def delete_dlq(
+        entry_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Delete a DLQ entry."""
+        supervisor = get_supervisor()
+        
+        try:
+            success = supervisor.delete_dlq_entry(entry_id)
+            return {"success": success, "entry_id": entry_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.delete("/api/v1/dlq")
+    async def purge_dlq(
+        older_than_days: int = Query(7),
+        job_id: str | None = Query(None),
+        _auth: bool = Depends(verify_token),
+    ):
+        """Purge old DLQ entries."""
+        supervisor = get_supervisor()
+        
+        try:
+            count = supervisor.purge_dlq(older_than_days=older_than_days, job_id=job_id)
+            return {"success": True, "purged": count}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     return app
 
