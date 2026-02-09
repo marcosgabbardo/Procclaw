@@ -576,6 +576,182 @@ class Supervisor:
             logger.error(f"Failed to delete job '{job_id}': {e}")
             return False
 
+    def update_job(self, job_id: str, updates: dict) -> bool:
+        """Update job attributes in the configuration.
+        
+        Args:
+            job_id: The job to update
+            updates: Dictionary of attributes to update (name, description, tags, cmd, cwd, schedule, etc.)
+            
+        Returns:
+            True if the job was updated
+        """
+        import yaml
+        from procclaw.config import DEFAULT_JOBS_FILE
+        
+        job = self.jobs.get_job(job_id)
+        if not job:
+            return False
+        
+        jobs_file = DEFAULT_JOBS_FILE
+        if not jobs_file.exists():
+            return False
+        
+        # Allowed fields to update
+        allowed_fields = {
+            "name", "description", "tags", "cmd", "cwd", "env", "enabled",
+            "schedule", "timezone", "type", "priority"
+        }
+        
+        try:
+            with open(jobs_file) as f:
+                config = yaml.safe_load(f)
+            
+            if "jobs" not in config or job_id not in config["jobs"]:
+                return False
+            
+            # Apply updates
+            for key, value in updates.items():
+                if key in allowed_fields:
+                    config["jobs"][job_id][key] = value
+            
+            # Track modification time in metadata
+            if "_metadata" not in config["jobs"][job_id]:
+                config["jobs"][job_id]["_metadata"] = {}
+            config["jobs"][job_id]["_metadata"]["updated_at"] = datetime.now().isoformat()
+            
+            with open(jobs_file, "w") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            
+            # Reload config
+            self.reload_jobs()
+            
+            logger.info(f"Updated job '{job_id}': {list(updates.keys())}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to update job '{job_id}': {e}")
+            return False
+
+    def add_job_tag(self, job_id: str, tag: str) -> bool:
+        """Add a tag to a job.
+        
+        Args:
+            job_id: The job to update
+            tag: Tag to add
+            
+        Returns:
+            True if the tag was added
+        """
+        import yaml
+        from procclaw.config import DEFAULT_JOBS_FILE
+        
+        job = self.jobs.get_job(job_id)
+        if not job:
+            return False
+        
+        if tag in job.tags:
+            return True  # Already has tag
+        
+        jobs_file = DEFAULT_JOBS_FILE
+        if not jobs_file.exists():
+            return False
+        
+        try:
+            with open(jobs_file) as f:
+                config = yaml.safe_load(f)
+            
+            if "jobs" not in config or job_id not in config["jobs"]:
+                return False
+            
+            tags = config["jobs"][job_id].get("tags", [])
+            if tag not in tags:
+                tags.append(tag)
+                config["jobs"][job_id]["tags"] = tags
+            
+            with open(jobs_file, "w") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            
+            self.reload_jobs()
+            logger.info(f"Added tag '{tag}' to job '{job_id}'")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to add tag to job '{job_id}': {e}")
+            return False
+
+    def remove_job_tag(self, job_id: str, tag: str) -> bool:
+        """Remove a tag from a job.
+        
+        Args:
+            job_id: The job to update
+            tag: Tag to remove
+            
+        Returns:
+            True if the tag was removed
+        """
+        import yaml
+        from procclaw.config import DEFAULT_JOBS_FILE
+        
+        job = self.jobs.get_job(job_id)
+        if not job:
+            return False
+        
+        if tag not in job.tags:
+            return True  # Doesn't have tag
+        
+        jobs_file = DEFAULT_JOBS_FILE
+        if not jobs_file.exists():
+            return False
+        
+        try:
+            with open(jobs_file) as f:
+                config = yaml.safe_load(f)
+            
+            if "jobs" not in config or job_id not in config["jobs"]:
+                return False
+            
+            tags = config["jobs"][job_id].get("tags", [])
+            if tag in tags:
+                tags.remove(tag)
+                config["jobs"][job_id]["tags"] = tags
+            
+            with open(jobs_file, "w") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            
+            self.reload_jobs()
+            logger.info(f"Removed tag '{tag}' from job '{job_id}'")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to remove tag from job '{job_id}': {e}")
+            return False
+
+    def get_job_dependencies_graph(self) -> dict:
+        """Get job dependencies as a graph structure.
+        
+        Returns:
+            Dictionary with job dependency relationships
+        """
+        graph = {"nodes": [], "edges": []}
+        
+        for job_id, job in self.jobs.jobs.items():
+            graph["nodes"].append({
+                "id": job_id,
+                "name": job.name,
+                "type": job.type.value,
+                "tags": job.tags,
+            })
+            
+            for dep in job.depends_on:
+                graph["edges"].append({
+                    "from": dep.job,
+                    "to": job_id,
+                    "condition": dep.condition.value,
+                })
+        
+        return graph
+
     def get_job_status(self, job_id: str) -> dict | None:
         """Get detailed status of a job."""
         job = self.jobs.get_job(job_id)
@@ -612,6 +788,40 @@ class Supervisor:
         # Get next scheduled run
         next_run = self._scheduler.get_next_run(job_id)
 
+        # Get dependencies
+        depends_on = [
+            {
+                "job": dep.job,
+                "condition": dep.condition.value,
+            }
+            for dep in job.depends_on
+        ]
+        
+        # Find jobs that depend on this one
+        dependents = []
+        for other_id, other_job in self.jobs.jobs.items():
+            for dep in other_job.depends_on:
+                if dep.job == job_id:
+                    dependents.append({
+                        "job": other_id,
+                        "condition": dep.condition.value,
+                    })
+        
+        # Get metadata from YAML (created_at, updated_at)
+        import yaml
+        from procclaw.config import DEFAULT_JOBS_FILE
+        created_at = None
+        updated_at = None
+        try:
+            with open(DEFAULT_JOBS_FILE) as f:
+                config = yaml.safe_load(f)
+            if config and "jobs" in config and job_id in config["jobs"]:
+                metadata = config["jobs"][job_id].get("_metadata", {})
+                created_at = metadata.get("created_at")
+                updated_at = metadata.get("updated_at")
+        except Exception:
+            pass
+        
         return {
             "id": job_id,
             "name": job.name,
@@ -643,6 +853,12 @@ class Supervisor:
             "schedule": job.schedule,
             "max_retries": job.retry.max_attempts if job.retry else 0,
             "timeout_seconds": job.shutdown.grace_period if job.shutdown else 60,
+            # Dependencies
+            "depends_on": depends_on,
+            "dependents": dependents,
+            # Metadata
+            "created_at": created_at,
+            "updated_at": updated_at,
         }
 
     def list_jobs(self) -> list[dict]:

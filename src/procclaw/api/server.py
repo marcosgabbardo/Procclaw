@@ -345,6 +345,62 @@ def create_app() -> FastAPI:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @app.patch("/api/v1/jobs/{job_id}")
+    async def update_job(
+        job_id: str,
+        updates: dict,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Update job attributes."""
+        supervisor = get_supervisor()
+        
+        try:
+            success = supervisor.update_job(job_id, updates)
+            if success:
+                return {"success": True, "message": f"Job '{job_id}' updated"}
+            else:
+                return {"success": False, "error": f"Job '{job_id}' not found"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.post("/api/v1/jobs/{job_id}/tags/{tag}")
+    async def add_job_tag(
+        job_id: str,
+        tag: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Add a tag to a job."""
+        supervisor = get_supervisor()
+        
+        try:
+            success = supervisor.add_job_tag(job_id, tag)
+            return {"success": success}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.delete("/api/v1/jobs/{job_id}/tags/{tag}")
+    async def remove_job_tag(
+        job_id: str,
+        tag: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Remove a tag from a job."""
+        supervisor = get_supervisor()
+        
+        try:
+            success = supervisor.remove_job_tag(job_id, tag)
+            return {"success": success}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.get("/api/v1/dependencies")
+    async def get_dependencies(
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get job dependency graph."""
+        supervisor = get_supervisor()
+        return supervisor.get_job_dependencies_graph()
+
     @app.post("/api/v1/jobs/{job_id}/enable")
     async def enable_job(
         job_id: str,
