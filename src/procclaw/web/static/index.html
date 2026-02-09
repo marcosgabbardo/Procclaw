@@ -2155,7 +2155,13 @@
                     const opts = { method, headers: { 'Content-Type': 'application/json' } };
                     if (body) opts.body = JSON.stringify(body);
                     const res = await fetch(`/api/v1${endpoint}`, opts);
-                    return res.json();
+                    const data = await res.json();
+                    // Normalize error responses (FastAPI uses 'detail', we use 'message')
+                    if (!res.ok && data.detail && !data.message) {
+                        data.message = data.detail;
+                        data.success = false;
+                    }
+                    return data;
                 },
 
                 async refresh() {
