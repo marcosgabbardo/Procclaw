@@ -510,7 +510,7 @@ ConnectionError: Failed to connect to api.example.com
 
 ---
 
-## Estimated Total: ~18h
+## Estimated Total: ~22h
 
 | Phase | Time |
 |-------|------|
@@ -520,9 +520,10 @@ ConnectionError: Failed to connect to api.example.com
 | Action Executor | 3h |
 | Validation Loop | 2h |
 | Integration (Backend) | 2h |
-| Web UI | 4h |
+| Web UI - Runs/Status | 3h |
+| Web UI - Job Config | 3h |
 | Testing | 2h |
-| **Total** | **18h** |
+| **Total** | **22h** |
 
 ---
 
@@ -665,6 +666,132 @@ POST /api/v1/runs/{run_id}/healing/reject
     Reject pending healing action
 ```
 
+### Job Create/Edit Modal - Self-Healing Config
+
+Nova aba ou seção no modal de criação/edição de jobs:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Edit Job: stock-hunter                                       ✕  │
+├─────────────────────────────────────────────────────────────────┤
+│ [General] [Schedule] [Alerts] [🔧 Self-Healing] [Advanced]     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│ 🔧 Self-Healing Configuration                                   │
+│                                                                 │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ [✓] Enable Self-Healing                                     │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ ── Analysis ──────────────────────────────────────────────────  │
+│                                                                 │
+│ Log lines to include:    [200    ] ▼                           │
+│ [✓] Include stderr                                              │
+│ [✓] Include run history  Count: [5 ] ▼                         │
+│ [✓] Include job config                                          │
+│                                                                 │
+│ ── Remediation ───────────────────────────────────────────────  │
+│                                                                 │
+│ [✓] Enable auto-remediation                                     │
+│                                                                 │
+│ Max attempts:            [3     ] ▼                            │
+│                                                                 │
+│ Allowed actions:                                                │
+│ [✓] restart_job         [✓] edit_script                        │
+│ [✓] edit_config         [ ] run_command                        │
+│ [ ] edit_openclaw_cron  [ ] restart_service                    │
+│                                                                 │
+│ [ ] Require approval before applying fix                        │
+│                                                                 │
+│ Additional forbidden paths (one per line):                      │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ ~/secrets/                                                  │ │
+│ │ ~/.myapp/credentials/                                       │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ ── Notifications ─────────────────────────────────────────────  │
+│                                                                 │
+│ [ ] Notify on analysis start                                    │
+│ [✓] Notify on fix attempt                                       │
+│ [✓] Notify on success                                           │
+│ [✓] Notify on give up                                           │
+│                                                                 │
+│ Notify session:          [main           ] ▼                   │
+│                                                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                    [Cancel]  [Save Job]         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Presets (Quick Config)
+
+Dropdown com presets para facilitar:
+
+```
+Self-Healing Preset: [Conservative ▼]
+
+┌────────────────────────────────┐
+│ ○ Disabled                     │
+│ ● Conservative (restart only)  │
+│ ○ Moderate (edit scripts/cfg)  │
+│ ○ Aggressive (run commands)    │
+│ ○ Custom...                    │
+└────────────────────────────────┘
+```
+
+**Preset values:**
+
+| Preset | Actions | Approval |
+|--------|---------|----------|
+| Disabled | none | - |
+| Conservative | restart_job | required |
+| Moderate | restart_job, edit_script, edit_config | not required |
+| Aggressive | all except restart_service | not required |
+| Custom | user picks | user picks |
+
+### API for Config Update
+
+```
+PATCH /api/v1/jobs/{job_id}
+{
+  "self_healing": {
+    "enabled": true,
+    "analysis": {
+      "log_lines": 200,
+      "include_stderr": true,
+      "include_history": 5,
+      "include_config": true
+    },
+    "remediation": {
+      "enabled": true,
+      "max_attempts": 3,
+      "allowed_actions": ["restart_job", "edit_script", "edit_config"],
+      "forbidden_paths": ["~/secrets/"],
+      "require_approval": false
+    },
+    "notify": {
+      "on_analysis": false,
+      "on_fix_attempt": true,
+      "on_success": true,
+      "on_give_up": true,
+      "session": "main"
+    }
+  }
+}
+```
+
+### Jobs Tab - Healing Indicator
+
+Na listagem de jobs, mostrar se self-healing está habilitado:
+
+```
+| Job | Type | Status | Healing | Next Run | Tags |
+|-----|------|--------|---------|----------|------|
+| stock-hunter | openclaw | planned | 🔧 On | 21:00 | ai |
+| backup | scheduled | planned | - | 04:00 | infra |
+| email-watcher | continuous | running | 🔧 On | - | email |
+```
+
 ### UI Implementation Tasks
 
 - [ ] Add "Healing" column to Runs table
@@ -674,6 +801,13 @@ POST /api/v1/runs/{run_id}/healing/reject
 - [ ] Add "View Diff" modal for file changes
 - [ ] Add approval/reject buttons for awaiting_approval status
 - [ ] Update RunSummary model in API
+- [ ] Add "Self-Healing" tab to Job Edit modal
+- [ ] Add preset dropdown for quick config
+- [ ] Add allowed_actions checkboxes
+- [ ] Add forbidden_paths textarea
+- [ ] Add notification toggles
+- [ ] Add healing indicator to Jobs table
+- [ ] Update job create/edit API to handle self_healing config
 
 ---
 
