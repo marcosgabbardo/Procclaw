@@ -106,6 +106,84 @@ class ProcessHandle:
         """Close log file handles."""
         if self.stdout_file:
             self.stdout_file.close()
+
+
+class OrphanProcessHandle:
+    """Handle to an orphaned process (from previous daemon session).
+    
+    Uses psutil to manage the process since we don't have the original Popen.
+    """
+
+    def __init__(self, job_id: str, pid: int, started_at: datetime | None = None):
+        self.job_id = job_id
+        self._pid = pid
+        self.started_at = started_at or datetime.now()
+        self.stdout_file = None
+        self.stderr_file = None
+        self._process: psutil.Process | None = None
+        self._returncode: int | None = None
+        
+        try:
+            self._process = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            self._returncode = -1
+
+    @property
+    def pid(self) -> int:
+        """Get the process ID."""
+        return self._pid
+
+    @property
+    def returncode(self) -> int | None:
+        """Get the return code if process has exited."""
+        if self._returncode is not None:
+            return self._returncode
+        if self._process and not self.is_running():
+            self._returncode = -15  # Assume SIGTERM if we can't get actual code
+        return self._returncode
+
+    def is_running(self) -> bool:
+        """Check if the process is still running."""
+        if not self._process:
+            return False
+        try:
+            return self._process.is_running() and self._process.status() != psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            return False
+
+    def terminate(self) -> None:
+        """Send SIGTERM to the process."""
+        if self._process and self.is_running():
+            try:
+                self._process.terminate()
+            except psutil.NoSuchProcess:
+                pass
+
+    def kill(self) -> None:
+        """Send SIGKILL to the process."""
+        if self._process and self.is_running():
+            try:
+                self._process.kill()
+            except psutil.NoSuchProcess:
+                pass
+
+    def wait(self, timeout: float | None = None) -> int:
+        """Wait for process to finish."""
+        if not self._process:
+            return self._returncode or -1
+        try:
+            self._process.wait(timeout=timeout)
+            self._returncode = -15  # psutil doesn't give us exit code
+            return self._returncode
+        except psutil.NoSuchProcess:
+            self._returncode = -1
+            return self._returncode
+        except psutil.TimeoutExpired:
+            raise subprocess.TimeoutExpired(cmd="", timeout=timeout or 0)
+
+    def close_files(self) -> None:
+        """Close log file handles (no-op for orphans)."""
+        pass
         if self.stderr_file:
             self.stderr_file.close()
 
@@ -292,6 +370,20 @@ class Supervisor:
         return None
 
     # Process Management
+
+    def _adopt_orphan_process(self, job_id: str, pid: int) -> None:
+        """Adopt an orphaned process from a previous daemon session.
+        
+        Creates an OrphanProcessHandle so the process can be managed (stopped, etc.)
+        without needing the original Popen object.
+        """
+        state = self.db.get_state(job_id)
+        started_at = state.started_at if state else None
+        
+        handle = OrphanProcessHandle(job_id, pid, started_at)
+        self._processes[job_id] = handle
+        
+        logger.info(f"Adopted orphan process for job '{job_id}' (PID {pid})")
 
     def start_job(
         self,
@@ -1994,9 +2086,11 @@ class Supervisor:
         for job_id, job in self.jobs.get_jobs_by_type(JobType.CONTINUOUS).items():
             if job.enabled:
                 state = self.db.get_state(job_id)
-                # Check if already running
+                # Check if already running from previous session
                 if state and state.pid and self.check_pid(state.pid):
-                    logger.info(f"Job '{job_id}' still running from previous session")
+                    logger.info(f"Job '{job_id}' still running from previous session (PID {state.pid}), adopting")
+                    # Adopt the orphaned process so we can manage it
+                    self._adopt_orphan_process(job_id, state.pid)
                     continue
                 # Not running - start it
                 logger.info(f"Auto-starting continuous job '{job_id}'")
