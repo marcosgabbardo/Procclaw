@@ -1654,17 +1654,17 @@ class Supervisor:
         # Load scheduled jobs into scheduler
         self._scheduler.update_jobs(self.jobs.get_enabled_jobs())
 
-        # Start continuous jobs that should auto-start
+        # Auto-start enabled continuous jobs
         for job_id, job in self.jobs.get_jobs_by_type(JobType.CONTINUOUS).items():
             if job.enabled:
-                # Check if already running from previous session
                 state = self.db.get_state(job_id)
-                if state and state.status == JobStatus.RUNNING and state.pid:
-                    if self.check_pid(state.pid):
-                        logger.info(f"Job '{job_id}' still running from previous session")
-                        continue
-                # Don't auto-start continuous jobs - let user start them
-                # self.start_job(job_id, trigger="auto")
+                # Check if already running
+                if state and state.pid and self.check_pid(state.pid):
+                    logger.info(f"Job '{job_id}' still running from previous session")
+                    continue
+                # Not running - start it
+                logger.info(f"Auto-starting continuous job '{job_id}'")
+                self.start_job(job_id, trigger="auto")
 
         # Start API server
         from procclaw.api.server import run_server
