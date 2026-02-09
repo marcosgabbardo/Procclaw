@@ -55,11 +55,12 @@ def _generate_launchd_plist() -> str:
         # Python module execution
         parts = procclaw_path.split()
         program_args = "\n".join(f"        <string>{p}</string>" for p in parts)
-        program_args += "\n        <string>daemon</string>\n        <string>run</string>"
+        program_args += "\n        <string>daemon</string>\n        <string>start</string>\n        <string>-f</string>"
     else:
         program_args = f"""        <string>{procclaw_path}</string>
         <string>daemon</string>
-        <string>run</string>"""
+        <string>start</string>
+        <string>-f</string>"""
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
