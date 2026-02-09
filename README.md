@@ -1,9 +1,31 @@
 # ProcClaw 🦞
 
+![Dashboard](https://img.shields.io/badge/Web%20UI-Dark%20Mode-1f2937?style=flat-square)
+![Jobs](https://img.shields.io/badge/Jobs-24%20managed-22c55e?style=flat-square)
+
 **Process Manager for OpenClaw** - A robust, lightweight process manager with CLI, HTTP API, and deep OpenClaw integration.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+## Web UI
+
+Access the dashboard at **http://localhost:9876** when the daemon is running.
+
+### Features
+- 📊 **Dashboard**: Job stats, running jobs, failed jobs, upcoming schedules
+- ⚙️ **Jobs**: Full list with filtering (search, type, status, tags)
+- 📜 **Logs**: Real-time log viewer with filtering and download
+- 💀 **DLQ**: Dead Letter Queue management (view, reinject, purge)
+- 🔧 **Config**: View jobs.yaml and daemon info
+
+### Keyboard Shortcuts
+| Key | Action |
+|-----|--------|
+| `r` | Refresh |
+| `1-5` | Switch tabs |
+| `/` | Focus search |
+| `Esc` | Close modal |
 
 ## Features
 
