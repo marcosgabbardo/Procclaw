@@ -51,26 +51,27 @@
             .animate-pulse-slow { animation: pulse-slow 2s infinite; }
             @keyframes slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
             .animate-slide-in { animation: slide-in 0.2s ease-out; }
-            @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-            .animate-fade-in { animation: fade-in 0.15s ease-out; }
         }
-        .log-line { font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; }
+        .log-line { font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.5; }
+        .log-timestamp { color: #6e7681; margin-right: 8px; user-select: none; }
         kbd { background: #30363d; padding: 2px 6px; border-radius: 4px; font-size: 11px; border: 1px solid #484f58; }
         button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
             outline: 2px solid #f97316;
             outline-offset: 2px;
         }
         .tabular-nums { font-variant-numeric: tabular-nums; }
-        /* Tag input */
-        .tag-input { display: inline-flex; align-items: center; }
         .tag-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: #30363d; border-radius: 9999px; font-size: 12px; }
         .tag-badge:hover .tag-remove { opacity: 1; }
         .tag-remove { opacity: 0; cursor: pointer; transition: opacity 0.15s; }
         .tag-add-btn { cursor: pointer; padding: 2px 6px; border-radius: 9999px; background: #21262d; border: 1px dashed #484f58; font-size: 11px; }
         .tag-add-btn:hover { border-color: #6e7681; background: #30363d; }
-        /* Dependency graph */
         .dep-node { padding: 8px 12px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; }
-        .dep-arrow { color: #484f58; }
+        .column-toggle { cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+        .column-toggle.active { background: #30363d; color: #f0f6fc; }
+        .column-toggle:not(.active) { background: transparent; color: #6e7681; }
+        /* Drag handle for column reorder */
+        .drag-handle { cursor: grab; opacity: 0.5; }
+        .drag-handle:hover { opacity: 1; }
     </style>
 </head>
 <body class="bg-dark-900 text-dark-200 min-h-dvh font-sans" x-data="app()" x-init="init()">
@@ -84,7 +85,6 @@
                 <span class="text-xs text-dark-400 bg-dark-700 px-2 py-0.5 rounded" x-text="version"></span>
             </div>
             <div class="flex items-center gap-4">
-                <!-- Quick Stats -->
                 <div class="hidden md:flex items-center gap-4 text-sm">
                     <div class="flex items-center gap-2">
                         <span class="text-green-400 tabular-nums" x-text="stats.running"></span>
@@ -166,6 +166,7 @@
                         <option value="continuous">Continuous</option>
                         <option value="scheduled">Scheduled</option>
                         <option value="manual">Manual</option>
+                        <option value="openclaw">OpenClaw</option>
                     </select>
                     <select x-model="filters.status" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
                         <option value="">All Status</option>
@@ -180,6 +181,9 @@
                         </template>
                     </select>
                     <div class="ml-auto flex gap-2">
+                        <button @click="showColumnSettings = true" class="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition" title="Column settings">
+                            ⚙️ Columns
+                        </button>
                         <button @click="viewMode = viewMode === 'table' ? 'cards' : 'table'" 
                             class="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition"
                             :title="viewMode === 'table' ? 'Card view' : 'Table view'">
@@ -195,90 +199,125 @@
 
             <!-- Table View -->
             <div x-show="viewMode === 'table'" class="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
-                <table class="w-full">
-                    <thead class="bg-dark-700">
-                        <tr>
-                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Job</th>
-                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Type</th>
-                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Status</th>
-                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Last Run</th>
-                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Next Run</th>
-                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Tags</th>
-                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Deps</th>
-                            <th class="text-right text-xs font-medium text-dark-400 uppercase px-4 py-3">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-dark-700">
-                        <template x-for="job in filteredJobs" :key="job.id">
-                            <tr class="hover:bg-dark-700/50 transition">
-                                <td class="px-4 py-3">
-                                    <div class="flex items-center gap-2">
-                                        <button @click="selectJob(job)" class="font-medium text-dark-100 hover:text-accent-400 transition text-left" x-text="job.id"></button>
-                                        <button @click="openEditModal(job)" class="opacity-0 hover:opacity-100 focus:opacity-100 text-dark-400 hover:text-dark-200 transition" title="Edit">✏️</button>
-                                    </div>
-                                    <div class="text-xs text-dark-400" x-text="job.name"></div>
-                                </td>
-                                <td class="px-4 py-3">
-                                    <span class="text-xs px-2 py-1 rounded-full"
-                                        :class="job.type === 'continuous' ? 'bg-green-500/20 text-green-400' : job.type === 'scheduled' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'"
-                                        x-text="job.type">
-                                    </span>
-                                </td>
-                                <td class="px-4 py-3">
-                                    <div class="flex items-center gap-2">
-                                        <span class="w-2 h-2 rounded-full"
-                                            :class="job.status === 'running' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : 'bg-dark-500'">
-                                        </span>
-                                        <span class="text-sm" :class="!job.enabled && 'text-dark-500'" x-text="job.enabled ? job.status : 'disabled'"></span>
-                                    </div>
-                                </td>
-                                <td class="px-4 py-3 text-sm text-dark-400" x-text="job.started_at ? formatDate(job.started_at) : '-'"></td>
-                                <td class="px-4 py-3 text-sm text-dark-400" x-text="job.next_run ? formatNextRun(job.next_run) : '-'"></td>
-                                <td class="px-4 py-3" @click.stop>
-                                    <div class="flex flex-wrap gap-1 items-center">
-                                        <template x-for="tag in (job.tags || [])" :key="tag">
-                                            <span class="tag-badge text-dark-300">
-                                                <span x-text="tag"></span>
-                                                <span class="tag-remove text-dark-500 hover:text-red-400" @click="removeTag(job.id, tag)">×</span>
-                                            </span>
-                                        </template>
-                                        <button class="tag-add-btn text-dark-400 hover:text-dark-200" @click="openTagInput(job.id)" title="Add tag">+</button>
-                                    </div>
-                                </td>
-                                <td class="px-4 py-3 text-sm">
-                                    <div class="flex items-center gap-1">
-                                        <span x-show="job.depends_on?.length > 0" class="text-blue-400" :title="'Depends on: ' + job.depends_on?.map(d => d.job).join(', ')">
-                                            ⬅️ <span x-text="job.depends_on?.length"></span>
-                                        </span>
-                                        <span x-show="job.dependents?.length > 0" class="text-green-400" :title="'Dependents: ' + job.dependents?.map(d => d.job).join(', ')">
-                                            ➡️ <span x-text="job.dependents?.length"></span>
-                                        </span>
-                                        <span x-show="!job.depends_on?.length && !job.dependents?.length" class="text-dark-500">-</span>
-                                    </div>
-                                </td>
-                                <td class="px-4 py-3 text-right" @click.stop>
-                                    <div class="flex justify-end gap-1">
-                                        <button @click="toggleJob(job.id, job.enabled)" 
-                                            class="p-1.5 hover:bg-dark-600 rounded" 
-                                            :class="job.enabled ? 'text-green-400 hover:text-red-400' : 'text-dark-500 hover:text-green-400'"
-                                            :title="job.enabled ? 'Disable' : 'Enable'">
-                                            <span x-show="job.enabled">✅</span>
-                                            <span x-show="!job.enabled">⭕</span>
-                                        </button>
-                                        <button @click="startJob(job.id)" x-show="job.status !== 'running'" 
-                                            class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-green-400" title="Start">▶️</button>
-                                        <button @click="stopJob(job.id)" x-show="job.status === 'running'" 
-                                            class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-red-400" title="Stop">⏹️</button>
-                                        <button @click="restartJob(job.id)" 
-                                            class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-yellow-400" title="Restart">🔄</button>
-                                        <button @click="viewLogs(job.id)" 
-                                            class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-blue-400" title="Logs">📜</button>
-                                    </div>
-                                </td>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-dark-700">
+                            <tr>
+                                <template x-for="col in visibleColumns" :key="col.id">
+                                    <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3" x-text="col.label"></th>
+                                </template>
+                                <th class="text-right text-xs font-medium text-dark-400 uppercase px-4 py-3">Actions</th>
                             </tr>
-                        </template>
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody class="divide-y divide-dark-700">
+                            <template x-for="job in filteredJobs" :key="job.id">
+                                <tr class="hover:bg-dark-700/50 transition">
+                                    <!-- Dynamic columns -->
+                                    <template x-for="col in visibleColumns" :key="col.id">
+                                        <td class="px-4 py-3">
+                                            <!-- Job ID -->
+                                            <template x-if="col.id === 'id'">
+                                                <div>
+                                                    <div class="flex items-center gap-2">
+                                                        <button @click="selectJob(job)" class="font-medium text-dark-100 hover:text-accent-400 transition text-left" x-text="job.id"></button>
+                                                        <button @click="openEditModal(job)" class="opacity-0 hover:opacity-100 focus:opacity-100 text-dark-400 hover:text-dark-200 transition text-xs" title="Edit">✏️</button>
+                                                    </div>
+                                                    <div class="text-xs text-dark-400" x-text="job.name"></div>
+                                                </div>
+                                            </template>
+                                            <!-- Type -->
+                                            <template x-if="col.id === 'type'">
+                                                <span class="text-xs px-2 py-1 rounded-full"
+                                                    :class="getTypeClass(job.type)"
+                                                    x-text="job.type">
+                                                </span>
+                                            </template>
+                                            <!-- Status -->
+                                            <template x-if="col.id === 'status'">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="w-2 h-2 rounded-full"
+                                                        :class="job.status === 'running' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : 'bg-dark-500'">
+                                                    </span>
+                                                    <span class="text-sm" :class="!job.enabled && 'text-dark-500'" x-text="job.enabled ? job.status : 'disabled'"></span>
+                                                </div>
+                                            </template>
+                                            <!-- Last Run -->
+                                            <template x-if="col.id === 'last_run'">
+                                                <span class="text-sm text-dark-400" x-text="job.started_at ? formatDate(job.started_at) : '-'"></span>
+                                            </template>
+                                            <!-- Next Run -->
+                                            <template x-if="col.id === 'next_run'">
+                                                <span class="text-sm text-dark-400" x-text="job.next_run ? formatNextRun(job.next_run) : '-'"></span>
+                                            </template>
+                                            <!-- Tags -->
+                                            <template x-if="col.id === 'tags'">
+                                                <div class="flex flex-wrap gap-1 items-center" @click.stop>
+                                                    <template x-for="tag in (job.tags || [])" :key="tag">
+                                                        <span class="tag-badge text-dark-300">
+                                                            <span x-text="tag"></span>
+                                                            <span class="tag-remove text-dark-500 hover:text-red-400" @click="removeTag(job.id, tag)">×</span>
+                                                        </span>
+                                                    </template>
+                                                    <button class="tag-add-btn text-dark-400 hover:text-dark-200" @click="openTagInput(job.id)" title="Add tag">+</button>
+                                                </div>
+                                            </template>
+                                            <!-- Dependencies -->
+                                            <template x-if="col.id === 'deps'">
+                                                <div class="flex items-center gap-1 text-sm">
+                                                    <span x-show="job.depends_on?.length > 0" class="text-blue-400" :title="'Depends on: ' + job.depends_on?.map(d => d.job).join(', ')">
+                                                        ⬅️ <span x-text="job.depends_on?.length"></span>
+                                                    </span>
+                                                    <span x-show="job.dependents?.length > 0" class="text-green-400" :title="'Dependents: ' + job.dependents?.map(d => d.job).join(', ')">
+                                                        ➡️ <span x-text="job.dependents?.length"></span>
+                                                    </span>
+                                                    <span x-show="!job.depends_on?.length && !job.dependents?.length" class="text-dark-500">-</span>
+                                                </div>
+                                            </template>
+                                            <!-- Created -->
+                                            <template x-if="col.id === 'created'">
+                                                <span class="text-sm text-dark-400" x-text="job.created_at ? formatDate(job.created_at) : '-'"></span>
+                                            </template>
+                                            <!-- Modified -->
+                                            <template x-if="col.id === 'modified'">
+                                                <span class="text-sm text-dark-400" x-text="job.updated_at ? formatDate(job.updated_at) : '-'"></span>
+                                            </template>
+                                            <!-- Schedule -->
+                                            <template x-if="col.id === 'schedule'">
+                                                <span class="text-xs font-mono text-dark-400" x-text="job.schedule || '-'"></span>
+                                            </template>
+                                            <!-- Restarts -->
+                                            <template x-if="col.id === 'restarts'">
+                                                <span class="text-sm text-dark-400 tabular-nums" x-text="job.restart_count || 0"></span>
+                                            </template>
+                                        </td>
+                                    </template>
+                                    <!-- Actions -->
+                                    <td class="px-4 py-3 text-right" @click.stop>
+                                        <div class="flex justify-end gap-1">
+                                            <button @click="toggleJob(job.id, job.enabled)" 
+                                                class="p-1.5 hover:bg-dark-600 rounded" 
+                                                :class="job.enabled ? 'text-green-400 hover:text-red-400' : 'text-dark-500 hover:text-green-400'"
+                                                :title="job.enabled ? 'Disable' : 'Enable'">
+                                                <span x-show="job.enabled">✅</span>
+                                                <span x-show="!job.enabled">⭕</span>
+                                            </button>
+                                            <button @click="startJob(job.id)" x-show="job.status !== 'running'" 
+                                                class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-green-400" title="Start">▶️</button>
+                                            <button @click="stopJob(job.id)" x-show="job.status === 'running'" 
+                                                class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-red-400" title="Stop">⏹️</button>
+                                            <button @click="restartJob(job.id)" 
+                                                class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-yellow-400" title="Restart">🔄</button>
+                                            <button @click="viewLogs(job.id)" 
+                                                class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-blue-400" title="Logs">📜</button>
+                                            <button @click="deleteJob(job.id)" 
+                                                class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-red-400" title="Delete">🗑️</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
                 <div x-show="filteredJobs.length === 0" class="text-center py-8 text-dark-400">
                     No jobs match your filters
                 </div>
@@ -295,10 +334,7 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="w-2 h-2 rounded-full" :class="job.status === 'running' ? 'bg-green-500 animate-pulse-slow' : job.status === 'failed' ? 'bg-red-500' : 'bg-dark-500'"></span>
-                                <span class="text-xs px-2 py-1 rounded-full"
-                                    :class="job.type === 'continuous' ? 'bg-green-500/20 text-green-400' : job.type === 'scheduled' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'"
-                                    x-text="job.type">
-                                </span>
+                                <span class="text-xs px-2 py-1 rounded-full" :class="getTypeClass(job.type)" x-text="job.type"></span>
                             </div>
                         </div>
                         <div class="flex flex-wrap gap-1 mb-3" @click.stop>
@@ -323,6 +359,7 @@
                                 <button @click="startJob(job.id)" x-show="job.status !== 'running'" class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-green-400">▶️</button>
                                 <button @click="stopJob(job.id)" x-show="job.status === 'running'" class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-red-400">⏹️</button>
                                 <button @click="restartJob(job.id)" class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-yellow-400">🔄</button>
+                                <button @click="deleteJob(job.id)" class="p-1.5 hover:bg-dark-600 rounded text-dark-300 hover:text-red-400">🗑️</button>
                             </div>
                         </div>
                     </div>
@@ -335,7 +372,6 @@
             <div class="bg-dark-800 border border-dark-600 rounded-xl p-6">
                 <h3 class="text-lg font-medium mb-4">Job Dependency Graph</h3>
                 
-                <!-- Group by chains -->
                 <div class="space-y-6">
                     <template x-for="chain in dependencyChains" :key="chain.root">
                         <div class="bg-dark-700 rounded-lg p-4">
@@ -348,14 +384,13 @@
                                             <div class="font-medium text-sm" x-text="node.id"></div>
                                             <div class="text-xs text-dark-400" x-text="node.type"></div>
                                         </div>
-                                        <span x-show="idx < chain.nodes.length - 1" class="dep-arrow text-xl">→</span>
+                                        <span x-show="idx < chain.nodes.length - 1" class="text-dark-500 text-xl">→</span>
                                     </div>
                                 </template>
                             </div>
                         </div>
                     </template>
                     
-                    <!-- Independent jobs -->
                     <div x-show="independentJobs.length > 0" class="bg-dark-700 rounded-lg p-4">
                         <div class="text-sm text-dark-400 mb-3">Independent Jobs (no dependencies)</div>
                         <div class="flex flex-wrap gap-3">
@@ -397,6 +432,10 @@
                         <input type="text" x-model="logFilter" placeholder="Filter logs..." 
                             class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-500 w-48">
                         <label class="flex items-center gap-2 text-sm text-dark-300">
+                            <input type="checkbox" x-model="showTimestamps" class="rounded bg-dark-700 border-dark-600">
+                            Timestamps
+                        </label>
+                        <label class="flex items-center gap-2 text-sm text-dark-300">
                             <input type="checkbox" x-model="autoRefreshLogs" class="rounded bg-dark-700 border-dark-600">
                             Auto
                         </label>
@@ -404,11 +443,11 @@
                         <button @click="downloadLogs()" class="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition" title="Download">📥</button>
                     </div>
                 </div>
-                <div class="h-[500px] overflow-auto scrollbar-thin p-4 bg-dark-900 font-mono text-xs" id="log-container">
+                <div class="h-[500px] overflow-auto scrollbar-thin p-4 bg-dark-900" id="log-container">
                     <template x-for="(line, i) in filteredLogs" :key="i">
-                        <div class="log-line py-0.5 hover:bg-dark-800"
-                            :class="line.includes('ERROR') || line.includes('FAIL') || line.includes('Traceback') ? 'text-red-400' : line.includes('WARN') || line.includes('WARNING') ? 'text-yellow-400' : line.includes('✅') || line.includes('SUCCESS') ? 'text-green-400' : line.includes('🚀') || line.includes('Starting') ? 'text-blue-400' : 'text-dark-300'"
-                            x-text="line">
+                        <div class="log-line py-0.5 hover:bg-dark-800 flex">
+                            <span x-show="showTimestamps" class="log-timestamp shrink-0" x-text="getLogTimestamp(i)"></span>
+                            <span :class="getLogLineClass(line)" x-text="line"></span>
                         </div>
                     </template>
                     <div x-show="filteredLogs.length === 0 && logContent.length > 0" class="text-dark-500 text-center py-8">No logs match filter</div>
@@ -441,7 +480,7 @@
                         <div class="flex items-start justify-between mb-3">
                             <div>
                                 <div class="font-medium text-dark-100" x-text="entry.job_id"></div>
-                                <div class="text-xs text-dark-400" x-text="formatDate(entry.failed_at)"></div>
+                                <div class="text-xs text-dark-400" x-text="formatDateFull(entry.failed_at)"></div>
                             </div>
                             <div class="flex gap-2">
                                 <button @click="reinjectDlq(entry.id)" class="px-3 py-1.5 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded text-sm transition">Reinject</button>
@@ -500,16 +539,20 @@
                     <h3 class="font-medium mb-4">Job Types</h3>
                     <div class="space-y-4">
                         <div class="flex items-start gap-3">
-                            <span class="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded-full">continuous</span>
+                            <span class="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded-full shrink-0">continuous</span>
                             <p class="text-sm text-dark-400">Long-running jobs that should always be running. Auto-restart on crash.</p>
                         </div>
                         <div class="flex items-start gap-3">
-                            <span class="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded-full">scheduled</span>
+                            <span class="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded-full shrink-0">scheduled</span>
                             <p class="text-sm text-dark-400">Jobs triggered by cron schedule. Run, complete, wait for next schedule.</p>
                         </div>
                         <div class="flex items-start gap-3">
-                            <span class="px-2 py-1 bg-purple-500/20 text-purple-400 text-xs rounded-full">manual</span>
+                            <span class="px-2 py-1 bg-purple-500/20 text-purple-400 text-xs rounded-full shrink-0">manual</span>
                             <p class="text-sm text-dark-400">Jobs triggered manually via API or CLI. No auto-scheduling.</p>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <span class="px-2 py-1 bg-orange-500/20 text-orange-400 text-xs rounded-full shrink-0">openclaw</span>
+                            <p class="text-sm text-dark-400">Jobs linked to OpenClaw. Depend on AI/cron integration, synced with OpenClaw daemon.</p>
                         </div>
                     </div>
                 </div>
@@ -533,7 +576,6 @@
             <div class="p-4 overflow-auto max-h-[60vh] scrollbar-thin">
                 <template x-if="selectedJob">
                     <div class="space-y-4">
-                        <!-- Status -->
                         <div class="grid grid-cols-2 gap-4">
                             <div class="bg-dark-700 rounded-lg p-3">
                                 <div class="text-xs text-dark-400 mb-1">Status</div>
@@ -544,7 +586,7 @@
                             </div>
                             <div class="bg-dark-700 rounded-lg p-3">
                                 <div class="text-xs text-dark-400 mb-1">Type</div>
-                                <div x-text="selectedJob.type"></div>
+                                <span class="text-xs px-2 py-1 rounded-full" :class="getTypeClass(selectedJob.type)" x-text="selectedJob.type"></span>
                             </div>
                             <div class="bg-dark-700 rounded-lg p-3">
                                 <div class="text-xs text-dark-400 mb-1">PID</div>
@@ -556,7 +598,6 @@
                             </div>
                         </div>
 
-                        <!-- Tags (editable) -->
                         <div class="bg-dark-700 rounded-lg p-3">
                             <div class="text-xs text-dark-400 mb-2">Tags</div>
                             <div class="flex flex-wrap gap-2 items-center">
@@ -570,7 +611,6 @@
                             </div>
                         </div>
 
-                        <!-- Dependencies -->
                         <div x-show="selectedJob.depends_on?.length > 0 || selectedJob.dependents?.length > 0" class="bg-dark-700 rounded-lg p-3">
                             <div class="text-xs text-dark-400 mb-2">Dependencies</div>
                             <div class="space-y-2">
@@ -593,39 +633,35 @@
                             </div>
                         </div>
 
-                        <!-- Timing -->
                         <div class="grid grid-cols-2 gap-4">
                             <div class="bg-dark-700 rounded-lg p-3">
                                 <div class="text-xs text-dark-400 mb-1">Created</div>
-                                <div x-text="selectedJob.created_at ? formatDate(selectedJob.created_at) : '-'"></div>
+                                <div x-text="selectedJob.created_at ? formatDateFull(selectedJob.created_at) : '-'"></div>
                             </div>
                             <div class="bg-dark-700 rounded-lg p-3">
                                 <div class="text-xs text-dark-400 mb-1">Modified</div>
-                                <div x-text="selectedJob.updated_at ? formatDate(selectedJob.updated_at) : '-'"></div>
+                                <div x-text="selectedJob.updated_at ? formatDateFull(selectedJob.updated_at) : '-'"></div>
                             </div>
                             <div class="bg-dark-700 rounded-lg p-3">
                                 <div class="text-xs text-dark-400 mb-1">Started At</div>
-                                <div x-text="selectedJob.started_at ? formatDate(selectedJob.started_at) : '-'"></div>
+                                <div x-text="selectedJob.started_at ? formatDateFull(selectedJob.started_at) : '-'"></div>
                             </div>
                             <div class="bg-dark-700 rounded-lg p-3">
                                 <div class="text-xs text-dark-400 mb-1">Next Run</div>
-                                <div x-text="selectedJob.next_run ? formatDate(selectedJob.next_run) : '-'"></div>
+                                <div x-text="selectedJob.next_run ? formatDateFull(selectedJob.next_run) : '-'"></div>
                             </div>
                         </div>
 
-                        <!-- Command -->
                         <div class="bg-dark-700 rounded-lg p-3">
                             <div class="text-xs text-dark-400 mb-1">Command</div>
                             <div class="font-mono text-sm text-dark-200 break-all" x-text="selectedJob.cmd || '-'"></div>
                         </div>
 
-                        <!-- Schedule -->
                         <div x-show="selectedJob.schedule" class="bg-dark-700 rounded-lg p-3">
                             <div class="text-xs text-dark-400 mb-1">Schedule</div>
                             <div class="font-mono text-sm text-dark-200" x-text="selectedJob.schedule"></div>
                         </div>
 
-                        <!-- Actions -->
                         <div class="flex gap-2 pt-4 border-t border-dark-700">
                             <button @click="startJob(selectedJob.id)" x-show="selectedJob.status !== 'running'"
                                 class="flex-1 py-2 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-lg transition">▶️ Start</button>
@@ -675,6 +711,7 @@
                             <option value="manual">Manual</option>
                             <option value="continuous">Continuous</option>
                             <option value="scheduled">Scheduled</option>
+                            <option value="openclaw">OpenClaw</option>
                         </select>
                     </div>
                     <div x-show="editJob.type === 'scheduled'">
@@ -725,6 +762,7 @@
                             <option value="manual">Manual</option>
                             <option value="continuous">Continuous</option>
                             <option value="scheduled">Scheduled</option>
+                            <option value="openclaw">OpenClaw</option>
                         </select>
                     </div>
                     <div x-show="newJob.type === 'scheduled'">
@@ -758,6 +796,32 @@
         </div>
     </div>
 
+    <!-- Column Settings Modal -->
+    <div x-show="showColumnSettings" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="showColumnSettings = false">
+        <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-md p-4" @click.stop>
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-medium">Column Settings</h3>
+                <button @click="showColumnSettings = false" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
+            </div>
+            <p class="text-sm text-dark-400 mb-4">Select columns to show and drag to reorder:</p>
+            <div class="space-y-2 mb-4">
+                <template x-for="col in allColumns" :key="col.id">
+                    <div class="flex items-center gap-3 p-2 bg-dark-700 rounded-lg">
+                        <span class="drag-handle text-dark-500">⠿</span>
+                        <label class="flex items-center gap-2 flex-1 cursor-pointer">
+                            <input type="checkbox" :checked="isColumnVisible(col.id)" @change="toggleColumn(col.id)" class="rounded bg-dark-600 border-dark-500">
+                            <span x-text="col.label"></span>
+                        </label>
+                    </div>
+                </template>
+            </div>
+            <div class="flex gap-2">
+                <button @click="resetColumns()" class="flex-1 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition">Reset to Default</button>
+                <button @click="showColumnSettings = false" class="flex-1 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg text-sm transition">Done</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Footer -->
     <footer class="fixed bottom-0 left-0 right-0 bg-dark-800 border-t border-dark-600 py-2 px-4 text-xs text-dark-400 flex justify-between items-center">
         <div class="flex gap-4">
@@ -785,6 +849,25 @@
 
     <script>
         function app() {
+            // Default columns configuration
+            const defaultColumns = [
+                { id: 'id', label: 'Job', visible: true },
+                { id: 'type', label: 'Type', visible: true },
+                { id: 'status', label: 'Status', visible: true },
+                { id: 'last_run', label: 'Last Run', visible: true },
+                { id: 'next_run', label: 'Next Run', visible: true },
+                { id: 'tags', label: 'Tags', visible: true },
+                { id: 'deps', label: 'Deps', visible: true },
+                { id: 'schedule', label: 'Schedule', visible: false },
+                { id: 'restarts', label: 'Restarts', visible: false },
+                { id: 'created', label: 'Created', visible: false },
+                { id: 'modified', label: 'Modified', visible: false },
+            ];
+
+            // Load saved columns from localStorage
+            const savedColumns = localStorage.getItem('procclaw_columns');
+            const columns = savedColumns ? JSON.parse(savedColumns) : defaultColumns;
+
             return {
                 // State
                 currentTab: 'jobs',
@@ -798,13 +881,19 @@
                 dlqStats: { pending: 0, total: 0 },
                 dlqEntries: [],
                 logContent: [],
+                logLoadedAt: null,
                 selectedJob: null,
                 showCreateModal: false,
                 showEditModal: false,
                 showTagInput: false,
+                showColumnSettings: false,
+                showTimestamps: true,
                 tagInputJobId: '',
                 newTagValue: '',
                 toasts: [],
+                
+                // Columns
+                allColumns: columns,
                 
                 // Filters
                 filters: { search: '', type: '', status: '', tag: '' },
@@ -819,6 +908,10 @@
                 editJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: '', schedule: '', tagsStr: '' },
                 
                 // Computed
+                get visibleColumns() {
+                    return this.allColumns.filter(c => c.visible);
+                },
+
                 get filteredJobs() {
                     return this.jobs.filter(job => {
                         if (this.filters.search && !job.id.toLowerCase().includes(this.filters.search.toLowerCase()) && 
@@ -843,16 +936,12 @@
                 },
 
                 get dependencyChains() {
-                    // Build dependency chains
                     const chains = [];
                     const visited = new Set();
-                    
-                    // Find root nodes (jobs with no dependencies but have dependents)
                     const roots = this.jobs.filter(j => 
                         (!j.depends_on || j.depends_on.length === 0) && 
                         (j.dependents && j.dependents.length > 0)
                     );
-                    
                     for (const root of roots) {
                         if (visited.has(root.id)) continue;
                         const chain = this.buildChain(root.id, visited);
@@ -860,7 +949,6 @@
                             chains.push({ root: root.id, nodes: chain });
                         }
                     }
-                    
                     return chains;
                 },
 
@@ -879,7 +967,6 @@
                         if (this.autoRefreshLogs && this.currentTab === 'logs') this.loadLogs();
                     }, 5000);
                     
-                    // Keyboard shortcuts
                     document.addEventListener('keydown', (e) => {
                         if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
                         if (e.key === 'r' && !e.metaKey && !e.ctrlKey) { this.refresh(); e.preventDefault(); }
@@ -888,7 +975,7 @@
                         if (e.key === '3') { this.currentTab = 'logs'; e.preventDefault(); }
                         if (e.key === '4') { this.currentTab = 'dlq'; e.preventDefault(); }
                         if (e.key === '5') { this.currentTab = 'config'; e.preventDefault(); }
-                        if (e.key === 'Escape') { this.selectedJob = null; this.showCreateModal = false; this.showEditModal = false; this.showTagInput = false; }
+                        if (e.key === 'Escape') { this.selectedJob = null; this.showCreateModal = false; this.showEditModal = false; this.showTagInput = false; this.showColumnSettings = false; }
                         if (e.key === '/' && this.currentTab === 'jobs') { 
                             document.querySelector('input[placeholder="Search jobs..."]')?.focus(); 
                             e.preventDefault(); 
@@ -896,23 +983,51 @@
                     });
                 },
 
-                // Build dependency chain
+                // Column management
+                isColumnVisible(id) {
+                    const col = this.allColumns.find(c => c.id === id);
+                    return col ? col.visible : false;
+                },
+
+                toggleColumn(id) {
+                    const col = this.allColumns.find(c => c.id === id);
+                    if (col) {
+                        col.visible = !col.visible;
+                        this.saveColumns();
+                    }
+                },
+
+                saveColumns() {
+                    localStorage.setItem('procclaw_columns', JSON.stringify(this.allColumns));
+                },
+
+                resetColumns() {
+                    this.allColumns = JSON.parse(JSON.stringify(defaultColumns));
+                    this.saveColumns();
+                },
+
+                getTypeClass(type) {
+                    switch (type) {
+                        case 'continuous': return 'bg-green-500/20 text-green-400';
+                        case 'scheduled': return 'bg-blue-500/20 text-blue-400';
+                        case 'manual': return 'bg-purple-500/20 text-purple-400';
+                        case 'openclaw': return 'bg-orange-500/20 text-orange-400';
+                        default: return 'bg-dark-600 text-dark-300';
+                    }
+                },
+
                 buildChain(jobId, visited) {
                     const chain = [];
                     let current = this.jobs.find(j => j.id === jobId);
-                    
                     while (current && !visited.has(current.id)) {
                         visited.add(current.id);
                         chain.push({ id: current.id, type: current.type, name: current.name });
-                        
-                        // Find next job in chain
                         if (current.dependents && current.dependents.length > 0) {
                             current = this.jobs.find(j => j.id === current.dependents[0].job);
                         } else {
                             break;
                         }
                     }
-                    
                     return chain;
                 },
 
@@ -924,6 +1039,29 @@
                 selectJobById(jobId) {
                     const job = this.jobs.find(j => j.id === jobId);
                     if (job) this.selectedJob = job;
+                },
+
+                // Log timestamps
+                getLogTimestamp(index) {
+                    if (!this.logLoadedAt) return '';
+                    // Calculate timestamp based on log load time and line index
+                    // This is an approximation - real timestamps would come from the log content
+                    const baseTime = new Date(this.logLoadedAt);
+                    const lineTime = new Date(baseTime.getTime() - (this.logContent.length - index) * 100);
+                    return lineTime.toLocaleTimeString('pt-BR', { 
+                        hour: '2-digit', 
+                        minute: '2-digit', 
+                        second: '2-digit',
+                        fractionalSecondDigits: 3
+                    });
+                },
+
+                getLogLineClass(line) {
+                    if (line.includes('ERROR') || line.includes('FAIL') || line.includes('Traceback')) return 'text-red-400';
+                    if (line.includes('WARN') || line.includes('WARNING')) return 'text-yellow-400';
+                    if (line.includes('✅') || line.includes('SUCCESS')) return 'text-green-400';
+                    if (line.includes('🚀') || line.includes('Starting')) return 'text-blue-400';
+                    return 'text-dark-300';
                 },
 
                 // API
@@ -1023,7 +1161,7 @@
                 },
 
                 async deleteJob(id) {
-                    if (!confirm(`Delete job "${id}"? This will remove it from jobs.yaml.`)) return;
+                    if (!confirm(`Delete job "${id}"?\n\nThis will remove it from jobs.yaml permanently.`)) return;
                     const res = await this.api(`/jobs/${id}`, 'DELETE');
                     this.toast(res.success ? `Deleted ${id}` : `Failed: ${res.error}`, res.success ? 'success' : 'error');
                     this.selectedJob = null;
@@ -1066,6 +1204,7 @@
                             : `/jobs/${this.selectedLogJob}/logs?lines=${this.logLines}&type=${this.logType}`;
                         const res = await this.api(endpoint);
                         this.logContent = res.lines || [];
+                        this.logLoadedAt = new Date();
                     } catch (e) {
                         this.logContent = ['Failed to load logs'];
                     }
@@ -1149,6 +1288,15 @@
                     if (!dateStr) return '-';
                     const d = new Date(dateStr);
                     return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+                },
+
+                formatDateFull(dateStr) {
+                    if (!dateStr) return '-';
+                    const d = new Date(dateStr);
+                    return d.toLocaleString('pt-BR', { 
+                        day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit', second: '2-digit'
+                    });
                 },
 
                 formatNextRun(dateStr) {

@@ -16,6 +16,7 @@ class JobType(str, Enum):
     SCHEDULED = "scheduled"
     CONTINUOUS = "continuous"
     MANUAL = "manual"
+    OPENCLAW = "openclaw"  # Jobs linked to OpenClaw (depend on AI/cron integration)
 
 
 class JobStatus(str, Enum):
