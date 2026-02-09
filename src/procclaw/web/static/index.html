@@ -1481,8 +1481,37 @@
                 },
 
                 async createJob() {
-                    this.toast('Add job to ~/.procclaw/jobs.yaml and reload config', 'info');
-                    this.showCreateModal = false;
+                    if (!this.newJob.id || !this.newJob.cmd) {
+                        this.toast('Job ID and Command are required', 'error');
+                        return;
+                    }
+                    
+                    const jobData = {
+                        id: this.newJob.id,
+                        name: this.newJob.name || this.newJob.id,
+                        cmd: this.newJob.cmd,
+                        cwd: this.newJob.cwd || null,
+                        type: this.newJob.type,
+                        schedule: this.newJob.type === 'scheduled' ? this.newJob.schedule : null,
+                        run_at: this.newJob.type === 'oneshot' ? this.newJob.run_at : null,
+                        tags: this.newJob.tags,
+                        env: this.newJob.env || null,
+                        enabled: true,
+                    };
+                    
+                    try {
+                        const res = await this.api('/jobs', 'POST', jobData);
+                        if (res.success) {
+                            this.toast(`Job '${this.newJob.id}' created!`, 'success');
+                            this.showCreateModal = false;
+                            this.newJob = { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '' };
+                            await this.refresh();
+                        } else {
+                            this.toast(res.detail || res.message || 'Failed to create job', 'error');
+                        }
+                    } catch (e) {
+                        this.toast(`Error: ${e.message}`, 'error');
+                    }
                 },
 
                 async deleteJob(id) {

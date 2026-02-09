@@ -229,6 +229,96 @@ def create_app() -> FastAPI:
             total=len(jobs),
         )
 
+    @app.post("/api/v1/jobs", response_model=ActionResponse)
+    async def create_job(
+        job_data: dict,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Create a new job by adding to jobs.yaml."""
+        import yaml
+        from procclaw.config import DEFAULT_JOBS_FILE
+        from datetime import datetime
+        
+        supervisor = get_supervisor()
+        
+        # Validate required fields
+        job_id = job_data.get("id")
+        if not job_id:
+            raise HTTPException(status_code=400, detail="Job ID is required")
+        if not job_data.get("cmd"):
+            raise HTTPException(status_code=400, detail="Command is required")
+        
+        # Check if job already exists
+        if supervisor.jobs.get_job(job_id):
+            raise HTTPException(status_code=409, detail=f"Job '{job_id}' already exists")
+        
+        # Build job config
+        job_config = {
+            "name": job_data.get("name") or job_id,
+            "cmd": job_data.get("cmd"),
+            "type": job_data.get("type", "manual"),
+            "enabled": job_data.get("enabled", True),
+        }
+        
+        # Optional fields
+        if job_data.get("cwd"):
+            job_config["cwd"] = job_data["cwd"]
+        if job_data.get("description"):
+            job_config["description"] = job_data["description"]
+        if job_data.get("schedule"):
+            job_config["schedule"] = job_data["schedule"]
+        if job_data.get("run_at"):
+            job_config["run_at"] = job_data["run_at"]
+        if job_data.get("tags"):
+            if isinstance(job_data["tags"], str):
+                job_config["tags"] = [t.strip() for t in job_data["tags"].split(",") if t.strip()]
+            else:
+                job_config["tags"] = job_data["tags"]
+        if job_data.get("env"):
+            # Parse env vars from string format KEY=value
+            if isinstance(job_data["env"], str):
+                env_dict = {}
+                for line in job_data["env"].strip().split("\n"):
+                    if "=" in line:
+                        key, value = line.split("=", 1)
+                        env_dict[key.strip()] = value.strip()
+                if env_dict:
+                    job_config["env"] = env_dict
+            else:
+                job_config["env"] = job_data["env"]
+        
+        # Add metadata
+        job_config["_metadata"] = {
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+        }
+        
+        # Read current config
+        try:
+            with open(DEFAULT_JOBS_FILE, "r") as f:
+                config = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            config = {}
+        
+        if "jobs" not in config:
+            config["jobs"] = {}
+        
+        # Add new job
+        config["jobs"][job_id] = job_config
+        
+        # Write back
+        with open(DEFAULT_JOBS_FILE, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        
+        # Reload config
+        supervisor.reload_jobs()
+        
+        return ActionResponse(
+            success=True,
+            message=f"Job '{job_id}' created successfully",
+            job_id=job_id,
+        )
+
     @app.get("/api/v1/runs", response_model=RunListResponse)
     async def list_runs(
         job_id: str | None = Query(None, description="Filter by job ID"),
