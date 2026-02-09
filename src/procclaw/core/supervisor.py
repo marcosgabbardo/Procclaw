@@ -203,6 +203,7 @@ class Supervisor:
         self.db = db or Database()
 
         self._processes: dict[str, ProcessHandle] = {}
+        self._manually_stopped: set[str] = set()  # Jobs explicitly stopped by user (skip retry)
         self._shutdown_event = asyncio.Event()
         self._running = False
 
@@ -614,6 +615,9 @@ class Supervisor:
         grace_period = job.shutdown.grace_period if job else 60
 
         try:
+            # Mark as manually stopped to prevent auto-retry
+            self._manually_stopped.add(job_id)
+            
             if force:
                 logger.info(f"Force killing job '{job_id}'")
                 handle.kill()
@@ -1511,13 +1515,18 @@ class Supervisor:
         if exit_code != 0:
             state.last_error = f"Process exited with code {exit_code}"
 
+        # Check if this was a manual stop (before setting run error)
+        was_manually_stopped = job_id in self._manually_stopped
+
         # Update run record
         last_run = self.db.get_last_run(job_id)
         if last_run and last_run.finished_at is None:
             last_run.finished_at = now
             last_run.exit_code = exit_code
             last_run.duration_seconds = duration
-            if exit_code != 0:
+            if was_manually_stopped:
+                last_run.error = "Manually stopped"
+            elif exit_code != 0:
                 last_run.error = f"Exit code: {exit_code}"
             self.db.update_run(last_run)
             
@@ -1532,7 +1541,12 @@ class Supervisor:
         if job_id in self._processes:
             del self._processes[job_id]
 
-        status = "completed" if exit_code == 0 else "failed"
+        if was_manually_stopped:
+            status = "stopped"
+        elif exit_code == 0:
+            status = "completed"
+        else:
+            status = "failed"
         logger.info(f"Job '{job_id}' {status} (exit code: {exit_code}, duration: {duration:.1f}s)")
         self._audit_log(job_id, status, f"exit_code: {exit_code}, duration: {duration:.1f}s")
 
@@ -1574,9 +1588,17 @@ class Supervisor:
                 finished_at=now,
             ))
 
-        # Handle retry for failed jobs
+        # Handle retry for failed jobs (but not if manually stopped)
         should_try_healing = False
-        if exit_code != 0:
+        
+        if was_manually_stopped:
+            # Job was explicitly stopped by user - clear the flag and skip retry
+            self._manually_stopped.discard(job_id)
+            logger.debug(f"Job '{job_id}' was manually stopped, skipping retry")
+            # Update state to show it was stopped, not failed
+            state.status = JobStatus.STOPPED
+            state.last_error = "Manually stopped"
+        elif exit_code != 0:
             if job and job.retry.enabled:
                 retry_time = self._retry_manager.schedule_retry(
                     job_id, job, state.retry_attempt
