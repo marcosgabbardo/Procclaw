@@ -147,6 +147,23 @@ class MetricsResponse(BaseModel):
     text: str
 
 
+# Request Models (for composite jobs)
+class ChainRequest(BaseModel):
+    job_ids: list[str]
+    composite_id: str | None = None
+
+
+class GroupRequest(BaseModel):
+    job_ids: list[str]
+    composite_id: str | None = None
+
+
+class ChordRequest(BaseModel):
+    job_ids: list[str]
+    callback: str
+    composite_id: str | None = None
+
+
 # Create FastAPI app
 def create_app() -> FastAPI:
     """Create the FastAPI application."""
@@ -638,12 +655,12 @@ def create_app() -> FastAPI:
     
     @app.post("/api/v1/composite/chain")
     async def run_chain(
-        job_ids: list[str],
-        composite_id: str | None = None,
+        request: ChainRequest,
         _auth: bool = Depends(verify_token),
     ):
         """Run jobs sequentially (A → B → C). Stops on first failure."""
         supervisor = get_supervisor()
+        job_ids = request.job_ids
         
         if len(job_ids) < 2:
             raise HTTPException(status_code=400, detail="Chain requires at least 2 jobs")
@@ -653,7 +670,7 @@ def create_app() -> FastAPI:
             if not supervisor.jobs.get_job(job_id):
                 raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
         
-        cid = composite_id or f"chain-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        cid = request.composite_id or f"chain-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         run = await supervisor.run_chain(cid, job_ids, trigger="api")
         
         return {
@@ -666,12 +683,12 @@ def create_app() -> FastAPI:
     
     @app.post("/api/v1/composite/group")
     async def run_group(
-        job_ids: list[str],
-        composite_id: str | None = None,
+        request: GroupRequest,
         _auth: bool = Depends(verify_token),
     ):
         """Run jobs in parallel (A + B + C). Waits for all to complete."""
         supervisor = get_supervisor()
+        job_ids = request.job_ids
         
         if len(job_ids) < 2:
             raise HTTPException(status_code=400, detail="Group requires at least 2 jobs")
@@ -681,7 +698,7 @@ def create_app() -> FastAPI:
             if not supervisor.jobs.get_job(job_id):
                 raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
         
-        cid = composite_id or f"group-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        cid = request.composite_id or f"group-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         run = await supervisor.run_group(cid, job_ids, trigger="api")
         
         return {
@@ -694,13 +711,13 @@ def create_app() -> FastAPI:
     
     @app.post("/api/v1/composite/chord")
     async def run_chord(
-        job_ids: list[str],
-        callback: str,
-        composite_id: str | None = None,
+        request: ChordRequest,
         _auth: bool = Depends(verify_token),
     ):
         """Run jobs in parallel, then run callback when all complete."""
         supervisor = get_supervisor()
+        job_ids = request.job_ids
+        callback = request.callback
         
         if len(job_ids) < 1:
             raise HTTPException(status_code=400, detail="Chord requires at least 1 parallel job")
@@ -710,7 +727,7 @@ def create_app() -> FastAPI:
             if not supervisor.jobs.get_job(job_id):
                 raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
         
-        cid = composite_id or f"chord-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        cid = request.composite_id or f"chord-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         run = await supervisor.run_chord(cid, job_ids, callback, trigger="api")
         
         return {

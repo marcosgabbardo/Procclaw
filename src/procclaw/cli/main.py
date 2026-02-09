@@ -1148,6 +1148,302 @@ def chord_jobs(
 
 
 # ============================================================================
+# Job Management Commands
+# ============================================================================
+
+
+@app.command("run")
+def run_job(
+    job_id: str = typer.Argument(..., help="Job ID to run"),
+) -> None:
+    """Force run a job immediately (regardless of schedule)."""
+    from procclaw.cli.client import APIClient
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        res = client.run_job(job_id)
+        console.print(f"[green]✓ {res.get('message', 'Job triggered')}[/green]")
+    except Exception as e:
+        if "404" in str(e):
+            console.print(f"[red]Job '{job_id}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("enable")
+def enable_job_cmd(
+    job_id: str = typer.Argument(..., help="Job ID to enable"),
+) -> None:
+    """Enable a job."""
+    from procclaw.cli.client import APIClient
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        # Use correct API endpoint: POST /api/v1/jobs/{job_id}/enable
+        response = client._get_client().post(f"/api/v1/jobs/{job_id}/enable")
+        response.raise_for_status()
+        console.print(f"[green]✓ Job '{job_id}' enabled[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("disable")
+def disable_job_cmd(
+    job_id: str = typer.Argument(..., help="Job ID to disable"),
+) -> None:
+    """Disable a job."""
+    from procclaw.cli.client import APIClient
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        # Use correct API endpoint: POST /api/v1/jobs/{job_id}/disable
+        response = client._get_client().post(f"/api/v1/jobs/{job_id}/disable")
+        response.raise_for_status()
+        console.print(f"[yellow]○ Job '{job_id}' disabled[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("add")
+def add_job(
+    job_id: str = typer.Argument(..., help="Job ID (unique identifier)"),
+    name: str = typer.Option(..., "--name", "-n", help="Job name"),
+    cmd: str = typer.Option(..., "--cmd", "-c", help="Command to run"),
+    job_type: str = typer.Option("manual", "--type", "-t", help="Job type (manual/continuous/scheduled/oneshot)"),
+    cwd: str = typer.Option(None, "--cwd", help="Working directory"),
+    schedule: str = typer.Option(None, "--schedule", "-s", help="Cron schedule (for scheduled jobs)"),
+    description: str = typer.Option(None, "--description", "-d", help="Job description"),
+    tags: list[str] = typer.Option(None, "--tag", help="Tags (can be repeated)"),
+    enabled: bool = typer.Option(True, "--enabled/--disabled", help="Enable job"),
+) -> None:
+    """Add a new job to the configuration."""
+    from procclaw.cli.client import APIClient
+    
+    # Build job config (API expects 'id' not 'job_id')
+    job_config = {
+        "id": job_id,
+        "name": name,
+        "cmd": cmd,
+        "type": job_type,
+        "enabled": enabled,
+    }
+    
+    if cwd:
+        job_config["cwd"] = cwd
+    if schedule:
+        job_config["schedule"] = schedule
+    if description:
+        job_config["description"] = description
+    if tags:
+        job_config["tags"] = list(tags)
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        res = client.post("/jobs", json=job_config)
+        console.print(f"[green]✓ Job '{job_id}' added[/green]")
+        if job_type == "continuous" and enabled:
+            console.print("[dim]Job will start automatically[/dim]")
+    except Exception as e:
+        if "409" in str(e):
+            console.print(f"[red]Job '{job_id}' already exists[/red]")
+        else:
+            console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("remove")
+def remove_job(
+    job_id: str = typer.Argument(..., help="Job ID to remove"),
+    force: bool = typer.Option(False, "--force", "-f", help="Remove even if running"),
+) -> None:
+    """Remove a job from the configuration."""
+    from procclaw.cli.client import APIClient
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    # Check if job is running
+    try:
+        job = client.get_job(job_id)
+        if job.get("status") == "running" and not force:
+            console.print(f"[yellow]Job '{job_id}' is running. Use --force to remove anyway.[/yellow]")
+            raise typer.Exit(1)
+    except Exception:
+        pass  # Job might not exist
+    
+    try:
+        # Use correct API endpoint: DELETE /api/v1/jobs/{job_id}
+        response = client._get_client().delete(f"/api/v1/jobs/{job_id}")
+        response.raise_for_status()
+        console.print(f"[green]✓ Job '{job_id}' removed[/green]")
+    except Exception as e:
+        if "404" in str(e):
+            console.print(f"[red]Job '{job_id}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("edit")
+def edit_job(
+    job_id: str = typer.Argument(..., help="Job ID to edit"),
+    name: str = typer.Option(None, "--name", "-n", help="New job name"),
+    cmd: str = typer.Option(None, "--cmd", "-c", help="New command"),
+    cwd: str = typer.Option(None, "--cwd", help="New working directory"),
+    schedule: str = typer.Option(None, "--schedule", "-s", help="New cron schedule"),
+    description: str = typer.Option(None, "--description", "-d", help="New description"),
+) -> None:
+    """Edit a job's configuration."""
+    from procclaw.cli.client import APIClient
+    
+    # Build update payload (only non-None values)
+    updates = {}
+    if name is not None:
+        updates["name"] = name
+    if cmd is not None:
+        updates["cmd"] = cmd
+    if cwd is not None:
+        updates["cwd"] = cwd
+    if schedule is not None:
+        updates["schedule"] = schedule
+    if description is not None:
+        updates["description"] = description
+    
+    if not updates:
+        console.print("[yellow]No changes specified[/yellow]")
+        return
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        # Use correct API endpoint: PATCH /api/v1/jobs/{job_id}
+        response = client._get_client().patch(f"/api/v1/jobs/{job_id}", json=updates)
+        response.raise_for_status()
+        console.print(f"[green]✓ Job '{job_id}' updated[/green]")
+        for key, value in updates.items():
+            console.print(f"  {key}: {value}")
+    except Exception as e:
+        if "404" in str(e):
+            console.print(f"[red]Job '{job_id}' not found[/red]")
+        else:
+            console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# Tags subcommand
+tags_app = typer.Typer(help="Manage job tags")
+app.add_typer(tags_app, name="tags")
+
+
+@tags_app.command("list")
+def tags_list(
+    job_id: str = typer.Argument(None, help="Job ID (optional, shows all tags if not specified)"),
+) -> None:
+    """List tags for a job or all unique tags."""
+    from procclaw.cli.client import APIClient
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        if job_id:
+            job = client.get_job(job_id)
+            tags = job.get("tags", [])
+            if tags:
+                console.print(f"[cyan]{job_id}:[/cyan] {', '.join(tags)}")
+            else:
+                console.print(f"[dim]{job_id} has no tags[/dim]")
+        else:
+            # List all unique tags
+            jobs = client.list_jobs()
+            all_tags = set()
+            for job in jobs:
+                all_tags.update(job.get("tags", []))
+            
+            if all_tags:
+                console.print("[bold]All tags:[/bold]")
+                for tag in sorted(all_tags):
+                    console.print(f"  • {tag}")
+            else:
+                console.print("[dim]No tags found[/dim]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@tags_app.command("add")
+def tags_add(
+    job_id: str = typer.Argument(..., help="Job ID"),
+    tag: str = typer.Argument(..., help="Tag to add"),
+) -> None:
+    """Add a tag to a job."""
+    from procclaw.cli.client import APIClient
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        # Use correct API endpoint: POST /api/v1/jobs/{job_id}/tags/{tag}
+        response = client._get_client().post(f"/api/v1/jobs/{job_id}/tags/{tag}")
+        response.raise_for_status()
+        console.print(f"[green]✓ Added tag '{tag}' to {job_id}[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@tags_app.command("remove")
+def tags_remove(
+    job_id: str = typer.Argument(..., help="Job ID"),
+    tag: str = typer.Argument(..., help="Tag to remove"),
+) -> None:
+    """Remove a tag from a job."""
+    from procclaw.cli.client import APIClient
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        # Use correct API endpoint: DELETE /api/v1/jobs/{job_id}/tags/{tag}
+        response = client._get_client().delete(f"/api/v1/jobs/{job_id}/tags/{tag}")
+        response.raise_for_status()
+        console.print(f"[green]✓ Removed tag '{tag}' from {job_id}[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# ============================================================================
 # Entry Point
 # ============================================================================
 

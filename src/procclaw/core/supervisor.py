@@ -46,6 +46,7 @@ from procclaw.core.composite import CompositeExecutor
 from procclaw.core.watchdog import Watchdog, MissedRunInfo
 from procclaw.core.workflow import WorkflowManager, WorkflowConfig
 from procclaw.openclaw import OpenClawIntegration, init_integration, AlertType
+from procclaw.secrets import resolve_secret_ref
 
 
 class ProcessHandle:
@@ -1048,9 +1049,10 @@ class Supervisor:
         if not cwd.exists():
             raise RuntimeError(f"Working directory does not exist: {cwd}")
 
-        # Prepare environment
+        # Prepare environment (resolve secrets)
         env = os.environ.copy()
-        env.update(job.env)
+        for key, value in job.env.items():
+            env[key] = resolve_secret_ref(value)
         env["PROCCLAW_JOB_ID"] = job_id
 
         # Prepare log files
@@ -1071,12 +1073,13 @@ class Supervisor:
         stdout_file.write(f"{'='*60}\n\n")
         stdout_file.flush()
 
-        # Parse command
+        # Parse command (resolve secrets)
+        resolved_cmd = resolve_secret_ref(job.cmd)
         if sys.platform == "win32":
-            cmd = job.cmd
+            cmd = resolved_cmd
             shell = True
         else:
-            cmd = job.cmd
+            cmd = resolved_cmd
             shell = True
 
         # Spawn process
