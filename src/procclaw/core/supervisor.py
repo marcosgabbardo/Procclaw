@@ -808,7 +808,7 @@ class Supervisor:
             
             # Method 2: Direct lookup if not found in logs and job is OpenClaw type
             if not session_key and not session_transcript:
-                job = self._jobs.get(job_id)
+                job = self.jobs.get_job(job_id)
                 if job and job.type == JobType.OPENCLAW:
                     session_key, session_transcript = self._lookup_openclaw_session(job_id, run)
             
