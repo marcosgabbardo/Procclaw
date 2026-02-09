@@ -303,6 +303,62 @@ def list_jobs(
     """List all jobs."""
     setup_logging(verbose)
 
+    # Try API first for live data
+    daemon_pid = get_daemon_pid()
+    jobs_data = None
+
+    if daemon_pid:
+        from procclaw.cli.client import APIClient
+
+        try:
+            with APIClient() as client:
+                if client.is_daemon_running():
+                    jobs_data = client.list_jobs(status=status, tag=tag)
+        except Exception:
+            pass  # Fall back to direct DB access
+
+    if jobs_data is not None:
+        # Use API data
+        if not jobs_data:
+            console.print("[yellow]No jobs match the filter[/yellow]")
+            return
+
+        table = Table(title="Jobs")
+        table.add_column("Job", style="cyan")
+        table.add_column("Type")
+        table.add_column("Status")
+        table.add_column("Last Run")
+        table.add_column("Restarts", justify="right")
+
+        for job in jobs_data:
+            job_status = job["status"]
+            status_str = job_status
+            if job_status == "running":
+                status_str = f"[green]{job_status}[/green]"
+            elif job_status == "failed":
+                status_str = f"[red]{job_status}[/red]"
+            elif job_status == "stopped":
+                status_str = f"[dim]{job_status}[/dim]"
+
+            if not job["enabled"]:
+                status_str = "[dim]disabled[/dim]"
+
+            last_run_str = "-"
+            if job.get("started_at"):
+                last_run_str = job["started_at"][:16].replace("T", " ")
+
+            table.add_row(
+                job["id"],
+                job["type"],
+                status_str,
+                last_run_str,
+                str(job.get("restart_count", 0)),
+            )
+
+        console.print(table)
+        return
+
+    # Fallback to direct DB access
     try:
         jobs = load_jobs()
         db = Database()
@@ -478,13 +534,24 @@ def start_job(
     """Start a job."""
     setup_logging(verbose)
 
-    # Check if daemon is running
+    # Check if daemon is running and use API
     pid = get_daemon_pid()
     if pid:
-        # TODO: Send request to daemon via API
-        console.print("[yellow]Daemon is running. Use API to start jobs.[/yellow]")
-        console.print("For now, starting job directly...")
+        from procclaw.cli.client import APIClient
 
+        try:
+            with APIClient() as client:
+                if client.is_daemon_running():
+                    result = client.start_job(job_id)
+                    console.print(f"[green]✓ {result['message']}[/green]")
+                    if result.get("pid"):
+                        console.print(f"[dim]PID: {result['pid']}[/dim]")
+                    return
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not connect to daemon API: {e}[/yellow]")
+            console.print("[dim]Starting job directly...[/dim]")
+
+    # Fallback to direct execution
     try:
         config = load_config()
         jobs = load_jobs()
@@ -549,12 +616,28 @@ def stop_job(
     force: bool = typer.Option(False, "--force", "-f", help="Force kill"),
 ) -> None:
     """Stop a running job."""
+    # Try API first
+    pid = get_daemon_pid()
+    if pid:
+        from procclaw.cli.client import APIClient
+
+        try:
+            with APIClient() as client:
+                if client.is_daemon_running():
+                    result = client.stop_job(job_id, force=force)
+                    console.print(f"[green]✓ {result['message']}[/green]")
+                    return
+        except Exception as e:
+            if "409" in str(e):
+                console.print(f"[yellow]Job '{job_id}' is not running[/yellow]")
+                return
+            console.print(f"[yellow]Warning: Could not connect to daemon API: {e}[/yellow]")
+
+    # Fallback to direct stop
     try:
         config = load_config()
         jobs = load_jobs()
         db = Database()
-
-        supervisor = Supervisor(config=config, jobs=jobs, db=db)
 
         # Check if job is running from state
         state = db.get_state(job_id)
@@ -565,15 +648,15 @@ def stop_job(
         # Stop via PID directly
         import signal as sig
 
-        pid = state.pid
+        job_pid = state.pid
         try:
             if force:
-                os.kill(pid, sig.SIGKILL)
+                os.kill(job_pid, sig.SIGKILL)
             else:
-                os.kill(pid, sig.SIGTERM)
-            console.print(f"[green]✓ Stopped job '{job_id}' (PID: {pid})[/green]")
+                os.kill(job_pid, sig.SIGTERM)
+            console.print(f"[green]✓ Stopped job '{job_id}' (PID: {job_pid})[/green]")
         except ProcessLookupError:
-            console.print(f"[yellow]Process not found (PID: {pid})[/yellow]")
+            console.print(f"[yellow]Process not found (PID: {job_pid})[/yellow]")
 
         # Update state
         from procclaw.models import JobStatus

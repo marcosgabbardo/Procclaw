@@ -497,6 +497,16 @@ class Supervisor:
                 # Don't auto-start continuous jobs - let user start them
                 # self.start_job(job_id, trigger="auto")
 
+        # Start API server
+        from procclaw.api.server import run_server
+        api_task = asyncio.create_task(
+            run_server(
+                self,
+                host=self.config.daemon.host,
+                port=self.config.daemon.port,
+            )
+        )
+
         # Start background tasks
         scheduler_task = asyncio.create_task(self._scheduler.run())
         health_task = asyncio.create_task(self._health_checker.run())
@@ -524,7 +534,7 @@ class Supervisor:
             self._health_checker.stop()
             self._retry_manager.stop()
 
-            for task in [scheduler_task, health_task, retry_task]:
+            for task in [api_task, scheduler_task, health_task, retry_task]:
                 task.cancel()
                 try:
                     await task
