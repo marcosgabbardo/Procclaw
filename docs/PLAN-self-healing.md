@@ -510,7 +510,7 @@ ConnectionError: Failed to connect to api.example.com
 
 ---
 
-## Estimated Total: ~14h
+## Estimated Total: ~18h
 
 | Phase | Time |
 |-------|------|
@@ -519,9 +519,161 @@ ConnectionError: Failed to connect to api.example.com
 | Healer Spawner | 2h |
 | Action Executor | 3h |
 | Validation Loop | 2h |
-| Integration | 2h |
+| Integration (Backend) | 2h |
+| Web UI | 4h |
 | Testing | 2h |
-| **Total** | **14h** |
+| **Total** | **18h** |
+
+---
+
+## Web UI
+
+### Runs Tab - Healing Column
+
+Nova coluna mostrando status do healing:
+
+```
+| Job | Status | Trigger | Healing | Started | Duration |
+|-----|--------|---------|---------|---------|----------|
+| stock-hunter | ❌ failed | scheduled | 🔧 fixing... | 12:00 | 45s |
+| stock-hunter | ✅ healed | scheduled | ✅ fixed | 12:01 | 30s |
+| backup | ❌ failed | scheduled | ❌ gave up | 11:00 | 60s |
+| email-watcher | ✅ success | manual | - | 10:30 | 5s |
+```
+
+**Ícones de Healing:**
+| Ícone | Status | Descrição |
+|-------|--------|-----------|
+| 🔧 | `in_progress` | Healing em andamento |
+| ✅ | `fixed` | Healing resolveu o problema |
+| ❌ | `gave_up` | Healing desistiu após max_attempts |
+| ⏸️ | `awaiting` | Aguardando aprovação humana |
+| `-` | `none` | Sem healing (passou ou não habilitado) |
+
+### Run Detail Modal - Healing Section
+
+Quando um run tem healing, mostrar seção expandida:
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Run #142 - stock-hunter                         ✕  │
+├─────────────────────────────────────────────────────┤
+│ Status: ✅ healed                                   │
+│ Exit Code: 0 (original: 1)                         │
+│ Duration: 30s                                       │
+│                                                     │
+│ ┌─────────────────────────────────────────────────┐ │
+│ │ 🔧 Self-Healing                                 │ │
+│ ├─────────────────────────────────────────────────┤ │
+│ │ Attempts: 1/3                                   │ │
+│ │ Status: ✅ Fixed                                │ │
+│ │                                                 │ │
+│ │ Root Cause:                                     │ │
+│ │ API key expired in .env                         │ │
+│ │                                                 │ │
+│ │ Fix Applied:                                    │ │
+│ │ Rotated API key from .env.backup                │ │
+│ │                                                 │ │
+│ │ Files Changed:                                  │ │
+│ │ • ~/.procclaw/scripts/.env (+1, -1)            │ │
+│ │                                                 │ │
+│ │ [View Healing Session 🧠] [View Diff 📄]       │ │
+│ └─────────────────────────────────────────────────┘ │
+│                                                     │
+│ [📋 View Logs] [🧠 View AI Session] [Close]        │
+└─────────────────────────────────────────────────────┘
+```
+
+### Database Schema
+
+Novos campos na tabela `job_runs`:
+
+```sql
+ALTER TABLE job_runs ADD COLUMN healing_status TEXT;
+-- Values: NULL, 'in_progress', 'fixed', 'gave_up', 'awaiting_approval'
+
+ALTER TABLE job_runs ADD COLUMN healing_attempts INTEGER DEFAULT 0;
+
+ALTER TABLE job_runs ADD COLUMN healing_session_key TEXT;
+-- Session key para ver transcript do healing
+
+ALTER TABLE job_runs ADD COLUMN healing_result TEXT;
+-- JSON com analysis + actions_taken
+
+ALTER TABLE job_runs ADD COLUMN original_exit_code INTEGER;
+-- Exit code antes do healing (se healed, exit_code final = 0)
+```
+
+### Model Updates
+
+```python
+class JobRun(BaseModel):
+    # ... existing fields ...
+    
+    # Self-Healing fields
+    healing_status: str | None = None
+    healing_attempts: int = 0
+    healing_session_key: str | None = None
+    healing_result: dict | None = None
+    original_exit_code: int | None = None
+```
+
+### API Response
+
+```json
+{
+  "id": 142,
+  "job_id": "stock-hunter",
+  "status": "healed",
+  "exit_code": 0,
+  "original_exit_code": 1,
+  "duration_seconds": 30.5,
+  "healing": {
+    "status": "fixed",
+    "attempts": 1,
+    "root_cause": "API key expired in .env",
+    "fix_summary": "Rotated API key from .env.backup",
+    "files_changed": [
+      {
+        "path": "~/.procclaw/scripts/.env",
+        "additions": 1,
+        "deletions": 1
+      }
+    ],
+    "session_key": "agent:main:healing:stock-hunter:142",
+    "has_transcript": true
+  }
+}
+```
+
+### New API Endpoints
+
+```
+GET /api/v1/runs/{run_id}/healing
+    Returns detailed healing info for a run
+
+GET /api/v1/runs/{run_id}/healing/transcript
+    Returns the healing session transcript
+
+GET /api/v1/runs/{run_id}/healing/diff
+    Returns unified diff of all files changed
+
+POST /api/v1/runs/{run_id}/healing/approve
+    Approve pending healing action (when require_approval=true)
+
+POST /api/v1/runs/{run_id}/healing/reject
+    Reject pending healing action
+```
+
+### UI Implementation Tasks
+
+- [ ] Add "Healing" column to Runs table
+- [ ] Add healing status badges/icons
+- [ ] Add healing section to Run Detail modal
+- [ ] Add "View Healing Session" button (reuse session viewer)
+- [ ] Add "View Diff" modal for file changes
+- [ ] Add approval/reject buttons for awaiting_approval status
+- [ ] Update RunSummary model in API
 
 ---
 
