@@ -272,6 +272,93 @@ class SessionTrigger(BaseModel):
     immediate: bool = False  # If True, try to wake agent for immediate delivery
 
 
+class HealingAction(str, Enum):
+    """Allowed actions for self-healing remediation."""
+    
+    RESTART_JOB = "restart_job"
+    EDIT_SCRIPT = "edit_script"
+    EDIT_CONFIG = "edit_config"
+    RUN_COMMAND = "run_command"
+    EDIT_OPENCLAW_CRON = "edit_openclaw_cron"
+    RESTART_SERVICE = "restart_service"
+
+
+class HealingStatus(str, Enum):
+    """Status of a healing attempt."""
+    
+    IN_PROGRESS = "in_progress"
+    FIXED = "fixed"
+    GAVE_UP = "gave_up"
+    AWAITING_APPROVAL = "awaiting_approval"
+
+
+class HealingAnalysisConfig(BaseModel):
+    """Configuration for failure analysis in self-healing."""
+    
+    include_logs: bool = True
+    log_lines: int = 200
+    include_stderr: bool = True
+    include_history: int = 5  # Number of recent runs to include
+    include_config: bool = True
+
+
+class HealingRemediationConfig(BaseModel):
+    """Configuration for auto-remediation in self-healing."""
+    
+    enabled: bool = True
+    max_attempts: int = 3
+    allowed_actions: list[HealingAction] = Field(
+        default_factory=lambda: [HealingAction.RESTART_JOB]
+    )
+    forbidden_paths: list[str] = Field(default_factory=list)
+    require_approval: bool = False
+
+
+class HealingNotifyConfig(BaseModel):
+    """Notification settings for self-healing."""
+    
+    on_analysis: bool = False
+    on_fix_attempt: bool = True
+    on_success: bool = True
+    on_give_up: bool = True
+    session: str = "main"
+
+
+class SelfHealingConfig(BaseModel):
+    """Self-healing configuration for a job.
+    
+    When enabled, failed jobs are automatically analyzed and 
+    remediation is attempted based on the configuration.
+    """
+    
+    enabled: bool = False
+    analysis: HealingAnalysisConfig = Field(default_factory=HealingAnalysisConfig)
+    remediation: HealingRemediationConfig = Field(default_factory=HealingRemediationConfig)
+    notify: HealingNotifyConfig = Field(default_factory=HealingNotifyConfig)
+
+
+# Hardcoded forbidden paths that can NEVER be modified by self-healing
+HEALING_FORBIDDEN_PATHS_ALWAYS: list[str] = [
+    # ProcClaw source - NEVER MODIFY
+    "~/.openclaw/workspace/projects/procclaw/",
+    "**/projects/procclaw/**",
+    
+    # OpenClaw source - NEVER MODIFY
+    "**/node_modules/openclaw/**",
+    "/opt/homebrew/lib/node_modules/openclaw/",
+    "/usr/local/lib/node_modules/openclaw/",
+    
+    # System critical
+    "~/.ssh/",
+    "~/.gnupg/",
+    "~/.openclaw/openclaw.json",
+    "/etc/",
+    "/usr/",
+    "/bin/",
+    "/sbin/",
+]
+
+
 class JobDependency(BaseModel):
     """Dependency on another job."""
 
@@ -341,6 +428,9 @@ class JobConfig(BaseModel):
     # Session triggers (outgoing - send to OpenClaw)
     session_triggers: list[SessionTrigger] = Field(default_factory=list)
 
+    # Self-healing (AI-powered failure analysis and auto-remediation)
+    self_healing: SelfHealingConfig = Field(default_factory=SelfHealingConfig)
+
     # Metadata
     tags: list[str] = Field(default_factory=list)
     
@@ -399,6 +489,13 @@ class JobRun(BaseModel):
     composite_id: str | None = None  # workflow ID if run as part of chain/group/chord
     session_key: str | None = None  # OpenClaw session key (for openclaw jobs)
     session_transcript: str | None = None  # Path to OpenClaw session transcript
+    
+    # Self-healing fields
+    healing_status: str | None = None  # in_progress, fixed, gave_up, awaiting_approval
+    healing_attempts: int = 0
+    healing_session_key: str | None = None  # Session key for healing transcript
+    healing_result: dict | None = None  # JSON with analysis + actions_taken
+    original_exit_code: int | None = None  # Exit code before healing fixed it
 
 
 class FileLogMode(str, Enum):

@@ -17,6 +17,7 @@ from loguru import logger
 from procclaw.config import DEFAULT_LOGS_DIR, ensure_config_dir, load_config, load_jobs
 from procclaw.db import Database
 from procclaw.models import (
+    HealingStatus,
     JobConfig,
     JobRun,
     JobsConfig,
@@ -46,6 +47,7 @@ from procclaw.core.triggers import TriggerManager, TriggerEvent
 from procclaw.core.composite import CompositeExecutor
 from procclaw.core.watchdog import Watchdog, MissedRunInfo
 from procclaw.core.workflow import WorkflowManager, WorkflowConfig
+from procclaw.core.self_healing import SelfHealer, HealingResult
 from procclaw.openclaw import (
     OpenClawIntegration, 
     init_integration, 
@@ -257,6 +259,12 @@ class Supervisor:
             start_job=self._start_job_for_workflow,
             is_job_running=self.is_job_running,
             stop_job=self.stop_job,
+            logs_dir=DEFAULT_LOGS_DIR,
+        )
+
+        # Initialize self-healer
+        self._self_healer = SelfHealer(
+            db=self.db,
             logs_dir=DEFAULT_LOGS_DIR,
         )
 
@@ -660,7 +668,7 @@ class Supervisor:
         # Allowed fields to update
         allowed_fields = {
             "name", "description", "tags", "cmd", "cwd", "env", "enabled",
-            "schedule", "run_at", "timezone", "type", "priority"
+            "schedule", "run_at", "timezone", "type", "priority", "self_healing"
         }
         
         try:
@@ -867,6 +875,51 @@ class Supervisor:
                 await send_to_session(trigger.session, message, immediate=trigger.immediate)
             except Exception as e:
                 logger.error(f"Failed to send session trigger for job '{job_id}': {e}")
+
+    async def _trigger_self_healing(
+        self,
+        job_id: str,
+        job: JobConfig,
+        run: JobRun,
+    ) -> None:
+        """Trigger self-healing for a failed job.
+        
+        This is called asynchronously after a job fails and retries are exhausted.
+        """
+        async def retry_callback(jid: str) -> bool:
+            """Callback to retry the job after a fix is applied."""
+            try:
+                # Start the job synchronously and wait for completion
+                started = self.start_job(jid, trigger="healing_retry")
+                if not started:
+                    return False
+                
+                # Wait for job to complete (with timeout)
+                for _ in range(60):  # Wait up to 5 minutes
+                    await asyncio.sleep(5)
+                    if not self.is_job_running(jid):
+                        # Check the result
+                        last_run = self.db.get_last_run(jid)
+                        if last_run and last_run.exit_code == 0:
+                            return True
+                        return False
+                
+                # Timeout
+                return False
+            except Exception as e:
+                logger.error(f"Error in healing retry callback: {e}")
+                return False
+        
+        try:
+            result = await self._self_healer.trigger_healing(
+                job_id=job_id,
+                job=job,
+                run=run,
+                on_retry=retry_callback,
+            )
+            logger.info(f"Self-healing completed for job '{job_id}': {result.status.value}")
+        except Exception as e:
+            logger.error(f"Self-healing failed for job '{job_id}': {e}")
 
     def add_job_tag(self, job_id: str, tag: str) -> bool:
         """Add a tag to a job.
@@ -1311,6 +1364,7 @@ class Supervisor:
             ))
 
         # Handle retry for failed jobs
+        should_try_healing = False
         if exit_code != 0:
             if job and job.retry.enabled:
                 retry_time = self._retry_manager.schedule_retry(
@@ -1320,7 +1374,7 @@ class Supervisor:
                     state.retry_attempt += 1
                     state.next_retry = retry_time
                 else:
-                    # Max retries reached - move to DLQ
+                    # Max retries reached - move to DLQ and try self-healing
                     state.retry_attempt = 0
                     self._dlq.add_entry(
                         job_id=job_id,
@@ -1329,8 +1383,18 @@ class Supervisor:
                         job_config=job.model_dump() if job else None,
                         attempts=job.retry.max_attempts if job else 0,
                     )
+                    should_try_healing = True
+            else:
+                # No retry configured, try self-healing immediately
+                should_try_healing = True
 
         self.db.save_state(state)
+        
+        # Trigger self-healing if enabled and applicable
+        if should_try_healing and job and last_run:
+            if self._self_healer.is_healing_enabled(job):
+                logger.info(f"Triggering self-healing for job '{job_id}'")
+                asyncio.create_task(self._trigger_self_healing(job_id, job, last_run))
 
     def _process_queued_jobs(self, job_id: str) -> None:
         """Process queued jobs after a job completes."""

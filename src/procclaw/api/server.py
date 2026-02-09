@@ -110,6 +110,15 @@ class JobListResponse(BaseModel):
     total: int
 
 
+class HealingSummary(BaseModel):
+    """Summary of self-healing for a run."""
+    status: str | None = None  # in_progress, fixed, gave_up, awaiting_approval
+    attempts: int = 0
+    has_session: bool = False
+    root_cause: str | None = None
+    fix_summary: str | None = None
+
+
 class RunSummary(BaseModel):
     id: int
     job_id: str
@@ -119,12 +128,14 @@ class RunSummary(BaseModel):
     exit_code: int | None = None
     duration_seconds: float | None = None
     trigger: str
-    status: str  # running, success, failed
+    status: str  # running, success, failed, healed
     error: str | None = None
     cmd: str | None = None
     composite_id: str | None = None  # workflow ID if part of chain/group/chord
     session_key: str | None = None  # OpenClaw session key
     has_transcript: bool = False  # Whether session transcript is available
+    healing: HealingSummary | None = None  # Self-healing info if applicable
+    original_exit_code: int | None = None  # Exit code before healing fixed it
 
 
 class RunListResponse(BaseModel):
@@ -385,6 +396,22 @@ def create_app() -> FastAPI:
             if trigger and run.trigger != trigger:
                 continue
             
+            # Build healing summary if applicable
+            healing_summary = None
+            if run.healing_status:
+                healing_result = run.healing_result or {}
+                analysis = healing_result.get("analysis", {})
+                healing_summary = HealingSummary(
+                    status=run.healing_status,
+                    attempts=run.healing_attempts,
+                    has_session=bool(run.healing_session_key),
+                    root_cause=analysis.get("root_cause"),
+                    fix_summary=healing_result.get("summary"),
+                )
+                # Update run status to "healed" if healing was successful
+                if run.healing_status == "fixed":
+                    run_status = "healed"
+            
             result.append(RunSummary(
                 id=run.id,
                 job_id=run.job_id,
@@ -400,6 +427,8 @@ def create_app() -> FastAPI:
                 composite_id=run.composite_id,
                 session_key=run.session_key,
                 has_transcript=bool(run.session_transcript),
+                healing=healing_summary,
+                original_exit_code=run.original_exit_code,
             ))
         
         return RunListResponse(runs=result, total=len(result))
@@ -475,6 +504,34 @@ def create_app() -> FastAPI:
             "transcript_path": str(transcript_path),
             "messages": messages,
             "message_count": len(messages),
+        }
+
+    @app.get("/api/v1/runs/{run_id}/healing")
+    async def get_run_healing(
+        run_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get detailed self-healing info for a job run."""
+        supervisor = get_supervisor()
+        
+        # Find the run
+        runs = supervisor.db.get_runs(limit=1000)
+        run = next((r for r in runs if r.id == run_id), None)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        
+        if not run.healing_status:
+            raise HTTPException(status_code=404, detail="No healing info available for this run")
+        
+        return {
+            "run_id": run_id,
+            "job_id": run.job_id,
+            "healing_status": run.healing_status,
+            "healing_attempts": run.healing_attempts,
+            "healing_session_key": run.healing_session_key,
+            "healing_result": run.healing_result,
+            "original_exit_code": run.original_exit_code,
+            "final_exit_code": run.exit_code,
         }
 
     @app.get("/api/v1/jobs/{job_id}", response_model=JobDetail)

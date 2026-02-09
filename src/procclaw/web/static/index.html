@@ -444,6 +444,7 @@
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Started</th>
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Duration</th>
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Exit Code</th>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Healing</th>
                             <th class="text-right text-xs font-medium text-dark-400 uppercase px-4 py-3">Actions</th>
                         </tr>
                     </thead>
@@ -478,7 +479,27 @@
                                 <td class="px-4 py-3">
                                     <span class="font-mono text-sm" :class="run.exit_code === 0 ? 'text-green-400' : run.exit_code ? 'text-red-400' : 'text-dark-400'" x-text="run.exit_code ?? '-'"></span>
                                 </td>
+                                <td class="px-4 py-3">
+                                    <template x-if="run.healing">
+                                        <span class="text-sm cursor-help" 
+                                            :class="{
+                                                'text-green-400': run.healing.status === 'fixed',
+                                                'text-yellow-400 animate-pulse': run.healing.status === 'in_progress',
+                                                'text-red-400': run.healing.status === 'gave_up',
+                                                'text-orange-400': run.healing.status === 'awaiting_approval'
+                                            }"
+                                            :title="run.healing.fix_summary || run.healing.root_cause || 'Healing ' + run.healing.status">
+                                            <span x-show="run.healing.status === 'fixed'">✅</span>
+                                            <span x-show="run.healing.status === 'in_progress'">🔧</span>
+                                            <span x-show="run.healing.status === 'gave_up'">❌</span>
+                                            <span x-show="run.healing.status === 'awaiting_approval'">⏸️</span>
+                                            <span class="text-xs ml-1" x-text="run.healing.attempts + '/' + 3"></span>
+                                        </span>
+                                    </template>
+                                    <span x-show="!run.healing" class="text-dark-500">-</span>
+                                </td>
                                 <td class="px-4 py-3 text-right flex items-center justify-end gap-1">
+                                    <button x-show="run.healing" @click.stop="viewRunHealing(run)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="View Healing Details">🔧</button>
                                     <button x-show="run.has_transcript" @click.stop="viewRunSession(run)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-orange-400 text-sm" title="View AI Session">🧠</button>
                                     <button @click.stop="viewRunLogs(run)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="View Logs">📋</button>
                                 </td>
@@ -685,6 +706,112 @@
                 
                 <div class="p-4 border-t border-dark-600 flex justify-end">
                     <button @click="showSessionModal = false" class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Healing Details Modal -->
+        <div x-show="showHealingModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="showHealingModal = false">
+            <div class="bg-dark-800 rounded-xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+                <div class="p-4 border-b border-dark-600 flex items-center justify-between">
+                    <div>
+                        <h2 class="text-lg font-medium">🔧 Self-Healing Details - Run #<span x-text="healingRun?.id"></span></h2>
+                        <div class="text-sm text-dark-400">
+                            <span x-text="healingRun?.job_id"></span>
+                        </div>
+                    </div>
+                    <button @click="showHealingModal = false" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
+                </div>
+                
+                <div class="p-6 overflow-auto flex-1 space-y-6">
+                    <!-- Status -->
+                    <div class="flex items-center gap-4">
+                        <div class="text-4xl">
+                            <span x-show="healingDetails?.healing_status === 'fixed'">✅</span>
+                            <span x-show="healingDetails?.healing_status === 'in_progress'">🔧</span>
+                            <span x-show="healingDetails?.healing_status === 'gave_up'">❌</span>
+                            <span x-show="healingDetails?.healing_status === 'awaiting_approval'">⏸️</span>
+                        </div>
+                        <div>
+                            <div class="text-xl font-medium capitalize" x-text="healingDetails?.healing_status?.replace('_', ' ')"></div>
+                            <div class="text-sm text-dark-400">
+                                Attempts: <span x-text="healingDetails?.healing_attempts"></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Exit Codes -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-dark-700 rounded-lg p-4">
+                            <div class="text-xs text-dark-400 mb-1">Original Exit Code</div>
+                            <div class="text-2xl font-mono text-red-400" x-text="healingDetails?.original_exit_code ?? '-'"></div>
+                        </div>
+                        <div class="bg-dark-700 rounded-lg p-4">
+                            <div class="text-xs text-dark-400 mb-1">Final Exit Code</div>
+                            <div class="text-2xl font-mono" 
+                                :class="healingDetails?.final_exit_code === 0 ? 'text-green-400' : 'text-red-400'"
+                                x-text="healingDetails?.final_exit_code ?? '-'"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Analysis -->
+                    <template x-if="healingDetails?.healing_result?.analysis">
+                        <div class="bg-dark-700 rounded-lg p-4">
+                            <div class="text-sm font-medium text-dark-200 mb-3">Analysis</div>
+                            <dl class="space-y-2 text-sm">
+                                <div class="flex">
+                                    <dt class="w-32 text-dark-400">Root Cause:</dt>
+                                    <dd class="text-dark-200 flex-1" x-text="healingDetails.healing_result.analysis.root_cause || '-'"></dd>
+                                </div>
+                                <div class="flex">
+                                    <dt class="w-32 text-dark-400">Category:</dt>
+                                    <dd class="text-dark-200" x-text="healingDetails.healing_result.analysis.category || '-'"></dd>
+                                </div>
+                                <div class="flex">
+                                    <dt class="w-32 text-dark-400">Confidence:</dt>
+                                    <dd class="text-dark-200" x-text="healingDetails.healing_result.analysis.confidence || '-'"></dd>
+                                </div>
+                            </dl>
+                        </div>
+                    </template>
+                    
+                    <!-- Summary -->
+                    <template x-if="healingDetails?.healing_result?.summary">
+                        <div class="bg-dark-700 rounded-lg p-4">
+                            <div class="text-sm font-medium text-dark-200 mb-2">Summary</div>
+                            <div class="text-sm text-dark-300 whitespace-pre-wrap" x-text="healingDetails.healing_result.summary"></div>
+                        </div>
+                    </template>
+                    
+                    <!-- Actions Taken -->
+                    <template x-if="healingDetails?.healing_result?.actions_taken?.length">
+                        <div class="bg-dark-700 rounded-lg p-4">
+                            <div class="text-sm font-medium text-dark-200 mb-2">Actions Taken</div>
+                            <ul class="list-disc list-inside text-sm text-dark-300 space-y-1">
+                                <template x-for="action in healingDetails.healing_result.actions_taken">
+                                    <li x-text="JSON.stringify(action)"></li>
+                                </template>
+                            </ul>
+                        </div>
+                    </template>
+                    
+                    <!-- Human Intervention Needed -->
+                    <template x-if="healingDetails?.healing_result?.human_intervention_needed">
+                        <div class="bg-orange-500/20 border border-orange-500/50 rounded-lg p-4">
+                            <div class="text-sm font-medium text-orange-400 mb-2">⚠️ Human Intervention Needed</div>
+                            <div class="text-sm text-orange-300" x-text="healingDetails.healing_result.human_intervention_reason || 'Manual action required'"></div>
+                        </div>
+                    </template>
+                    
+                    <!-- Raw Details (collapsible) -->
+                    <details class="bg-dark-700 rounded-lg">
+                        <summary class="p-4 cursor-pointer text-sm text-dark-400 hover:text-dark-200">View Raw Healing Result</summary>
+                        <pre class="p-4 pt-0 text-xs overflow-auto text-dark-400 font-mono" x-text="JSON.stringify(healingDetails?.healing_result, null, 2)"></pre>
+                    </details>
+                </div>
+                
+                <div class="p-4 border-t border-dark-600 flex justify-end">
+                    <button @click="showHealingModal = false" class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm">Close</button>
                 </div>
             </div>
         </div>
@@ -1415,6 +1542,96 @@
                         <label class="block text-sm text-dark-400 mb-1">Tags (comma-separated)</label>
                         <input type="text" x-model="editJob.tagsStr" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" @input="syncEditFormToYaml()">
                     </div>
+                    
+                    <!-- Self-Healing Settings -->
+                    <details class="bg-dark-700 rounded-lg">
+                        <summary class="p-3 cursor-pointer text-sm text-dark-300 hover:text-white flex items-center gap-2">
+                            🔧 Self-Healing Settings
+                            <span x-show="editJob.self_healing?.enabled" class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">Enabled</span>
+                        </summary>
+                        <div class="p-4 pt-0 space-y-4">
+                            <div class="flex items-center gap-2">
+                                <input type="checkbox" id="edit-healing-enabled" x-model="editJob.self_healing.enabled" class="rounded" @change="syncEditFormToYaml()">
+                                <label for="edit-healing-enabled" class="text-sm">Enable Self-Healing</label>
+                            </div>
+                            
+                            <div x-show="editJob.self_healing?.enabled" class="space-y-4">
+                                <!-- Preset -->
+                                <div>
+                                    <label class="block text-sm text-dark-400 mb-1">Preset</label>
+                                    <select x-model="editJob.self_healing.preset" @change="applyHealingPreset()" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm">
+                                        <option value="conservative">Conservative (restart only)</option>
+                                        <option value="moderate">Moderate (restart + edit script)</option>
+                                        <option value="aggressive">Aggressive (all actions)</option>
+                                        <option value="custom">Custom</option>
+                                    </select>
+                                </div>
+                                
+                                <!-- Max Attempts -->
+                                <div>
+                                    <label class="block text-sm text-dark-400 mb-1">Max Attempts</label>
+                                    <input type="number" x-model.number="editJob.self_healing.remediation.max_attempts" min="1" max="10" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm" @input="editJob.self_healing.preset = 'custom'; syncEditFormToYaml()">
+                                </div>
+                                
+                                <!-- Allowed Actions -->
+                                <div>
+                                    <label class="block text-sm text-dark-400 mb-2">Allowed Actions</label>
+                                    <div class="space-y-2">
+                                        <label class="flex items-center gap-2 text-sm">
+                                            <input type="checkbox" :checked="editJob.self_healing?.remediation?.allowed_actions?.includes('restart_job')" 
+                                                @change="toggleHealingAction('restart_job')" class="rounded">
+                                            Restart Job
+                                        </label>
+                                        <label class="flex items-center gap-2 text-sm">
+                                            <input type="checkbox" :checked="editJob.self_healing?.remediation?.allowed_actions?.includes('edit_script')"
+                                                @change="toggleHealingAction('edit_script')" class="rounded">
+                                            Edit Script
+                                        </label>
+                                        <label class="flex items-center gap-2 text-sm">
+                                            <input type="checkbox" :checked="editJob.self_healing?.remediation?.allowed_actions?.includes('edit_config')"
+                                                @change="toggleHealingAction('edit_config')" class="rounded">
+                                            Edit Config
+                                        </label>
+                                        <label class="flex items-center gap-2 text-sm">
+                                            <input type="checkbox" :checked="editJob.self_healing?.remediation?.allowed_actions?.includes('run_command')"
+                                                @change="toggleHealingAction('run_command')" class="rounded">
+                                            Run Command
+                                        </label>
+                                        <label class="flex items-center gap-2 text-sm">
+                                            <input type="checkbox" :checked="editJob.self_healing?.remediation?.allowed_actions?.includes('edit_openclaw_cron')"
+                                                @change="toggleHealingAction('edit_openclaw_cron')" class="rounded">
+                                            Edit OpenClaw Cron
+                                        </label>
+                                        <label class="flex items-center gap-2 text-sm">
+                                            <input type="checkbox" :checked="editJob.self_healing?.remediation?.allowed_actions?.includes('restart_service')"
+                                                @change="toggleHealingAction('restart_service')" class="rounded">
+                                            Restart Service
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                <!-- Notifications -->
+                                <div>
+                                    <label class="block text-sm text-dark-400 mb-2">Notifications</label>
+                                    <div class="space-y-2">
+                                        <label class="flex items-center gap-2 text-sm">
+                                            <input type="checkbox" x-model="editJob.self_healing.notify.on_fix_attempt" class="rounded" @change="syncEditFormToYaml()">
+                                            Notify on Fix Attempt
+                                        </label>
+                                        <label class="flex items-center gap-2 text-sm">
+                                            <input type="checkbox" x-model="editJob.self_healing.notify.on_success" class="rounded" @change="syncEditFormToYaml()">
+                                            Notify on Success
+                                        </label>
+                                        <label class="flex items-center gap-2 text-sm">
+                                            <input type="checkbox" x-model="editJob.self_healing.notify.on_give_up" class="rounded" @change="syncEditFormToYaml()">
+                                            Notify on Give Up
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+                    
                     <div class="flex gap-2 pt-4">
                         <button type="button" @click="showEditModal = false" class="flex-1 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg transition">Cancel</button>
                         <button type="submit" class="flex-1 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg transition">Save Changes</button>
@@ -1655,6 +1872,9 @@
                 showSessionModal: false,
                 sessionRun: null,
                 sessionMessages: [],
+                showHealingModal: false,
+                healingRun: null,
+                healingDetails: null,
                 runLogRun: null,
                 logContent: [],
                 logSource: 'file',
@@ -2015,7 +2235,32 @@
                         cronHours: 1,
                         cronTime: '09:00',
                         cronDays: [1],
-                        cronDayOfMonth: 1
+                        cronDayOfMonth: 1,
+                        self_healing: {
+                            enabled: job.self_healing?.enabled || false,
+                            preset: 'conservative',
+                            analysis: {
+                                include_logs: job.self_healing?.analysis?.include_logs ?? true,
+                                log_lines: job.self_healing?.analysis?.log_lines ?? 200,
+                                include_stderr: job.self_healing?.analysis?.include_stderr ?? true,
+                                include_history: job.self_healing?.analysis?.include_history ?? 5,
+                                include_config: job.self_healing?.analysis?.include_config ?? true
+                            },
+                            remediation: {
+                                enabled: job.self_healing?.remediation?.enabled ?? true,
+                                max_attempts: job.self_healing?.remediation?.max_attempts ?? 3,
+                                allowed_actions: job.self_healing?.remediation?.allowed_actions || ['restart_job'],
+                                forbidden_paths: job.self_healing?.remediation?.forbidden_paths || [],
+                                require_approval: job.self_healing?.remediation?.require_approval ?? false
+                            },
+                            notify: {
+                                on_analysis: job.self_healing?.notify?.on_analysis ?? false,
+                                on_fix_attempt: job.self_healing?.notify?.on_fix_attempt ?? true,
+                                on_success: job.self_healing?.notify?.on_success ?? true,
+                                on_give_up: job.self_healing?.notify?.on_give_up ?? true,
+                                session: job.self_healing?.notify?.session || 'main'
+                            }
+                        }
                     };
                     this.editMode = 'form';
                     this.syncEditFormToYaml();
@@ -2068,6 +2313,40 @@
                     this.updateCronFromPreset();
                 },
 
+                applyHealingPreset() {
+                    const preset = this.editJob.self_healing.preset;
+                    switch (preset) {
+                        case 'conservative':
+                            this.editJob.self_healing.remediation.allowed_actions = ['restart_job'];
+                            this.editJob.self_healing.remediation.max_attempts = 2;
+                            break;
+                        case 'moderate':
+                            this.editJob.self_healing.remediation.allowed_actions = ['restart_job', 'edit_script', 'edit_config'];
+                            this.editJob.self_healing.remediation.max_attempts = 3;
+                            break;
+                        case 'aggressive':
+                            this.editJob.self_healing.remediation.allowed_actions = ['restart_job', 'edit_script', 'edit_config', 'run_command', 'edit_openclaw_cron', 'restart_service'];
+                            this.editJob.self_healing.remediation.max_attempts = 5;
+                            break;
+                    }
+                    this.syncEditFormToYaml();
+                },
+
+                toggleHealingAction(action) {
+                    if (!this.editJob.self_healing.remediation.allowed_actions) {
+                        this.editJob.self_healing.remediation.allowed_actions = [];
+                    }
+                    const actions = this.editJob.self_healing.remediation.allowed_actions;
+                    const idx = actions.indexOf(action);
+                    if (idx >= 0) {
+                        actions.splice(idx, 1);
+                    } else {
+                        actions.push(action);
+                    }
+                    this.editJob.self_healing.preset = 'custom';
+                    this.syncEditFormToYaml();
+                },
+
                 async saveJob() {
                     const updates = {
                         name: this.editJob.name,
@@ -2077,7 +2356,13 @@
                         type: this.editJob.type,
                         schedule: this.editJob.type === 'scheduled' ? (this.editJob.schedule || null) : null,
                         run_at: this.editJob.type === 'oneshot' ? (this.editJob.run_at || null) : null,
-                        tags: this.editJob.tagsStr.split(',').map(t => t.trim()).filter(t => t)
+                        tags: this.editJob.tagsStr.split(',').map(t => t.trim()).filter(t => t),
+                        self_healing: this.editJob.self_healing.enabled ? {
+                            enabled: true,
+                            analysis: this.editJob.self_healing.analysis,
+                            remediation: this.editJob.self_healing.remediation,
+                            notify: this.editJob.self_healing.notify
+                        } : { enabled: false }
                     };
                     
                     const res = await this.api(`/jobs/${this.editJob.id}`, 'PATCH', updates);
@@ -2416,6 +2701,24 @@
                     } catch (e) {
                         console.error('Error loading session:', e);
                         alert('Error loading session transcript: ' + e.message);
+                    }
+                },
+
+                async viewRunHealing(run) {
+                    if (!run.healing) {
+                        alert('No healing info available for this run');
+                        return;
+                    }
+                    
+                    try {
+                        const res = await this.api(`/runs/${run.id}/healing`);
+                        this.healingRun = run;
+                        this.healingDetails = res;
+                        this.showHealingModal = true;
+                        this.selectedRun = null;
+                    } catch (e) {
+                        console.error('Error loading healing details:', e);
+                        alert('Error loading healing details: ' + e.message);
                     }
                 },
 

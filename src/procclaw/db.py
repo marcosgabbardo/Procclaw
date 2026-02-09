@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -51,7 +51,12 @@ CREATE TABLE IF NOT EXISTS job_runs (
     idempotency_key TEXT,
     composite_id TEXT,
     session_key TEXT,
-    session_transcript TEXT
+    session_transcript TEXT,
+    healing_status TEXT,
+    healing_attempts INTEGER DEFAULT 0,
+    healing_session_key TEXT,
+    healing_result TEXT,
+    original_exit_code INTEGER
 );
 
 -- Metrics (for historical queries)
@@ -344,6 +349,22 @@ class Database:
             except sqlite3.OperationalError:
                 pass
         
+        if from_version < 7 and to_version >= 7:
+            # Migration to version 7: Add self-healing fields to job_runs
+            logger.info("Migrating to version 7: Adding self-healing fields to job_runs")
+            healing_columns = [
+                ("healing_status", "TEXT"),
+                ("healing_attempts", "INTEGER DEFAULT 0"),
+                ("healing_session_key", "TEXT"),
+                ("healing_result", "TEXT"),
+                ("original_exit_code", "INTEGER"),
+            ]
+            for col_name, col_type in healing_columns:
+                try:
+                    conn.execute(f"ALTER TABLE job_runs ADD COLUMN {col_name} {col_type}")
+                except sqlite3.OperationalError:
+                    pass
+        
         conn.execute("UPDATE schema_version SET version = ?", (to_version,))
 
     @contextmanager
@@ -457,8 +478,15 @@ class Database:
 
     def update_run(self, run: JobRun) -> None:
         """Update a job run record."""
+        import json
+        
         if run.id is None:
             raise ValueError("Cannot update run without ID")
+        
+        # Serialize healing_result to JSON if present
+        healing_result_json = None
+        if run.healing_result:
+            healing_result_json = json.dumps(run.healing_result)
 
         with self._connect() as conn:
             conn.execute(
@@ -469,7 +497,12 @@ class Database:
                     duration_seconds = ?,
                     error = ?,
                     session_key = ?,
-                    session_transcript = ?
+                    session_transcript = ?,
+                    healing_status = ?,
+                    healing_attempts = ?,
+                    healing_session_key = ?,
+                    healing_result = ?,
+                    original_exit_code = ?
                 WHERE id = ?
                 """,
                 (
@@ -479,6 +512,11 @@ class Database:
                     run.error,
                     run.session_key,
                     run.session_transcript,
+                    run.healing_status,
+                    run.healing_attempts,
+                    run.healing_session_key,
+                    healing_result_json,
+                    run.original_exit_code,
                     run.id,
                 ),
             )
@@ -517,7 +555,17 @@ class Database:
 
     def _row_to_run(self, row: sqlite3.Row) -> JobRun:
         """Convert a database row to a JobRun."""
+        import json
         keys = row.keys()
+        
+        # Parse healing_result JSON if present
+        healing_result = None
+        if "healing_result" in keys and row["healing_result"]:
+            try:
+                healing_result = json.loads(row["healing_result"])
+            except (json.JSONDecodeError, TypeError):
+                healing_result = None
+        
         return JobRun(
             id=row["id"],
             job_id=row["job_id"],
@@ -530,6 +578,11 @@ class Database:
             composite_id=row["composite_id"] if "composite_id" in keys else None,
             session_key=row["session_key"] if "session_key" in keys else None,
             session_transcript=row["session_transcript"] if "session_transcript" in keys else None,
+            healing_status=row["healing_status"] if "healing_status" in keys else None,
+            healing_attempts=row["healing_attempts"] if "healing_attempts" in keys else 0,
+            healing_session_key=row["healing_session_key"] if "healing_session_key" in keys else None,
+            healing_result=healing_result,
+            original_exit_code=row["original_exit_code"] if "original_exit_code" in keys else None,
         )
 
     # Log Methods
