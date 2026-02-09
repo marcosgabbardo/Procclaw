@@ -1555,8 +1555,11 @@ class Supervisor:
             logger.info(f"Oneshot job '{job_id}' completed - auto-disabling")
             self._disable_oneshot_job(job_id)
 
-        # Notify OpenClaw
-        if exit_code == 0:
+        # Notify OpenClaw (but not for manual stops)
+        if was_manually_stopped:
+            # No alert for manual stops
+            self._openclaw.on_job_stopped(job_id, exit_code, duration)
+        elif exit_code == 0:
             self._openclaw.on_job_stopped(job_id, exit_code, duration)
         else:
             should_alert = job.alerts.on_failure if job else True
@@ -1572,11 +1575,14 @@ class Supervisor:
             self._output_checker.check_job_output(job_id, job, exit_code)
 
         # Execute session triggers (async, fire-and-forget)
+        # For manual stops, use ON_COMPLETE instead of ON_FAILURE
         if job and job.session_triggers:
-            trigger_event = (
-                SessionTriggerEvent.ON_SUCCESS if exit_code == 0 
-                else SessionTriggerEvent.ON_FAILURE
-            )
+            if was_manually_stopped:
+                trigger_event = SessionTriggerEvent.ON_COMPLETE
+            elif exit_code == 0:
+                trigger_event = SessionTriggerEvent.ON_SUCCESS
+            else:
+                trigger_event = SessionTriggerEvent.ON_FAILURE
             asyncio.create_task(self._execute_session_triggers(
                 job_id=job_id,
                 job=job,
