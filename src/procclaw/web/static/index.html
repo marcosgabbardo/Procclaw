@@ -137,6 +137,11 @@
                     class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
                     🔗 Dependencies
                 </button>
+                <button @click="currentTab = 'workflows'; loadWorkflows()" 
+                    :class="currentTab === 'workflows' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
+                    class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
+                    ⛓️ Workflows
+                </button>
                 <button @click="currentTab = 'logs'" 
                     :class="currentTab === 'logs' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
                     class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
@@ -605,6 +610,254 @@
                 
                 <div x-show="dependencyChains.length === 0 && independentJobs.length === 0" class="text-center py-8 text-dark-400">
                     No jobs configured
+                </div>
+            </div>
+        </div>
+
+        <!-- Workflows Tab -->
+        <div x-show="currentTab === 'workflows'" x-cloak>
+            <div class="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+                <!-- Header -->
+                <div class="flex items-center justify-between p-4 border-b border-dark-600">
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-lg font-semibold">Workflows</h2>
+                        <span class="text-sm text-dark-400">Chain, Group, Chord</span>
+                    </div>
+                    <button @click="openNewWorkflowModal()" 
+                        class="px-4 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg text-sm font-medium transition flex items-center gap-2">
+                        <span>+ New Workflow</span>
+                    </button>
+                </div>
+                
+                <!-- Saved Workflows -->
+                <div class="p-4 border-b border-dark-600">
+                    <h3 class="text-sm font-medium text-dark-300 mb-3">Saved Workflows</h3>
+                    <div x-show="savedWorkflows.length === 0" class="text-center py-6 text-dark-400">
+                        No saved workflows yet. Create one to run chains, groups, or chords.
+                    </div>
+                    <div class="grid gap-3">
+                        <template x-for="workflow in savedWorkflows" :key="workflow.id">
+                            <div class="bg-dark-700 rounded-lg p-4 flex items-center justify-between">
+                                <div class="flex items-center gap-4">
+                                    <span class="text-2xl" x-text="workflow.type === 'chain' ? '⛓️' : workflow.type === 'group' ? '📦' : '🎵'"></span>
+                                    <div>
+                                        <div class="font-medium" x-text="workflow.name"></div>
+                                        <div class="text-sm text-dark-400 flex items-center gap-2 mt-1">
+                                            <span class="px-2 py-0.5 bg-dark-600 rounded text-xs uppercase" x-text="workflow.type"></span>
+                                            <span x-text="workflow.jobs.length + ' jobs'"></span>
+                                            <template x-if="workflow.callback">
+                                                <span class="text-dark-500">→ <span x-text="workflow.callback"></span></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button @click="runWorkflow(workflow)" 
+                                        class="px-3 py-1.5 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded text-sm transition">
+                                        ▶ Run
+                                    </button>
+                                    <button @click="editWorkflow(workflow)" 
+                                        class="px-3 py-1.5 bg-dark-600 hover:bg-dark-500 rounded text-sm transition">
+                                        ✏️
+                                    </button>
+                                    <button @click="deleteWorkflow(workflow)" 
+                                        class="px-3 py-1.5 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded text-sm transition">
+                                        ✕
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                
+                <!-- Quick Run Section -->
+                <div class="p-4">
+                    <h3 class="text-sm font-medium text-dark-300 mb-3">Quick Run (Ad-hoc)</h3>
+                    <div class="bg-dark-700 rounded-lg p-4">
+                        <div class="flex flex-wrap gap-3 items-end">
+                            <div class="flex-1 min-w-[200px]">
+                                <label class="block text-xs text-dark-400 mb-1">Type</label>
+                                <select x-model="quickWorkflow.type" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                                    <option value="chain">⛓️ Chain (Sequential)</option>
+                                    <option value="group">📦 Group (Parallel)</option>
+                                    <option value="chord">🎵 Chord (Parallel + Callback)</option>
+                                </select>
+                            </div>
+                            <div class="flex-[2] min-w-[300px]">
+                                <label class="block text-xs text-dark-400 mb-1">Jobs (select multiple)</label>
+                                <div class="flex flex-wrap gap-2 bg-dark-800 border border-dark-600 rounded-lg p-2 min-h-[42px]">
+                                    <template x-for="(jobId, index) in quickWorkflow.jobs" :key="index">
+                                        <span class="inline-flex items-center gap-1 px-2 py-1 bg-dark-600 rounded text-sm">
+                                            <span x-text="jobId"></span>
+                                            <button @click="quickWorkflow.jobs.splice(index, 1)" class="text-dark-400 hover:text-red-400">×</button>
+                                        </span>
+                                    </template>
+                                    <select @change="if($event.target.value && !quickWorkflow.jobs.includes($event.target.value)) { quickWorkflow.jobs.push($event.target.value); } $event.target.value = '';"
+                                        class="bg-transparent text-sm focus:outline-none text-dark-400 flex-1 min-w-[120px]">
+                                        <option value="">+ Add job...</option>
+                                        <template x-for="job in jobs" :key="job.id">
+                                            <option :value="job.id" x-text="job.id" :disabled="quickWorkflow.jobs.includes(job.id)"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                            </div>
+                            <div x-show="quickWorkflow.type === 'chord'" class="min-w-[150px]">
+                                <label class="block text-xs text-dark-400 mb-1">Callback Job</label>
+                                <select x-model="quickWorkflow.callback" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                                    <option value="">Select callback...</option>
+                                    <template x-for="job in jobs" :key="job.id">
+                                        <option :value="job.id" x-text="job.id"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <button @click="runQuickWorkflow()" 
+                                :disabled="quickWorkflow.jobs.length < 2 || (quickWorkflow.type === 'chord' && !quickWorkflow.callback)"
+                                class="px-4 py-2 bg-accent-500 hover:bg-accent-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition">
+                                ▶ Run Now
+                            </button>
+                        </div>
+                        <div class="mt-3 text-xs text-dark-400">
+                            <template x-if="quickWorkflow.type === 'chain'">
+                                <span>⛓️ Chain: Jobs run one after another. Stops on first failure.</span>
+                            </template>
+                            <template x-if="quickWorkflow.type === 'group'">
+                                <span>📦 Group: Jobs run in parallel. Waits for all to complete.</span>
+                            </template>
+                            <template x-if="quickWorkflow.type === 'chord'">
+                                <span>🎵 Chord: Jobs run in parallel, then callback runs when all complete.</span>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Recent Workflow Runs -->
+                <div class="p-4 border-t border-dark-600">
+                    <h3 class="text-sm font-medium text-dark-300 mb-3">Recent Runs</h3>
+                    <div x-show="workflowRuns.length === 0" class="text-center py-4 text-dark-400 text-sm">
+                        No workflow runs yet
+                    </div>
+                    <div class="space-y-2">
+                        <template x-for="run in workflowRuns" :key="run.composite_id">
+                            <div class="bg-dark-700 rounded-lg p-3 flex items-center justify-between">
+                                <div class="flex items-center gap-3">
+                                    <span :class="run.status === 'completed' ? 'text-green-400' : run.status === 'failed' ? 'text-red-400' : 'text-yellow-400'"
+                                        x-text="run.status === 'completed' ? '✓' : run.status === 'failed' ? '✗' : '⏳'"></span>
+                                    <div>
+                                        <span class="text-sm" x-text="run.composite_id"></span>
+                                        <span class="text-xs text-dark-400 ml-2" x-text="run.type"></span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-4 text-sm text-dark-400">
+                                    <span x-text="Object.keys(run.results || {}).length + ' jobs'"></span>
+                                    <button @click="viewWorkflowRun(run)" class="text-accent-400 hover:text-accent-300">Details</button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- New Workflow Modal -->
+        <div x-show="showWorkflowModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="showWorkflowModal = false">
+            <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" @click.stop>
+                <div class="flex items-center justify-between p-4 border-b border-dark-600">
+                    <h2 class="text-lg font-semibold" x-text="editingWorkflow ? 'Edit Workflow' : 'New Workflow'"></h2>
+                    <button @click="showWorkflowModal = false" class="text-dark-400 hover:text-dark-200">✕</button>
+                </div>
+                <div class="p-4 space-y-4">
+                    <div>
+                        <label class="block text-sm text-dark-300 mb-1">Name</label>
+                        <input type="text" x-model="workflowForm.name" placeholder="My Workflow"
+                            class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-dark-300 mb-1">Type</label>
+                        <select x-model="workflowForm.type" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                            <option value="chain">⛓️ Chain (Sequential: A → B → C)</option>
+                            <option value="group">📦 Group (Parallel: A + B + C)</option>
+                            <option value="chord">🎵 Chord (Parallel + Callback: (A + B + C) → D)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-dark-300 mb-1">Jobs</label>
+                        <div class="space-y-2">
+                            <template x-for="(jobId, index) in workflowForm.jobs" :key="index">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-6 text-center text-dark-400 text-sm" x-text="index + 1"></span>
+                                    <select x-model="workflowForm.jobs[index]" class="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                                        <option value="">Select job...</option>
+                                        <template x-for="job in jobs" :key="job.id">
+                                            <option :value="job.id" x-text="job.id"></option>
+                                        </template>
+                                    </select>
+                                    <button @click="workflowForm.jobs.splice(index, 1)" class="p-2 text-dark-400 hover:text-red-400">✕</button>
+                                </div>
+                            </template>
+                            <button @click="workflowForm.jobs.push('')" class="w-full py-2 border border-dashed border-dark-600 hover:border-dark-500 rounded-lg text-sm text-dark-400 hover:text-dark-300 transition">
+                                + Add Job
+                            </button>
+                        </div>
+                    </div>
+                    <div x-show="workflowForm.type === 'chord'">
+                        <label class="block text-sm text-dark-300 mb-1">Callback Job</label>
+                        <select x-model="workflowForm.callback" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                            <option value="">Select callback job...</option>
+                            <template x-for="job in jobs" :key="job.id">
+                                <option :value="job.id" x-text="job.id"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 p-4 border-t border-dark-600">
+                    <button @click="showWorkflowModal = false" class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition">Cancel</button>
+                    <button @click="saveWorkflow()" 
+                        :disabled="!workflowForm.name || workflowForm.jobs.filter(j => j).length < 2"
+                        class="px-4 py-2 bg-accent-500 hover:bg-accent-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition">
+                        <span x-text="editingWorkflow ? 'Save Changes' : 'Create Workflow'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Workflow Run Details Modal -->
+        <div x-show="showWorkflowRunModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="showWorkflowRunModal = false">
+            <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-lg" @click.stop>
+                <div class="flex items-center justify-between p-4 border-b border-dark-600">
+                    <h2 class="text-lg font-semibold">Workflow Run Details</h2>
+                    <button @click="showWorkflowRunModal = false" class="text-dark-400 hover:text-dark-200">✕</button>
+                </div>
+                <div class="p-4" x-show="selectedWorkflowRun">
+                    <div class="space-y-3">
+                        <div class="flex justify-between">
+                            <span class="text-dark-400">ID</span>
+                            <span class="font-mono text-sm" x-text="selectedWorkflowRun?.composite_id"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-dark-400">Type</span>
+                            <span x-text="selectedWorkflowRun?.type"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-dark-400">Status</span>
+                            <span :class="selectedWorkflowRun?.status === 'completed' ? 'text-green-400' : 'text-red-400'" 
+                                x-text="selectedWorkflowRun?.status"></span>
+                        </div>
+                        <div class="border-t border-dark-600 pt-3 mt-3">
+                            <div class="text-sm text-dark-400 mb-2">Results</div>
+                            <div class="space-y-2">
+                                <template x-for="(exitCode, jobId) in (selectedWorkflowRun?.results || {})" :key="jobId">
+                                    <div class="flex items-center justify-between bg-dark-700 rounded p-2">
+                                        <span x-text="jobId"></span>
+                                        <span :class="exitCode === 0 ? 'text-green-400' : 'text-red-400'" 
+                                            x-text="exitCode === 0 ? '✓ Success' : '✗ Exit ' + exitCode"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-end p-4 border-t border-dark-600">
+                    <button @click="showWorkflowRunModal = false" class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition">Close</button>
                 </div>
             </div>
         </div>
@@ -1302,6 +1555,16 @@
                 editJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: '', schedule: '', run_at: '', tagsStr: '', cronPreset: 'custom', cronMinutes: 5, cronHours: 1, cronTime: '09:00', cronDays: [1], cronDayOfMonth: 1 },
                 editJobYaml: '',
                 editMode: 'form',
+                
+                // Workflows
+                savedWorkflows: [],
+                workflowRuns: [],
+                showWorkflowModal: false,
+                showWorkflowRunModal: false,
+                editingWorkflow: null,
+                selectedWorkflowRun: null,
+                workflowForm: { name: '', type: 'chain', jobs: ['', ''], callback: '' },
+                quickWorkflow: { type: 'chain', jobs: [], callback: '' },
                 
                 // Computed
                 get visibleColumns() {
@@ -2090,6 +2353,146 @@
                     } catch (e) {
                         this.toast('Daemon restart initiated - refresh in a few seconds', 'info');
                     }
+                },
+
+                // Workflows
+                async loadWorkflows() {
+                    // Load saved workflows from localStorage
+                    const saved = localStorage.getItem('procclaw_workflows');
+                    this.savedWorkflows = saved ? JSON.parse(saved) : [];
+                    
+                    // Load recent workflow runs from API
+                    try {
+                        const res = await fetch('/api/v1/composite');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.workflowRuns = data.runs || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to load workflow runs:', e);
+                    }
+                },
+                
+                openNewWorkflowModal() {
+                    this.editingWorkflow = null;
+                    this.workflowForm = { name: '', type: 'chain', jobs: ['', ''], callback: '' };
+                    this.showWorkflowModal = true;
+                },
+                
+                editWorkflow(workflow) {
+                    this.editingWorkflow = workflow;
+                    this.workflowForm = { 
+                        name: workflow.name, 
+                        type: workflow.type, 
+                        jobs: [...workflow.jobs],
+                        callback: workflow.callback || ''
+                    };
+                    this.showWorkflowModal = true;
+                },
+                
+                saveWorkflow() {
+                    const validJobs = this.workflowForm.jobs.filter(j => j);
+                    if (validJobs.length < 2) {
+                        this.toast('Need at least 2 jobs', 'error');
+                        return;
+                    }
+                    
+                    const workflow = {
+                        id: this.editingWorkflow?.id || 'wf-' + Date.now(),
+                        name: this.workflowForm.name,
+                        type: this.workflowForm.type,
+                        jobs: validJobs,
+                        callback: this.workflowForm.type === 'chord' ? this.workflowForm.callback : null
+                    };
+                    
+                    if (this.editingWorkflow) {
+                        const idx = this.savedWorkflows.findIndex(w => w.id === workflow.id);
+                        if (idx >= 0) this.savedWorkflows[idx] = workflow;
+                    } else {
+                        this.savedWorkflows.push(workflow);
+                    }
+                    
+                    localStorage.setItem('procclaw_workflows', JSON.stringify(this.savedWorkflows));
+                    this.showWorkflowModal = false;
+                    this.toast(this.editingWorkflow ? 'Workflow updated' : 'Workflow created', 'success');
+                },
+                
+                async deleteWorkflow(workflow) {
+                    if (!confirm(`Delete workflow "${workflow.name}"?`)) return;
+                    this.savedWorkflows = this.savedWorkflows.filter(w => w.id !== workflow.id);
+                    localStorage.setItem('procclaw_workflows', JSON.stringify(this.savedWorkflows));
+                    this.toast('Workflow deleted', 'success');
+                },
+                
+                async runWorkflow(workflow) {
+                    try {
+                        const endpoint = `/api/v1/composite/${workflow.type}`;
+                        const body = { job_ids: workflow.jobs };
+                        if (workflow.type === 'chord' && workflow.callback) {
+                            body.callback = workflow.callback;
+                        }
+                        
+                        const res = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+                        
+                        if (!res.ok) {
+                            const err = await res.json();
+                            throw new Error(err.detail || 'Failed to run workflow');
+                        }
+                        
+                        const result = await res.json();
+                        this.toast(`Workflow ${result.success ? 'completed' : 'finished with errors'}`, result.success ? 'success' : 'warning');
+                        await this.loadWorkflows();
+                    } catch (e) {
+                        this.toast('Workflow failed: ' + e.message, 'error');
+                    }
+                },
+                
+                async runQuickWorkflow() {
+                    if (this.quickWorkflow.jobs.length < 2) {
+                        this.toast('Select at least 2 jobs', 'error');
+                        return;
+                    }
+                    
+                    try {
+                        const endpoint = `/api/v1/composite/${this.quickWorkflow.type}`;
+                        const body = { job_ids: this.quickWorkflow.jobs };
+                        if (this.quickWorkflow.type === 'chord' && this.quickWorkflow.callback) {
+                            body.callback = this.quickWorkflow.callback;
+                        }
+                        
+                        this.toast(`Running ${this.quickWorkflow.type}...`, 'info');
+                        
+                        const res = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+                        
+                        if (!res.ok) {
+                            const err = await res.json();
+                            throw new Error(err.detail || 'Failed to run workflow');
+                        }
+                        
+                        const result = await res.json();
+                        this.toast(`${this.quickWorkflow.type} ${result.success ? 'completed!' : 'finished with errors'}`, result.success ? 'success' : 'warning');
+                        
+                        // Clear quick workflow
+                        this.quickWorkflow.jobs = [];
+                        this.quickWorkflow.callback = '';
+                        
+                        await this.loadWorkflows();
+                    } catch (e) {
+                        this.toast('Failed: ' + e.message, 'error');
+                    }
+                },
+                
+                viewWorkflowRun(run) {
+                    this.selectedWorkflowRun = run;
+                    this.showWorkflowRunModal = true;
                 },
 
                 // Helpers
