@@ -30,16 +30,20 @@ from procclaw.core.concurrency import ConcurrencyLimiter
 from procclaw.core.dedup import DeduplicationManager
 from procclaw.core.dependencies import DependencyManager, DependencyStatus
 from procclaw.core.dlq import DeadLetterQueue, DLQEntry
+from procclaw.core.eta import ETAScheduler
 from procclaw.core.health import HealthChecker, HealthCheckResult
 from procclaw.core.locks import LockManager
 from procclaw.core.log_utils import LogRotator
 from procclaw.core.output_parser import JobOutputChecker, OutputMatch
 from procclaw.core.priority import PriorityQueue, PrioritizedJob
 from procclaw.core.resources import ResourceMonitor, ResourceViolation
+from procclaw.core.results import ResultCollector
 from procclaw.core.retry import RetryManager
+from procclaw.core.revocation import RevocationManager
 from procclaw.core.scheduler import Scheduler
 from procclaw.core.triggers import TriggerManager, TriggerEvent
 from procclaw.core.watchdog import Watchdog, MissedRunInfo
+from procclaw.core.workflow import WorkflowManager, WorkflowConfig
 from procclaw.openclaw import OpenClawIntegration, init_integration, AlertType
 
 
@@ -214,6 +218,35 @@ class Supervisor:
             on_trigger=self._on_trigger_event,
         )
 
+        # Initialize ETA scheduler
+        self._eta_scheduler = ETAScheduler(
+            db=self.db,
+            on_trigger=self._on_eta_trigger,
+            default_timezone="America/Sao_Paulo",
+        )
+
+        # Initialize revocation manager
+        self._revocation_manager = RevocationManager(
+            db=self.db,
+            default_expiry_seconds=3600,
+        )
+
+        # Initialize result collector
+        self._result_collector = ResultCollector(
+            db=self.db,
+            logs_dir=DEFAULT_LOGS_DIR,
+        )
+
+        # Initialize workflow manager
+        self._workflow_manager = WorkflowManager(
+            db=self.db,
+            result_collector=self._result_collector,
+            start_job=self._start_job_for_workflow,
+            is_job_running=self.is_job_running,
+            stop_job=self.stop_job,
+            logs_dir=DEFAULT_LOGS_DIR,
+        )
+
         # Ensure directories exist
         ensure_config_dir()
 
@@ -261,6 +294,11 @@ class Supervisor:
 
         if job_id in self._processes and self._processes[job_id].is_running():
             logger.warning(f"Job '{job_id}' is already running")
+            return False
+
+        # Check revocation
+        if self._revocation_manager.is_revoked(job_id):
+            logger.info(f"Job '{job_id}' skipped - revoked")
             return False
 
         # Check deduplication
@@ -852,6 +890,44 @@ class Supervisor:
             idempotency_key=event.idempotency_key,
         )
 
+    def _on_eta_trigger(self, job_id: str, trigger: str, params: dict | None, idempotency_key: str | None) -> None:
+        """Called when an ETA-scheduled job is due."""
+        logger.info(f"ETA trigger for '{job_id}'")
+        self._audit_log(job_id, "eta_trigger", f"Trigger: {trigger}")
+        
+        # Check if revoked
+        if self._revocation_manager.is_revoked(job_id):
+            logger.info(f"ETA job '{job_id}' skipped - revoked")
+            return
+        
+        # Start the job
+        self.start_job(
+            job_id=job_id,
+            trigger=trigger,
+            params=params,
+            idempotency_key=idempotency_key,
+        )
+
+    def _start_job_for_workflow(self, job_id: str, trigger: str, env: dict | None) -> bool:
+        """Start a job as part of a workflow (with env vars)."""
+        job = self.jobs.get_job(job_id)
+        if not job:
+            logger.error(f"Job '{job_id}' not found for workflow")
+            return False
+        
+        # Merge workflow env with job env
+        if env:
+            original_env = job.env.copy()
+            job.env.update(env)
+        
+        success = self.start_job(job_id, trigger=trigger)
+        
+        # Restore original env
+        if env:
+            job.env = original_env
+        
+        return success
+
     # DLQ Management
 
     def get_dlq_entries(self, pending_only: bool = True) -> list[DLQEntry]:
@@ -970,6 +1046,90 @@ class Supervisor:
             "max_instances": job.concurrency.max_instances if job else 1,
             "queued_count": stats.queued_count if stats else 0,
         }
+
+    # ETA Scheduling
+
+    def schedule_job_at(self, job_id: str, run_at: str, timezone: str | None = None):
+        """Schedule a job to run at a specific time."""
+        return self._eta_scheduler.schedule_at(job_id, run_at, timezone=timezone)
+
+    def schedule_job_in(self, job_id: str, seconds: int):
+        """Schedule a job to run in N seconds."""
+        return self._eta_scheduler.schedule_in(job_id, seconds)
+
+    def cancel_eta(self, job_id: str) -> bool:
+        """Cancel an ETA schedule."""
+        return self._eta_scheduler.cancel(job_id)
+
+    def get_eta_jobs(self):
+        """Get all pending ETA jobs."""
+        return self._eta_scheduler.get_all_pending()
+
+    # Revocation
+
+    def revoke_job(self, job_id: str, reason: str | None = None, terminate: bool = False, expires_in: int | None = None):
+        """Revoke a job."""
+        revocation = self._revocation_manager.revoke(job_id, reason=reason, terminate=terminate, expires_in=expires_in)
+        
+        # If terminate and job is running, stop it
+        if terminate and self.is_job_running(job_id):
+            self.stop_job(job_id, force=True)
+        
+        # Cancel from ETA
+        self._eta_scheduler.cancel(job_id)
+        
+        # Remove from concurrency queue
+        self._concurrency_limiter.remove_from_queue(job_id)
+        
+        return revocation
+
+    def unrevoke_job(self, job_id: str) -> bool:
+        """Remove a job revocation."""
+        return self._revocation_manager.unrevoke(job_id)
+
+    def get_revocations(self):
+        """Get all active revocations."""
+        return self._revocation_manager.get_all_active()
+
+    def is_revoked(self, job_id: str) -> bool:
+        """Check if a job is revoked."""
+        return self._revocation_manager.is_revoked(job_id)
+
+    # Workflows
+
+    def list_workflows(self):
+        """List all registered workflows."""
+        return self._workflow_manager.list_workflows()
+
+    def get_workflow(self, workflow_id: str):
+        """Get a workflow configuration."""
+        return self._workflow_manager.get_workflow(workflow_id)
+
+    def start_workflow(self, workflow_id: str):
+        """Start a workflow run."""
+        return self._workflow_manager.start_workflow(workflow_id)
+
+    def list_workflow_runs(self, workflow_id: str | None = None):
+        """List workflow runs."""
+        return self._workflow_manager.list_runs(workflow_id)
+
+    def get_workflow_run(self, run_id: int):
+        """Get a workflow run."""
+        return self._workflow_manager.get_run(run_id)
+
+    def cancel_workflow(self, run_id: int) -> bool:
+        """Cancel a workflow run."""
+        return self._workflow_manager.cancel_workflow(run_id)
+
+    # Results
+
+    def get_job_result(self, job_id: str, run_id: int):
+        """Get a specific job result."""
+        return self._result_collector.get_result(job_id, run_id)
+
+    def get_last_job_result(self, job_id: str):
+        """Get the last result for a job."""
+        return self._result_collector.get_last_result(job_id)
 
     # Audit Logging
 

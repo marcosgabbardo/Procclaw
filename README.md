@@ -18,6 +18,22 @@
 - 📊 **Prometheus Metrics**: Built-in `/metrics` endpoint
 - 🦞 **OpenClaw Integration**: Skill control, memory logging, alerts
 
+### Enterprise Features
+
+- 🚫 **Deduplication**: Prevent duplicate job runs within time window
+- 🔒 **Distributed Locks**: Singleton jobs across instances (SQLite/file-based)
+- 📥 **Priority Queue**: 4 priority levels (critical, high, normal, low)
+- 💀 **Dead Letter Queue**: Failed jobs go to DLQ for inspection/reinjection
+- 🎯 **Concurrency Control**: Max instances per job with overflow queuing
+- 🔔 **Event Triggers**: Webhook and file watcher triggers
+
+### Workflow Features
+
+- ⏰ **ETA Scheduling**: Schedule jobs at specific datetime or delay
+- ⛔ **Task Revocation**: Cancel queued/scheduled jobs, terminate running
+- 📊 **Result Collection**: Capture stdout/stderr, exit codes, custom data
+- 🔗 **Task Composition**: Chain (A→B→C), Group (A+B+C parallel), Chord (group + callback)
+
 ## Installation
 
 ### Prerequisites

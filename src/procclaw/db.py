@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -105,6 +105,69 @@ CREATE TABLE IF NOT EXISTS job_queue (
     status TEXT DEFAULT 'pending'
 );
 
+-- ETA scheduling
+CREATE TABLE IF NOT EXISTS eta_jobs (
+    job_id TEXT PRIMARY KEY,
+    run_at TEXT NOT NULL,
+    scheduled_at TEXT NOT NULL,
+    trigger TEXT DEFAULT 'eta',
+    params TEXT,
+    idempotency_key TEXT,
+    one_shot INTEGER DEFAULT 1,
+    triggered INTEGER DEFAULT 0,
+    triggered_at TEXT
+);
+
+-- Revocations
+CREATE TABLE IF NOT EXISTS revocations (
+    job_id TEXT PRIMARY KEY,
+    revoked_at TEXT NOT NULL,
+    reason TEXT,
+    expires_at TEXT,
+    terminate INTEGER DEFAULT 0
+);
+
+-- Workflows
+CREATE TABLE IF NOT EXISTS workflows (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    config TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Workflow runs
+CREATE TABLE IF NOT EXISTS workflow_runs (
+    id INTEGER PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    config TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    current_step INTEGER DEFAULT 0,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    job_run_ids TEXT,
+    results TEXT,
+    error TEXT,
+    FOREIGN KEY (workflow_id) REFERENCES workflows(id)
+);
+
+-- Job results
+CREATE TABLE IF NOT EXISTS job_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    run_id INTEGER NOT NULL,
+    exit_code INTEGER,
+    stdout_tail TEXT,
+    stderr_tail TEXT,
+    output_data TEXT,
+    duration_seconds REAL,
+    finished_at TEXT NOT NULL,
+    workflow_run_id INTEGER,
+    step_index INTEGER,
+    FOREIGN KEY (run_id) REFERENCES job_runs(id),
+    FOREIGN KEY (workflow_run_id) REFERENCES workflow_runs(id)
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_job_runs_job_id ON job_runs(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_runs_started_at ON job_runs(started_at);
@@ -116,6 +179,12 @@ CREATE INDEX IF NOT EXISTS idx_execution_records_fingerprint ON execution_record
 CREATE INDEX IF NOT EXISTS idx_execution_records_started_at ON execution_records(started_at);
 CREATE INDEX IF NOT EXISTS idx_job_queue_priority ON job_queue(priority, queued_at);
 CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
+CREATE INDEX IF NOT EXISTS idx_eta_jobs_run_at ON eta_jobs(run_at);
+CREATE INDEX IF NOT EXISTS idx_revocations_expires_at ON revocations(expires_at);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow_id ON workflow_runs(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_job_results_job_id ON job_results(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_results_workflow_run_id ON job_results(workflow_run_id);
 """
 
 
@@ -822,4 +891,40 @@ class Database:
                 """,
                 (f"-{hours} hours",),
             )
+            return cursor.rowcount
+
+    # =========================================================================
+    # Generic Methods (for new modules)
+    # =========================================================================
+
+    def query(self, sql: str, params: tuple = ()) -> list[dict]:
+        """Execute a SELECT query and return results as dicts.
+        
+        Args:
+            sql: SQL query string
+            params: Query parameters
+            
+        Returns:
+            List of row dicts
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(sql, params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def execute(self, sql: str, params: tuple = ()) -> int:
+        """Execute an INSERT/UPDATE/DELETE statement.
+        
+        Args:
+            sql: SQL statement
+            params: Statement parameters
+            
+        Returns:
+            Number of rows affected or last row ID
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(sql, params)
+            # Return lastrowid for INSERTs, rowcount for others
+            if sql.strip().upper().startswith("INSERT"):
+                return cursor.lastrowid or 0
             return cursor.rowcount

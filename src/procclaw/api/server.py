@@ -514,6 +514,264 @@ def create_app() -> FastAPI:
         
         return supervisor.get_concurrency_stats(job_id)
 
+    # ETA Scheduling Endpoints
+
+    @app.post("/api/v1/jobs/{job_id}/schedule")
+    async def schedule_job(
+        job_id: str,
+        run_at: str | None = None,
+        run_in: int | None = None,
+        timezone: str | None = None,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Schedule a job to run at a specific time.
+        
+        Args:
+            run_at: ISO datetime when to run
+            run_in: Seconds from now to run
+            timezone: Timezone for run_at
+        """
+        supervisor = get_supervisor()
+        
+        job = supervisor.jobs.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        if run_at:
+            eta_job = supervisor.schedule_job_at(job_id, run_at, timezone=timezone)
+        elif run_in:
+            eta_job = supervisor.schedule_job_in(job_id, run_in)
+        else:
+            raise HTTPException(status_code=400, detail="Must provide run_at or run_in")
+        
+        return {
+            "success": True,
+            "job_id": job_id,
+            "run_at": eta_job.run_at.isoformat(),
+            "seconds_until": eta_job.seconds_until,
+        }
+
+    @app.delete("/api/v1/jobs/{job_id}/schedule")
+    async def cancel_schedule(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Cancel an ETA-scheduled job."""
+        supervisor = get_supervisor()
+        
+        cancelled = supervisor.cancel_eta(job_id)
+        
+        if not cancelled:
+            raise HTTPException(status_code=404, detail=f"No ETA schedule for job '{job_id}'")
+        
+        return {"success": True, "message": f"ETA schedule for '{job_id}' cancelled"}
+
+    @app.get("/api/v1/eta")
+    async def list_eta(
+        _auth: bool = Depends(verify_token),
+    ):
+        """List all ETA-scheduled jobs."""
+        supervisor = get_supervisor()
+        
+        eta_jobs = supervisor.get_eta_jobs()
+        
+        return {
+            "jobs": [
+                {
+                    "job_id": j.job_id,
+                    "run_at": j.run_at.isoformat(),
+                    "scheduled_at": j.scheduled_at.isoformat(),
+                    "seconds_until": j.seconds_until,
+                    "is_due": j.is_due,
+                }
+                for j in eta_jobs
+            ],
+            "total": len(eta_jobs),
+        }
+
+    # Revocation Endpoints
+
+    @app.post("/api/v1/jobs/{job_id}/revoke")
+    async def revoke_job(
+        job_id: str,
+        reason: str | None = None,
+        terminate: bool = False,
+        expires_in: int | None = None,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Revoke a job (cancel if queued/scheduled, optionally terminate if running)."""
+        supervisor = get_supervisor()
+        
+        revocation = supervisor.revoke_job(
+            job_id=job_id,
+            reason=reason,
+            terminate=terminate,
+            expires_in=expires_in,
+        )
+        
+        return {
+            "success": True,
+            "job_id": job_id,
+            "revoked_at": revocation.revoked_at.isoformat(),
+            "terminate": revocation.terminate,
+            "expires_at": revocation.expires_at.isoformat() if revocation.expires_at else None,
+        }
+
+    @app.delete("/api/v1/jobs/{job_id}/revoke")
+    async def unrevoke_job(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Remove a job revocation."""
+        supervisor = get_supervisor()
+        
+        unrevoked = supervisor.unrevoke_job(job_id)
+        
+        if not unrevoked:
+            raise HTTPException(status_code=404, detail=f"No revocation for job '{job_id}'")
+        
+        return {"success": True, "message": f"Revocation for '{job_id}' removed"}
+
+    @app.get("/api/v1/revocations")
+    async def list_revocations(
+        _auth: bool = Depends(verify_token),
+    ):
+        """List all active revocations."""
+        supervisor = get_supervisor()
+        
+        revocations = supervisor.get_revocations()
+        
+        return {
+            "revocations": [
+                {
+                    "job_id": r.job_id,
+                    "revoked_at": r.revoked_at.isoformat(),
+                    "reason": r.reason,
+                    "terminate": r.terminate,
+                    "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+                }
+                for r in revocations
+            ],
+            "total": len(revocations),
+        }
+
+    # Workflow Endpoints
+
+    @app.get("/api/v1/workflows")
+    async def list_workflows(
+        _auth: bool = Depends(verify_token),
+    ):
+        """List all registered workflows."""
+        supervisor = get_supervisor()
+        
+        workflows = supervisor.list_workflows()
+        
+        return {
+            "workflows": [w.to_dict() for w in workflows],
+            "total": len(workflows),
+        }
+
+    @app.get("/api/v1/workflows/{workflow_id}")
+    async def get_workflow(
+        workflow_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get workflow details."""
+        supervisor = get_supervisor()
+        
+        workflow = supervisor.get_workflow(workflow_id)
+        
+        if not workflow:
+            raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found")
+        
+        return workflow.to_dict()
+
+    @app.post("/api/v1/workflows/{workflow_id}/run")
+    async def run_workflow(
+        workflow_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Start a workflow run."""
+        supervisor = get_supervisor()
+        
+        run = supervisor.start_workflow(workflow_id)
+        
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Workflow '{workflow_id}' not found")
+        
+        return {
+            "success": True,
+            "workflow_id": workflow_id,
+            "run_id": run.id,
+            "status": run.status.value,
+        }
+
+    @app.get("/api/v1/workflows/{workflow_id}/runs")
+    async def list_workflow_runs(
+        workflow_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """List runs for a workflow."""
+        supervisor = get_supervisor()
+        
+        runs = supervisor.list_workflow_runs(workflow_id)
+        
+        return {
+            "runs": [r.to_dict() for r in runs],
+            "total": len(runs),
+        }
+
+    @app.get("/api/v1/workflow-runs/{run_id}")
+    async def get_workflow_run(
+        run_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get workflow run details."""
+        supervisor = get_supervisor()
+        
+        run = supervisor.get_workflow_run(run_id)
+        
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Workflow run {run_id} not found")
+        
+        return run.to_dict()
+
+    @app.post("/api/v1/workflow-runs/{run_id}/cancel")
+    async def cancel_workflow_run(
+        run_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Cancel a running workflow."""
+        supervisor = get_supervisor()
+        
+        cancelled = supervisor.cancel_workflow(run_id)
+        
+        if not cancelled:
+            raise HTTPException(status_code=400, detail=f"Cannot cancel workflow run {run_id}")
+        
+        return {"success": True, "message": f"Workflow run {run_id} cancelled"}
+
+    # Results Endpoint
+
+    @app.get("/api/v1/jobs/{job_id}/results")
+    async def get_job_results(
+        job_id: str,
+        run_id: int | None = None,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get job results."""
+        supervisor = get_supervisor()
+        
+        if run_id:
+            result = supervisor.get_job_result(job_id, run_id)
+        else:
+            result = supervisor.get_last_job_result(job_id)
+        
+        if not result:
+            raise HTTPException(status_code=404, detail=f"No results for job '{job_id}'")
+        
+        return result.to_dict()
+
     return app
 
 
