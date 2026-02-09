@@ -356,12 +356,21 @@ class JobRun(BaseModel):
     error: str | None = None
 
 
+class FileLogMode(str, Enum):
+    """File logging mode."""
+    
+    KEEP = "keep"       # Keep log files (default)
+    DELETE = "delete"   # Delete after saving to SQLite
+    DISABLED = "disabled"  # No file logging (stream to SQLite only - not implemented)
+
+
 class DaemonConfig(BaseModel):
     """Daemon configuration."""
 
     host: str = "127.0.0.1"
     port: int = 9876
     log_level: str = "INFO"
+    file_log_mode: FileLogMode = FileLogMode.KEEP
 
 
 class ApiAuthConfig(BaseModel):

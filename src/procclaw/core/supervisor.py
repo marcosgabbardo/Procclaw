@@ -712,6 +712,16 @@ class Supervisor:
                     stderr_lines = [l.rstrip('\n') for l in f.readlines()[-500:]]
                 if stderr_lines:
                     self.db.add_log_lines(run_id, job_id, stderr_lines, level="stderr")
+            
+            # Delete log files if configured
+            from procclaw.models import FileLogMode
+            if hasattr(self.config.daemon, 'file_log_mode') and self.config.daemon.file_log_mode == FileLogMode.DELETE:
+                if log_path.exists():
+                    log_path.unlink()
+                    logger.debug(f"Deleted stdout log file for job '{job_id}'")
+                if stderr_path.exists():
+                    stderr_path.unlink()
+                    logger.debug(f"Deleted stderr log file for job '{job_id}'")
                     
         except Exception as e:
             logger.error(f"Error saving logs for run {run_id}: {e}")
