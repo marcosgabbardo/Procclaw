@@ -415,8 +415,17 @@ class Supervisor:
             return False
 
         if job_id in self._processes and self._processes[job_id].is_running():
-            logger.warning(f"Job '{job_id}' is already running")
+            logger.warning(f"Job '{job_id}' is already running (in memory)")
             return False
+        
+        # Also check database state and PID (for orphaned processes)
+        state = self.db.get_state(job_id)
+        if state and state.status == JobStatus.RUNNING and state.pid:
+            if self.check_pid(state.pid):
+                logger.warning(f"Job '{job_id}' is already running (PID {state.pid} from DB)")
+                # Adopt the orphan so we can manage it
+                self._adopt_orphan_process(job_id, state.pid)
+                return False
 
         # Check revocation
         if self._revocation_manager.is_revoked(job_id):
