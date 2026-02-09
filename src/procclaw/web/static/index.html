@@ -927,57 +927,86 @@
 
     <!-- Edit Job Modal -->
     <div x-show="showEditModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="showEditModal = false">
-        <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-lg" @click.stop>
+        <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-2xl max-h-[85vh] overflow-hidden" @click.stop>
             <div class="p-4 border-b border-dark-600 flex items-center justify-between">
                 <h2 class="text-lg font-medium">Edit Job: <span x-text="editJob.id"></span></h2>
-                <button @click="showEditModal = false" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
+                <div class="flex items-center gap-2">
+                    <div class="flex bg-dark-700 rounded-lg p-1">
+                        <button type="button" @click="editMode = 'form'" 
+                            :class="editMode === 'form' ? 'bg-dark-600 text-white' : 'text-dark-400 hover:text-white'"
+                            class="px-3 py-1 rounded text-sm transition">📝 Form</button>
+                        <button type="button" @click="editMode = 'yaml'; syncEditFormToYaml()" 
+                            :class="editMode === 'yaml' ? 'bg-dark-600 text-white' : 'text-dark-400 hover:text-white'"
+                            class="px-3 py-1 rounded text-sm transition">📄 YAML</button>
+                    </div>
+                    <button @click="showEditModal = false" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
+                </div>
             </div>
-            <form @submit.prevent="saveJob()" class="p-4 space-y-4">
-                <div>
-                    <label class="block text-sm text-dark-400 mb-1">Name</label>
-                    <input type="text" x-model="editJob.name" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
-                </div>
-                <div>
-                    <label class="block text-sm text-dark-400 mb-1">Description</label>
-                    <input type="text" x-model="editJob.description" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
-                </div>
-                <div>
-                    <label class="block text-sm text-dark-400 mb-1">Command</label>
-                    <input type="text" x-model="editJob.cmd" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
-                </div>
-                <div>
-                    <label class="block text-sm text-dark-400 mb-1">Working Directory</label>
-                    <input type="text" x-model="editJob.cwd" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
-                </div>
-                <div class="grid grid-cols-2 gap-4">
+            
+            <!-- Form View -->
+            <div x-show="editMode === 'form'" class="overflow-auto max-h-[65vh]">
+                <form @submit.prevent="saveJob()" class="p-4 space-y-4">
                     <div>
-                        <label class="block text-sm text-dark-400 mb-1">Type</label>
-                        <select x-model="editJob.type" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none">
-                            <option value="manual">Manual</option>
-                            <option value="continuous">Continuous</option>
-                            <option value="scheduled">Scheduled</option>
-                            <option value="oneshot">One-shot</option>
-                            <option value="openclaw">OpenClaw</option>
-                        </select>
+                        <label class="block text-sm text-dark-400 mb-1">Name</label>
+                        <input type="text" x-model="editJob.name" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" @input="syncEditFormToYaml()">
                     </div>
-                    <div x-show="editJob.type === 'scheduled'">
-                        <label class="block text-sm text-dark-400 mb-1">Schedule (cron)</label>
-                        <input type="text" x-model="editJob.schedule" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="0 * * * *">
+                    <div>
+                        <label class="block text-sm text-dark-400 mb-1">Description</label>
+                        <input type="text" x-model="editJob.description" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" @input="syncEditFormToYaml()">
                     </div>
-                    <div x-show="editJob.type === 'oneshot'">
-                        <label class="block text-sm text-dark-400 mb-1">Run At</label>
-                        <input type="datetime-local" x-model="editJob.run_at" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
+                    <div>
+                        <label class="block text-sm text-dark-400 mb-1">Command</label>
+                        <input type="text" x-model="editJob.cmd" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" @input="syncEditFormToYaml()">
                     </div>
+                    <div>
+                        <label class="block text-sm text-dark-400 mb-1">Working Directory</label>
+                        <input type="text" x-model="editJob.cwd" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" @input="syncEditFormToYaml()">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm text-dark-400 mb-1">Type</label>
+                            <select x-model="editJob.type" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none" @change="syncEditFormToYaml()">
+                                <option value="manual">Manual</option>
+                                <option value="continuous">Continuous</option>
+                                <option value="scheduled">Scheduled</option>
+                                <option value="oneshot">One-shot</option>
+                                <option value="openclaw">OpenClaw</option>
+                            </select>
+                        </div>
+                        <div x-show="editJob.type === 'scheduled'">
+                            <label class="block text-sm text-dark-400 mb-1">Schedule (cron)</label>
+                            <input type="text" x-model="editJob.schedule" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="0 * * * *" @input="syncEditFormToYaml()">
+                        </div>
+                        <div x-show="editJob.type === 'oneshot'">
+                            <label class="block text-sm text-dark-400 mb-1">Run At</label>
+                            <input type="datetime-local" x-model="editJob.run_at" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" @input="syncEditFormToYaml()">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-dark-400 mb-1">Tags (comma-separated)</label>
+                        <input type="text" x-model="editJob.tagsStr" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" @input="syncEditFormToYaml()">
+                    </div>
+                    <div class="flex gap-2 pt-4">
+                        <button type="button" @click="showEditModal = false" class="flex-1 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg transition">Cancel</button>
+                        <button type="submit" class="flex-1 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg transition">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- YAML View -->
+            <div x-show="editMode === 'yaml'" class="p-4 flex flex-col h-[65vh]">
+                <div class="flex items-center justify-between mb-2">
+                    <label class="text-sm text-dark-400">Edit YAML directly</label>
+                    <button type="button" @click="syncEditYamlToForm()" class="text-xs text-accent-400 hover:text-accent-300">↩️ Sync to Form</button>
                 </div>
-                <div>
-                    <label class="block text-sm text-dark-400 mb-1">Tags (comma-separated)</label>
-                    <input type="text" x-model="editJob.tagsStr" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500">
-                </div>
+                <textarea x-model="editJobYaml" 
+                    class="flex-1 w-full bg-dark-900 border border-dark-600 rounded-lg p-3 font-mono text-sm focus:outline-none focus:border-accent-500 resize-none"
+                    placeholder="# YAML configuration"></textarea>
                 <div class="flex gap-2 pt-4">
                     <button type="button" @click="showEditModal = false" class="flex-1 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg transition">Cancel</button>
-                    <button type="submit" class="flex-1 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg transition">Save Changes</button>
+                    <button type="button" @click="saveJobFromYaml()" class="flex-1 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg transition">Save Changes</button>
                 </div>
-            </form>
+            </div>
         </div>
     </div>
 
@@ -1227,6 +1256,8 @@
                 fullYamlContent: '',
                 fullYamlPath: '',
                 editJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: '', schedule: '', run_at: '', tagsStr: '' },
+                editJobYaml: '',
+                editMode: 'form',
                 
                 // Computed
                 get visibleColumns() {
@@ -1532,6 +1563,8 @@
                         run_at: runAtFormatted,
                         tagsStr: (job.tags || []).join(', ')
                     };
+                    this.editMode = 'form';
+                    this.syncEditFormToYaml();
                     this.showEditModal = true;
                 },
 
@@ -1669,6 +1702,66 @@
                 async createJobFromYaml() {
                     this.syncYamlToForm();
                     await this.createJob();
+                },
+                
+                // Edit YAML sync functions
+                syncEditFormToYaml() {
+                    const job = this.editJob;
+                    let yaml = `${job.id}:\n`;
+                    if (job.name) yaml += `  name: "${job.name}"\n`;
+                    if (job.description) yaml += `  description: "${job.description}"\n`;
+                    if (job.cmd) yaml += `  cmd: ${job.cmd.includes(' ') ? '"' + job.cmd + '"' : job.cmd}\n`;
+                    if (job.cwd) yaml += `  cwd: ${job.cwd}\n`;
+                    yaml += `  type: ${job.type}\n`;
+                    if (job.type === 'scheduled' && job.schedule) yaml += `  schedule: "${job.schedule}"\n`;
+                    if (job.type === 'oneshot' && job.run_at) yaml += `  run_at: "${job.run_at}"\n`;
+                    if (job.tagsStr) {
+                        yaml += `  tags:\n`;
+                        job.tagsStr.split(',').forEach(t => {
+                            if (t.trim()) yaml += `    - ${t.trim()}\n`;
+                        });
+                    }
+                    this.editJobYaml = yaml;
+                },
+                
+                syncEditYamlToForm() {
+                    const lines = this.editJobYaml.split('\n');
+                    const job = { ...this.editJob };
+                    let inTags = false;
+                    let tags = [];
+                    
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed || trimmed.startsWith('#')) continue;
+                        
+                        if (trimmed.startsWith('- ')) {
+                            if (inTags) tags.push(trimmed.slice(2));
+                            continue;
+                        }
+                        
+                        const match = trimmed.match(/^(\w+):\s*(.*)$/);
+                        if (match) {
+                            const [, key, val] = match;
+                            const cleanVal = val.replace(/^["']|["']$/g, '');
+                            inTags = key === 'tags';
+                            if (key === 'name') job.name = cleanVal;
+                            else if (key === 'description') job.description = cleanVal;
+                            else if (key === 'cmd') job.cmd = cleanVal;
+                            else if (key === 'cwd') job.cwd = cleanVal;
+                            else if (key === 'type') job.type = cleanVal;
+                            else if (key === 'schedule') job.schedule = cleanVal;
+                            else if (key === 'run_at') job.run_at = cleanVal;
+                        }
+                    }
+                    
+                    job.tagsStr = tags.join(', ');
+                    this.editJob = job;
+                    this.toast('Form synced from YAML', 'success');
+                },
+                
+                async saveJobFromYaml() {
+                    this.syncEditYamlToForm();
+                    await this.saveJob();
                 },
 
                 async deleteJob(id) {

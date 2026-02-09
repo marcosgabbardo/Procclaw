@@ -624,6 +624,118 @@ def create_app() -> FastAPI:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    # Composite Jobs (chain, group, chord)
+    
+    @app.post("/api/v1/composite/chain")
+    async def run_chain(
+        job_ids: list[str],
+        composite_id: str | None = None,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Run jobs sequentially (A → B → C). Stops on first failure."""
+        supervisor = get_supervisor()
+        
+        if len(job_ids) < 2:
+            raise HTTPException(status_code=400, detail="Chain requires at least 2 jobs")
+        
+        # Validate all jobs exist
+        for job_id in job_ids:
+            if not supervisor.jobs.get_job(job_id):
+                raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        cid = composite_id or f"chain-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        run = await supervisor.run_chain(cid, job_ids, trigger="api")
+        
+        return {
+            "success": run.status.value == "completed",
+            "composite_id": cid,
+            "type": "chain",
+            "status": run.status.value,
+            "results": run.results,
+        }
+    
+    @app.post("/api/v1/composite/group")
+    async def run_group(
+        job_ids: list[str],
+        composite_id: str | None = None,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Run jobs in parallel (A + B + C). Waits for all to complete."""
+        supervisor = get_supervisor()
+        
+        if len(job_ids) < 2:
+            raise HTTPException(status_code=400, detail="Group requires at least 2 jobs")
+        
+        # Validate all jobs exist
+        for job_id in job_ids:
+            if not supervisor.jobs.get_job(job_id):
+                raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        cid = composite_id or f"group-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        run = await supervisor.run_group(cid, job_ids, trigger="api")
+        
+        return {
+            "success": run.status.value == "completed",
+            "composite_id": cid,
+            "type": "group",
+            "status": run.status.value,
+            "results": run.results,
+        }
+    
+    @app.post("/api/v1/composite/chord")
+    async def run_chord(
+        job_ids: list[str],
+        callback: str,
+        composite_id: str | None = None,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Run jobs in parallel, then run callback when all complete."""
+        supervisor = get_supervisor()
+        
+        if len(job_ids) < 1:
+            raise HTTPException(status_code=400, detail="Chord requires at least 1 parallel job")
+        
+        # Validate all jobs exist
+        for job_id in job_ids + [callback]:
+            if not supervisor.jobs.get_job(job_id):
+                raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        cid = composite_id or f"chord-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        run = await supervisor.run_chord(cid, job_ids, callback, trigger="api")
+        
+        return {
+            "success": run.status.value == "completed",
+            "composite_id": cid,
+            "type": "chord",
+            "status": run.status.value,
+            "results": run.results,
+        }
+    
+    @app.get("/api/v1/composite")
+    async def list_composite_runs(
+        _auth: bool = Depends(verify_token),
+    ):
+        """List all composite job runs."""
+        supervisor = get_supervisor()
+        runs = supervisor.list_composite_runs()
+        
+        return {
+            "runs": [
+                {
+                    "composite_id": r.composite_id,
+                    "type": r.type,
+                    "status": r.status.value,
+                    "jobs": r.jobs,
+                    "callback": r.callback,
+                    "started_at": r.started_at.isoformat() if r.started_at else None,
+                    "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                    "results": r.results,
+                }
+                for r in runs
+            ],
+            "total": len(runs),
+        }
+
     @app.post("/api/v1/daemon/restart")
     async def restart_daemon(_auth: bool = Depends(verify_token)):
         """Restart the daemon (all jobs will be stopped and restarted)."""

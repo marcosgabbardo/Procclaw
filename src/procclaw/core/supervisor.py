@@ -42,6 +42,7 @@ from procclaw.core.retry import RetryManager
 from procclaw.core.revocation import RevocationManager
 from procclaw.core.scheduler import Scheduler
 from procclaw.core.triggers import TriggerManager, TriggerEvent
+from procclaw.core.composite import CompositeExecutor
 from procclaw.core.watchdog import Watchdog, MissedRunInfo
 from procclaw.core.workflow import WorkflowManager, WorkflowConfig
 from procclaw.openclaw import OpenClawIntegration, init_integration, AlertType
@@ -184,6 +185,9 @@ class Supervisor:
             on_kill=self._on_resource_kill,
             default_check_interval=30,
         )
+        
+        # Initialize composite executor (chain, group, chord)
+        self._composite = CompositeExecutor(self)
 
         # Initialize deduplication manager
         self._dedup_manager = DeduplicationManager(
@@ -443,6 +447,28 @@ class Supervisor:
             )
             self.db.save_state(state)
             return False
+
+    # Composite Jobs (chain, group, chord)
+    
+    async def run_chain(self, composite_id: str, job_ids: list[str], trigger: str = "manual"):
+        """Run jobs sequentially. Stops on first failure."""
+        return await self._composite.run_chain(composite_id, job_ids, trigger)
+    
+    async def run_group(self, composite_id: str, job_ids: list[str], trigger: str = "manual"):
+        """Run jobs in parallel. Waits for all to complete."""
+        return await self._composite.run_group(composite_id, job_ids, trigger)
+    
+    async def run_chord(self, composite_id: str, job_ids: list[str], callback: str, trigger: str = "manual"):
+        """Run jobs in parallel, then run callback."""
+        return await self._composite.run_chord(composite_id, job_ids, callback, trigger)
+    
+    def get_composite_run(self, composite_id: str):
+        """Get a composite run by ID."""
+        return self._composite.get_run(composite_id)
+    
+    def list_composite_runs(self):
+        """List all composite runs."""
+        return self._composite.list_runs()
 
     def stop_job(self, job_id: str, force: bool = False) -> bool:
         """Stop a running job."""

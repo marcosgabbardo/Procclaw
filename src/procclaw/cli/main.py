@@ -944,6 +944,210 @@ def service_status_cmd() -> None:
 
 
 # ============================================================================
+# Runs Commands
+# ============================================================================
+
+runs_app = typer.Typer(help="View job execution history")
+app.add_typer(runs_app, name="runs")
+
+
+@runs_app.command("list")
+def runs_list(
+    job_id: str = typer.Option(None, "--job", "-j", help="Filter by job ID"),
+    status: str = typer.Option(None, "--status", "-s", help="Filter by status (success/failed/running)"),
+    limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
+) -> None:
+    """List job execution history."""
+    from procclaw.cli.client import APIClient
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    params = {"limit": limit}
+    if job_id:
+        params["job_id"] = job_id
+    if status:
+        params["status"] = status
+    
+    try:
+        res = client.get("/runs", params=params)
+        runs = res.get("runs", [])
+        
+        if not runs:
+            console.print("[dim]No runs found[/dim]")
+            return
+        
+        table = Table(title=f"Recent Runs ({len(runs)})")
+        table.add_column("Run ID", style="cyan")
+        table.add_column("Job", style="blue")
+        table.add_column("Status")
+        table.add_column("Exit", justify="right")
+        table.add_column("Duration")
+        table.add_column("Started")
+        
+        for run in runs:
+            status_color = {
+                "success": "green",
+                "failed": "red", 
+                "running": "yellow",
+            }.get(run.get("status"), "white")
+            
+            duration = run.get("duration_seconds", 0)
+            dur_str = f"{int(duration)}s" if duration else "-"
+            
+            table.add_row(
+                str(run.get("id", "-")),
+                run.get("job_id", "-"),
+                f"[{status_color}]{run.get('status', '-')}[/{status_color}]",
+                str(run.get("exit_code", "-")),
+                dur_str,
+                run.get("started_at", "-")[:19].replace("T", " ") if run.get("started_at") else "-",
+            )
+        
+        console.print(table)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+@runs_app.command("logs")
+def runs_logs(
+    run_id: int = typer.Argument(..., help="Run ID"),
+    lines: int = typer.Option(100, "--lines", "-n", help="Max lines"),
+) -> None:
+    """View logs for a specific run."""
+    from procclaw.cli.client import APIClient
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        res = client.get(f"/runs/{run_id}/logs", params={"limit": lines})
+        log_lines = res.get("lines", [])
+        
+        if not log_lines:
+            console.print("[dim]No logs found for this run[/dim]")
+            return
+        
+        for line in log_lines:
+            console.print(line)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+# ============================================================================
+# Composite Commands (chain, group, chord)
+# ============================================================================
+
+
+@app.command("chain")
+def chain_jobs(
+    job_ids: list[str] = typer.Argument(..., help="Jobs to run sequentially (A → B → C)"),
+    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for completion"),
+) -> None:
+    """Run jobs sequentially. Stops on first failure."""
+    from procclaw.cli.client import APIClient
+    
+    if len(job_ids) < 2:
+        console.print("[red]Chain requires at least 2 jobs[/red]")
+        raise typer.Exit(1)
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    console.print(f"[cyan]Starting chain:[/cyan] {' → '.join(job_ids)}")
+    
+    try:
+        res = client.post("/composite/chain", json={"job_ids": job_ids})
+        
+        if res.get("success"):
+            console.print(f"[green]✓ Chain completed successfully[/green]")
+        else:
+            console.print(f"[red]✗ Chain failed[/red]")
+            
+        # Show results
+        for job_id, exit_code in res.get("results", {}).items():
+            status = "[green]✓[/green]" if exit_code == 0 else f"[red]✗ ({exit_code})[/red]"
+            console.print(f"  {job_id}: {status}")
+            
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+@app.command("group")
+def group_jobs(
+    job_ids: list[str] = typer.Argument(..., help="Jobs to run in parallel (A + B + C)"),
+    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for completion"),
+) -> None:
+    """Run jobs in parallel. Waits for all to complete."""
+    from procclaw.cli.client import APIClient
+    
+    if len(job_ids) < 2:
+        console.print("[red]Group requires at least 2 jobs[/red]")
+        raise typer.Exit(1)
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    console.print(f"[cyan]Starting group:[/cyan] {' + '.join(job_ids)}")
+    
+    try:
+        res = client.post("/composite/group", json={"job_ids": job_ids})
+        
+        if res.get("success"):
+            console.print(f"[green]✓ Group completed successfully[/green]")
+        else:
+            console.print(f"[yellow]⚠ Group finished with failures[/yellow]")
+            
+        # Show results
+        for job_id, exit_code in res.get("results", {}).items():
+            status = "[green]✓[/green]" if exit_code == 0 else f"[red]✗ ({exit_code})[/red]"
+            console.print(f"  {job_id}: {status}")
+            
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+@app.command("chord")
+def chord_jobs(
+    job_ids: list[str] = typer.Argument(..., help="Jobs to run in parallel"),
+    callback: str = typer.Option(..., "--callback", "-c", help="Callback job to run after group"),
+    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for completion"),
+) -> None:
+    """Run jobs in parallel, then run callback when all complete."""
+    from procclaw.cli.client import APIClient
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    console.print(f"[cyan]Starting chord:[/cyan] ({' + '.join(job_ids)}) → {callback}")
+    
+    try:
+        res = client.post("/composite/chord", json={"job_ids": job_ids, "callback": callback})
+        
+        if res.get("success"):
+            console.print(f"[green]✓ Chord completed successfully[/green]")
+        else:
+            console.print(f"[yellow]⚠ Chord finished with failures[/yellow]")
+            
+        # Show results
+        for job_id, exit_code in res.get("results", {}).items():
+            is_callback = job_id == callback
+            prefix = "callback → " if is_callback else "  "
+            status = "[green]✓[/green]" if exit_code == 0 else f"[red]✗ ({exit_code})[/red]"
+            console.print(f"{prefix}{job_id}: {status}")
+            
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+# ============================================================================
 # Entry Point
 # ============================================================================
 

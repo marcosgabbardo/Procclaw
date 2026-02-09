@@ -145,3 +145,17 @@ class APIClient:
         response = self._get_client().get("/metrics")
         response.raise_for_status()
         return response.json()["text"]
+    
+    # Generic HTTP methods for new endpoints
+    
+    def get(self, path: str, params: dict | None = None) -> dict:
+        """Generic GET request."""
+        response = self._get_client().get(f"/api/v1{path}", params=params)
+        response.raise_for_status()
+        return response.json()
+    
+    def post(self, path: str, json: dict | None = None) -> dict:
+        """Generic POST request."""
+        response = self._get_client().post(f"/api/v1{path}", json=json)
+        response.raise_for_status()
+        return response.json()

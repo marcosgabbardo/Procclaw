@@ -18,6 +18,10 @@ class JobType(str, Enum):
     MANUAL = "manual"
     ONESHOT = "oneshot"  # Run once at specific datetime, then auto-disable
     OPENCLAW = "openclaw"  # Jobs linked to OpenClaw (depend on AI/cron integration)
+    # Composite types
+    CHAIN = "chain"  # Sequential execution (A → B → C)
+    GROUP = "group"  # Parallel execution (A + B + C)
+    CHORD = "chord"  # Parallel + callback (A + B + C) → D
 
 
 class JobStatus(str, Enum):
@@ -306,6 +310,11 @@ class JobConfig(BaseModel):
 
     # Metadata
     tags: list[str] = Field(default_factory=list)
+    
+    # Composite jobs (chain, group, chord)
+    steps: list[str] = Field(default_factory=list)  # For CHAIN: sequential job IDs
+    jobs: list[str] = Field(default_factory=list)  # For GROUP: parallel job IDs
+    callback: str | None = None  # For CHORD: job to run after group completes
 
     @field_validator("schedule")
     @classmethod
