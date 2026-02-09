@@ -121,6 +121,7 @@ class Supervisor:
         self._scheduler = Scheduler(
             on_trigger=self.start_job,
             is_job_running=self.is_job_running,
+            get_last_run=self._get_job_last_run_time,
         )
 
         # Initialize health checker
@@ -261,6 +262,13 @@ class Supervisor:
         last_run = self.db.get_last_run(job_id)
         if last_run:
             return (last_run.finished_at, last_run.exit_code)
+        return None
+
+    def _get_job_last_run_time(self, job_id: str) -> datetime | None:
+        """Get last run start time for scheduler catchup detection."""
+        last_run = self.db.get_last_run(job_id)
+        if last_run:
+            return last_run.started_at
         return None
 
     # Process Management

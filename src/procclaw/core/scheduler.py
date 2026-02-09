@@ -21,21 +21,28 @@ class Scheduler:
         self,
         on_trigger: Callable[[str, str], bool],
         is_job_running: Callable[[str], bool],
+        get_last_run: Callable[[str], datetime | None] | None = None,
         timezone: str = "America/Sao_Paulo",
+        missed_run_grace_minutes: int = 60,
     ):
         """Initialize the scheduler.
 
         Args:
             on_trigger: Callback when job should run. Returns True if started.
             is_job_running: Callback to check if job is running.
+            get_last_run: Callback to get last run time for a job.
             timezone: Default timezone for schedules.
+            missed_run_grace_minutes: Grace period to catch up missed runs.
         """
         self._on_trigger = on_trigger
         self._is_job_running = is_job_running
+        self._get_last_run = get_last_run
         self._default_tz = timezone
+        self._missed_run_grace_minutes = missed_run_grace_minutes
         self._jobs: dict[str, JobConfig] = {}
         self._next_runs: dict[str, datetime] = {}
         self._queued: dict[str, int] = {}  # job_id -> queue count
+        self._pending_catchup: set[str] = set()  # jobs that need catchup run
         self._running = False
         self._operating_hours = OperatingHoursChecker(default_timezone=timezone)
 
@@ -76,8 +83,13 @@ class Scheduler:
                 if (job.type == JobType.SCHEDULED and job.schedule) or (job.type == JobType.ONESHOT and job.run_at):
                     self.add_job(job_id, job)
 
-    def _calculate_next_run(self, job_id: str) -> None:
-        """Calculate the next run time for a job."""
+    def _calculate_next_run(self, job_id: str, check_missed: bool = True) -> None:
+        """Calculate the next run time for a job.
+        
+        Args:
+            job_id: The job ID.
+            check_missed: If True, check for missed runs within grace period.
+        """
         job = self._jobs.get(job_id)
         if not job:
             return
@@ -101,6 +113,38 @@ class Scheduler:
         try:
             cron = croniter(job.schedule, now)
             next_run = cron.get_next(datetime)
+            
+            # Check for missed runs within grace period
+            if check_missed and self._get_last_run:
+                prev_cron = croniter(job.schedule, now)
+                prev_run = prev_cron.get_prev(datetime)
+                
+                # Get the job's last actual run
+                last_run = self._get_last_run(job_id)
+                
+                grace_cutoff = now - timedelta(minutes=self._missed_run_grace_minutes)
+                
+                # If prev_run is within grace period AND job hasn't run since before prev_run
+                if prev_run >= grace_cutoff:
+                    should_catchup = False
+                    if last_run is None:
+                        # Never ran - catch up
+                        should_catchup = True
+                        logger.info(f"Job '{job_id}' never ran, missed run at {prev_run}")
+                    elif last_run.tzinfo is None:
+                        last_run = tz.localize(last_run)
+                    
+                    if last_run is not None and last_run < prev_run:
+                        # Last run was before the scheduled time - catch up
+                        should_catchup = True
+                        logger.info(f"Job '{job_id}' last ran at {last_run}, missed run at {prev_run}")
+                    
+                    if should_catchup:
+                        self._pending_catchup.add(job_id)
+                        # Set next_run to now to trigger immediately
+                        self._next_runs[job_id] = now
+                        return
+            
             self._next_runs[job_id] = next_run
         except Exception as e:
             logger.error(f"Invalid cron expression for '{job_id}': {e}")
@@ -154,12 +198,15 @@ class Scheduler:
         if not job:
             return
 
-        # Check operating hours
-        should_run, reason = self._operating_hours.should_run_job(job)
-        if not should_run:
-            logger.info(f"Skipping '{job_id}': {reason}")
-            self._calculate_next_run(job_id)
-            return
+        is_catchup = job_id in self._pending_catchup
+
+        # Check operating hours (skip for catchup runs - they were already due)
+        if not is_catchup:
+            should_run, reason = self._operating_hours.should_run_job(job)
+            if not should_run:
+                logger.info(f"Skipping '{job_id}': {reason}")
+                self._calculate_next_run(job_id, check_missed=False)
+                return
 
         is_running = self._is_job_running(job_id)
 
@@ -177,17 +224,20 @@ class Scheduler:
                 # The supervisor should handle the kill
                 self._on_trigger(job_id, "scheduled")
         else:
-            trigger_type = "oneshot" if job.type == JobType.ONESHOT else "scheduled"
+            trigger_type = "catchup" if is_catchup else ("oneshot" if job.type == JobType.ONESHOT else "scheduled")
             logger.info(f"Triggering {trigger_type} job '{job_id}'")
             self._on_trigger(job_id, trigger_type)
+
+        # Clear catchup flag
+        self._pending_catchup.discard(job_id)
 
         # For oneshot jobs, remove from scheduler after triggering
         if job.type == JobType.ONESHOT:
             logger.info(f"Oneshot job '{job_id}' triggered - removing from scheduler")
             self.remove_job(job_id)
         else:
-            # Calculate next run for recurring jobs
-            self._calculate_next_run(job_id)
+            # Calculate next run for recurring jobs (don't check missed again)
+            self._calculate_next_run(job_id, check_missed=False)
 
     def stop(self) -> None:
         """Stop the scheduler."""
