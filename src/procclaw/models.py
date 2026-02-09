@@ -318,13 +318,13 @@ class JobConfig(BaseModel):
         """Get the stdout log path for this job."""
         if self.log.stdout:
             return Path(self.log.stdout).expanduser()
-        return base_dir / "logs" / f"{job_id}.log"
+        return base_dir / f"{job_id}.log"
 
     def get_log_stderr_path(self, base_dir: Path, job_id: str) -> Path:
         """Get the stderr log path for this job."""
         if self.log.stderr:
             return Path(self.log.stderr).expanduser()
-        return base_dir / "logs" / f"{job_id}.error.log"
+        return base_dir / f"{job_id}.error.log"
 
 
 class JobState(BaseModel):
