@@ -350,10 +350,25 @@ class TriggerManager:
     def start(self) -> None:
         """Start all trigger watchers."""
         self._file_watcher.start()
+        self._running = True
     
     def stop(self) -> None:
         """Stop all trigger watchers."""
+        self._running = False
         self._file_watcher.stop()
+    
+    async def run(self) -> None:
+        """Run the trigger manager (async loop).
+        
+        This method runs until stop() is called, allowing
+        the file watcher to process events in the background.
+        """
+        self.start()
+        try:
+            while self._running:
+                await asyncio.sleep(1)
+        finally:
+            self.stop()
     
     def get_registered_jobs(self) -> list[str]:
         """Get list of jobs with triggers."""

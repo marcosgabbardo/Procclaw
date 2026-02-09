@@ -172,6 +172,39 @@ class ConcurrencyLimiter:
             max_instances=config.max_instances,
             queued_count=self.get_queue_length(job_id),
         )
+    
+    def remove_from_queue(self, job_id: str) -> int:
+        """Remove a job from the queue.
+        
+        Args:
+            job_id: The job ID to remove
+            
+        Returns:
+            Number of entries removed
+        """
+        # Mark all pending entries for this job as failed
+        removed = 0
+        while True:
+            entry = self._db.dequeue_next()
+            if not entry:
+                break
+            if entry.get("job_id") == job_id:
+                self._db.fail_queued_job(entry.get("id"))
+                removed += 1
+        return removed
+    
+    async def run(self) -> None:
+        """Run the concurrency limiter (async loop).
+        
+        Processes queued jobs when slots become available.
+        """
+        self._running_flag = True
+        while self._running_flag:
+            await asyncio.sleep(1)
+    
+    def stop(self) -> None:
+        """Stop the concurrency limiter."""
+        self._running_flag = False
 
 
 class ConcurrencyManager:

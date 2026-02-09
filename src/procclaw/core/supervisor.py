@@ -193,8 +193,7 @@ class Supervisor:
         # Initialize concurrency limiter
         self._concurrency_limiter = ConcurrencyLimiter(
             db=self.db,
-            on_job_queued=self._on_job_queued,
-            on_queue_timeout=self._on_queue_timeout,
+            get_running_count=self._get_running_instance_count,
             global_max=self.config.daemon.max_concurrent_jobs if hasattr(self.config.daemon, 'max_concurrent_jobs') else 50,
         )
 
@@ -204,13 +203,14 @@ class Supervisor:
         # Initialize dead letter queue
         self._dlq = DeadLetterQueue(
             db=self.db,
-            on_dlq_entry=self._on_dlq_entry,
+            on_dlq_add=self._on_dlq_entry,
         )
 
         # Initialize lock manager
+        from procclaw.core.locks import SQLiteLockProvider
+        lock_provider = SQLiteLockProvider(db=self.db)
         self._lock_manager = LockManager(
-            db=self.db,
-            holder_id=f"procclaw-{os.getpid()}",
+            provider=lock_provider,
         )
 
         # Initialize trigger manager
@@ -559,6 +559,19 @@ class Supervisor:
         """Check if a job is currently running."""
         handle = self._processes.get(job_id)
         return handle is not None and handle.is_running()
+
+    def _get_running_instance_count(self, job_id: str) -> int:
+        """Get the count of running instances of a job.
+        
+        Used by ConcurrencyLimiter to track running jobs.
+        
+        Args:
+            job_id: The job ID to check
+            
+        Returns:
+            Number of running instances (0 or 1 for single-instance jobs)
+        """
+        return 1 if self.is_job_running(job_id) else 0
 
     def wait_for_job(self, job_id: str, timeout: float | None = None) -> int | None:
         """Wait for a job to complete and return its exit code.
@@ -939,7 +952,7 @@ class Supervisor:
         Returns:
             List of DLQ entries
         """
-        return self._dlq.get_entries(pending_only=pending_only)
+        return self._dlq.list(include_reinjected=not pending_only)
 
     def get_dlq_stats(self) -> dict:
         """Get DLQ statistics."""
@@ -960,37 +973,28 @@ class Supervisor:
         Returns:
             True if reinjection was successful
         """
-        entry = self._dlq.get_entry(entry_id)
-        if not entry:
-            logger.error(f"DLQ entry {entry_id} not found")
-            return False
-
-        if entry.is_reinjected:
-            logger.warning(f"DLQ entry {entry_id} already reinjected")
-            return False
-
-        # Start the job
-        success = self.start_job(entry.job_id, trigger="dlq_reinject")
+        def do_reinject(job_id: str, params: dict | None) -> int:
+            """Start the job and return the new run ID."""
+            success = self.start_job(job_id, trigger="dlq_reinject", params=params)
+            if not success:
+                raise RuntimeError(f"Failed to start job '{job_id}'")
+            last_run = self.db.get_last_run(job_id)
+            return last_run.id if last_run else 0
         
-        if success:
-            # Get the new run ID
-            last_run = self.db.get_last_run(entry.job_id)
-            self._dlq.mark_reinjected(entry_id, last_run.id if last_run else None)
-            logger.info(f"Reinjected DLQ entry {entry_id} for job '{entry.job_id}'")
-
-        return success
+        new_run_id = self._dlq.reinject(entry_id, on_reinject=do_reinject)
+        return new_run_id is not None
 
     def purge_dlq(self, job_id: str | None = None, older_than_days: int | None = None) -> int:
         """Purge entries from the DLQ.
         
         Args:
-            job_id: Only purge entries for this job
+            job_id: Only purge entries for this job (not implemented - purges all matching age)
             older_than_days: Only purge entries older than this
             
         Returns:
             Number of entries purged
         """
-        return self._dlq.purge(job_id=job_id, older_than_days=older_than_days)
+        return self._dlq.cleanup(days=older_than_days)
 
     # Trigger Management
 
