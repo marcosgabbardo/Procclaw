@@ -978,9 +978,48 @@
                                 <option value="openclaw">OpenClaw</option>
                             </select>
                         </div>
-                        <div x-show="editJob.type === 'scheduled'">
-                            <label class="block text-sm text-dark-400 mb-1">Schedule (cron)</label>
-                            <input type="text" x-model="editJob.schedule" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="0 * * * *" @input="syncEditFormToYaml()">
+                        <div x-show="editJob.type === 'scheduled'" class="col-span-2">
+                            <label class="block text-sm text-dark-400 mb-1">Schedule</label>
+                            <div class="grid grid-cols-2 gap-2 mb-2">
+                                <select x-model="editJob.cronPreset" @change="updateCronFromPreset()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none text-sm">
+                                    <option value="custom">Custom cron</option>
+                                    <option value="every_min">Every X minutes</option>
+                                    <option value="every_hour">Every X hours</option>
+                                    <option value="daily">Daily at time</option>
+                                    <option value="weekly">Weekly</option>
+                                    <option value="monthly">Monthly</option>
+                                </select>
+                                <!-- Every X minutes -->
+                                <input x-show="editJob.cronPreset === 'every_min'" type="number" x-model="editJob.cronMinutes" min="1" max="59" 
+                                    class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none text-sm" placeholder="Minutes" @input="updateCronFromPreset()">
+                                <!-- Every X hours -->
+                                <input x-show="editJob.cronPreset === 'every_hour'" type="number" x-model="editJob.cronHours" min="1" max="23" 
+                                    class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none text-sm" placeholder="Hours" @input="updateCronFromPreset()">
+                                <!-- Daily/Weekly/Monthly time -->
+                                <input x-show="['daily', 'weekly', 'monthly'].includes(editJob.cronPreset)" type="time" x-model="editJob.cronTime" 
+                                    class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none text-sm" @input="updateCronFromPreset()">
+                            </div>
+                            <!-- Weekly day selector -->
+                            <div x-show="editJob.cronPreset === 'weekly'" class="flex gap-1 mb-2">
+                                <template x-for="(day, idx) in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']" :key="idx">
+                                    <button type="button" @click="toggleCronDay(idx)" 
+                                        :class="editJob.cronDays?.includes(idx) ? 'bg-accent-500 text-white' : 'bg-dark-700 text-dark-400'"
+                                        class="px-2 py-1 rounded text-xs hover:bg-dark-600 transition" x-text="day"></button>
+                                </template>
+                            </div>
+                            <!-- Monthly day selector -->
+                            <div x-show="editJob.cronPreset === 'monthly'" class="mb-2">
+                                <select x-model="editJob.cronDayOfMonth" @change="updateCronFromPreset()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none text-sm">
+                                    <template x-for="d in 31" :key="d">
+                                        <option :value="d" x-text="'Day ' + d"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <!-- Cron expression (always visible) -->
+                            <div class="flex items-center gap-2">
+                                <input type="text" x-model="editJob.schedule" class="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500 font-mono text-sm" placeholder="0 * * * *" @input="editJob.cronPreset = 'custom'; syncEditFormToYaml()">
+                                <span class="text-xs text-dark-400" x-text="cronToHuman(editJob.schedule)"></span>
+                            </div>
                         </div>
                         <div x-show="editJob.type === 'oneshot'">
                             <label class="block text-sm text-dark-400 mb-1">Run At</label>
@@ -1260,7 +1299,7 @@
                 createMode: 'form',
                 fullYamlContent: '',
                 fullYamlPath: '',
-                editJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: '', schedule: '', run_at: '', tagsStr: '' },
+                editJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: '', schedule: '', run_at: '', tagsStr: '', cronPreset: 'custom', cronMinutes: 5, cronHours: 1, cronTime: '09:00', cronDays: [1], cronDayOfMonth: 1 },
                 editJobYaml: '',
                 editMode: 'form',
                 
@@ -1566,11 +1605,63 @@
                         type: job.type || 'manual',
                         schedule: job.schedule || '',
                         run_at: runAtFormatted,
-                        tagsStr: (job.tags || []).join(', ')
+                        tagsStr: (job.tags || []).join(', '),
+                        cronPreset: 'custom',
+                        cronMinutes: 5,
+                        cronHours: 1,
+                        cronTime: '09:00',
+                        cronDays: [1],
+                        cronDayOfMonth: 1
                     };
                     this.editMode = 'form';
                     this.syncEditFormToYaml();
                     this.showEditModal = true;
+                },
+
+                updateCronFromPreset() {
+                    const { cronPreset, cronMinutes, cronHours, cronTime, cronDays, cronDayOfMonth } = this.editJob;
+                    let cron = '';
+                    
+                    switch (cronPreset) {
+                        case 'every_min':
+                            cron = `*/${cronMinutes || 5} * * * *`;
+                            break;
+                        case 'every_hour':
+                            cron = `0 */${cronHours || 1} * * *`;
+                            break;
+                        case 'daily': {
+                            const [h, m] = (cronTime || '09:00').split(':');
+                            cron = `${parseInt(m)} ${parseInt(h)} * * *`;
+                            break;
+                        }
+                        case 'weekly': {
+                            const [h, m] = (cronTime || '09:00').split(':');
+                            const days = cronDays?.length ? cronDays.sort().join(',') : '1';
+                            cron = `${parseInt(m)} ${parseInt(h)} * * ${days}`;
+                            break;
+                        }
+                        case 'monthly': {
+                            const [h, m] = (cronTime || '09:00').split(':');
+                            cron = `${parseInt(m)} ${parseInt(h)} ${cronDayOfMonth || 1} * *`;
+                            break;
+                        }
+                        default:
+                            return; // custom - don't override
+                    }
+                    
+                    this.editJob.schedule = cron;
+                    this.syncEditFormToYaml();
+                },
+
+                toggleCronDay(day) {
+                    if (!this.editJob.cronDays) this.editJob.cronDays = [];
+                    const idx = this.editJob.cronDays.indexOf(day);
+                    if (idx >= 0) {
+                        this.editJob.cronDays.splice(idx, 1);
+                    } else {
+                        this.editJob.cronDays.push(day);
+                    }
+                    this.updateCronFromPreset();
                 },
 
                 async saveJob() {
