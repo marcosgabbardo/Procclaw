@@ -2056,6 +2056,37 @@ class Supervisor:
         """Get the last result for a job."""
         return self._result_collector.get_last_result(job_id)
 
+    # Zombie Cleanup
+
+    def _cleanup_zombie_runs(self) -> None:
+        """Clean up zombie runs from previous daemon sessions.
+        
+        Finds runs marked as 'running' where the process is no longer alive
+        and marks them as killed (exit code -15).
+        """
+        zombie_runs = self.db.get_running_runs()
+        cleaned = 0
+        
+        for run in zombie_runs:
+            # Check if the process is actually running
+            state = self.db.get_state(run.job_id)
+            pid = state.pid if state else None
+            
+            if pid and self.check_pid(pid):
+                # Process is still running, skip
+                continue
+            
+            # Process is dead but run is marked as running - it's a zombie
+            logger.info(f"Cleaning up zombie run {run.id} for job '{run.job_id}'")
+            run.finished_at = datetime.now()
+            run.exit_code = -15  # SIGTERM
+            run.error = "Killed (daemon restart)"
+            self.db.update_run(run)
+            cleaned += 1
+        
+        if cleaned:
+            logger.info(f"Cleaned up {cleaned} zombie runs from previous session")
+
     # Audit Logging
 
     def _audit_log(self, job_id: str, action: str, details: str = "") -> None:
@@ -2081,6 +2112,9 @@ class Supervisor:
 
         # Load scheduled jobs into scheduler
         self._scheduler.update_jobs(self.jobs.get_enabled_jobs())
+
+        # Clean up zombie runs from previous session (runs marked as running but process is dead)
+        self._cleanup_zombie_runs()
 
         # Auto-start enabled continuous jobs
         for job_id, job in self.jobs.get_jobs_by_type(JobType.CONTINUOUS).items():

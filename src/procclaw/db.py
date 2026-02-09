@@ -553,6 +553,15 @@ class Database:
         runs = self.get_runs(job_id=job_id, limit=1)
         return runs[0] if runs else None
 
+    def get_running_runs(self) -> list[JobRun]:
+        """Get all runs that are marked as running (no finished_at)."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM job_runs WHERE finished_at IS NULL ORDER BY started_at DESC"
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_run(row) for row in rows]
+
     def _row_to_run(self, row: sqlite3.Row) -> JobRun:
         """Convert a database row to a JobRun."""
         import json
