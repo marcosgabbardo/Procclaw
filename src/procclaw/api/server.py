@@ -534,6 +534,48 @@ def create_app() -> FastAPI:
             "final_exit_code": run.exit_code,
         }
 
+    @app.post("/api/v1/jobs/{job_id}/healing/cancel")
+    async def cancel_job_healing(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Cancel self-healing for a job."""
+        supervisor = get_supervisor()
+        
+        cancelled = supervisor._self_healer.cancel_healing(job_id)
+        
+        return {
+            "success": True,
+            "message": f"Healing cancelled for job '{job_id}'" if cancelled else f"No active healing for job '{job_id}'",
+            "was_in_progress": cancelled,
+        }
+
+    @app.delete("/api/v1/runs/{run_id}")
+    async def delete_run(
+        run_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Delete a job run and its logs."""
+        supervisor = get_supervisor()
+        
+        # Find the run first
+        runs = supervisor.db.get_runs(limit=1000)
+        run = next((r for r in runs if r.id == run_id), None)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        
+        # Delete logs first
+        supervisor.db.delete_logs(run_id=run_id)
+        
+        # Delete the run
+        supervisor.db.delete_run(run_id)
+        
+        return {
+            "success": True,
+            "message": f"Run {run_id} deleted",
+            "job_id": run.job_id,
+        }
+
     @app.get("/api/v1/jobs/{job_id}", response_model=JobDetail)
     async def get_job(
         job_id: str,

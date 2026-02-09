@@ -417,10 +417,15 @@ When done, respond with one of:
 class SelfHealer:
     """Self-healing manager for jobs."""
     
+    # Cooldown period between healing attempts for the same job (seconds)
+    HEALING_COOLDOWN_SECONDS = 300  # 5 minutes
+    
     def __init__(self, db: "Database", logs_dir: Path):
         self.db = db
         self.logs_dir = logs_dir
         self._healing_in_progress: set[str] = set()
+        self._last_healing_time: dict[str, datetime] = {}
+        self._cancelled: set[str] = set()  # Jobs with cancelled healing
     
     def is_healing_enabled(self, job: JobConfig) -> bool:
         """Check if self-healing is enabled for a job."""
@@ -432,6 +437,33 @@ class SelfHealer:
     def is_healing_in_progress(self, job_id: str) -> bool:
         """Check if healing is already in progress for a job."""
         return job_id in self._healing_in_progress
+    
+    def is_in_cooldown(self, job_id: str) -> bool:
+        """Check if job is in healing cooldown period."""
+        if job_id not in self._last_healing_time:
+            return False
+        elapsed = (datetime.now() - self._last_healing_time[job_id]).total_seconds()
+        return elapsed < self.HEALING_COOLDOWN_SECONDS
+    
+    def cancel_healing(self, job_id: str) -> bool:
+        """Cancel healing for a job.
+        
+        Returns True if there was healing to cancel.
+        """
+        was_in_progress = job_id in self._healing_in_progress
+        self._cancelled.add(job_id)
+        self._healing_in_progress.discard(job_id)
+        if was_in_progress:
+            logger.info(f"Cancelled healing for job '{job_id}'")
+        return was_in_progress
+    
+    def is_cancelled(self, job_id: str) -> bool:
+        """Check if healing was cancelled for a job."""
+        return job_id in self._cancelled
+    
+    def clear_cancelled(self, job_id: str) -> None:
+        """Clear cancelled state for a job."""
+        self._cancelled.discard(job_id)
     
     async def trigger_healing(
         self,
@@ -463,6 +495,18 @@ class SelfHealer:
                 status=HealingStatus.IN_PROGRESS,
                 summary="Healing already in progress",
             )
+        
+        # Check cooldown to prevent API overload
+        if self.is_in_cooldown(job_id):
+            cooldown_remaining = self.HEALING_COOLDOWN_SECONDS - (datetime.now() - self._last_healing_time[job_id]).total_seconds()
+            logger.info(f"Job '{job_id}' in healing cooldown ({cooldown_remaining:.0f}s remaining)")
+            return HealingResult(
+                status=HealingStatus.GAVE_UP,
+                summary=f"In cooldown - wait {cooldown_remaining:.0f}s",
+            )
+        
+        # Clear any previous cancelled state
+        self.clear_cancelled(job_id)
         
         config = job.self_healing
         max_attempts = config.remediation.max_attempts
@@ -562,6 +606,7 @@ class SelfHealer:
             
         finally:
             self._healing_in_progress.discard(job_id)
+            self._last_healing_time[job_id] = datetime.now()  # Record for cooldown
     
     async def _notify(self, session: str, message: str) -> None:
         """Send notification to OpenClaw session."""

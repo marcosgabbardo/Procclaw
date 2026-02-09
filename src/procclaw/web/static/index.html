@@ -499,9 +499,11 @@
                                     <span x-show="!run.healing" class="text-dark-500">-</span>
                                 </td>
                                 <td class="px-4 py-3 text-right flex items-center justify-end gap-1">
+                                    <button x-show="run.healing?.status === 'in_progress'" @click.stop="cancelHealing(run)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Cancel Healing">⏹️</button>
                                     <button x-show="run.healing" @click.stop="viewRunHealing(run)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="View Healing Details">🔧</button>
                                     <button x-show="run.has_transcript" @click.stop="viewRunSession(run)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-orange-400 text-sm" title="View AI Session">🧠</button>
                                     <button @click.stop="viewRunLogs(run)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="View Logs">📋</button>
+                                    <button @click.stop="deleteRun(run)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Delete Run">🗑️</button>
                                 </td>
                             </tr>
                         </template>
@@ -2719,6 +2721,32 @@
                     } catch (e) {
                         console.error('Error loading healing details:', e);
                         alert('Error loading healing details: ' + e.message);
+                    }
+                },
+
+                async cancelHealing(run) {
+                    if (!confirm(`Cancel healing for job '${run.job_id}'?`)) return;
+                    
+                    try {
+                        const res = await this.api(`/jobs/${run.job_id}/healing/cancel`, 'POST');
+                        this.toast(res.message, 'success');
+                        await this.loadRuns();
+                    } catch (e) {
+                        console.error('Error cancelling healing:', e);
+                        this.toast('Error cancelling healing: ' + e.message, 'error');
+                    }
+                },
+
+                async deleteRun(run) {
+                    if (!confirm(`Delete run #${run.id} for job '${run.job_id}'?\n\nThis will also delete all logs for this run.`)) return;
+                    
+                    try {
+                        const res = await this.api(`/runs/${run.id}`, 'DELETE');
+                        this.toast(res.message, 'success');
+                        await this.loadRuns();
+                    } catch (e) {
+                        console.error('Error deleting run:', e);
+                        this.toast('Error deleting run: ' + e.message, 'error');
                     }
                 },
 

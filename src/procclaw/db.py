@@ -677,6 +677,24 @@ class Database:
                 for row in rows
             ]
 
+    def delete_logs(self, run_id: int) -> int:
+        """Delete all log lines for a run.
+        
+        Returns the number of deleted rows.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM job_logs WHERE run_id = ?", (run_id,))
+            return cursor.rowcount
+
+    def delete_run(self, run_id: int) -> bool:
+        """Delete a job run.
+        
+        Returns True if a row was deleted.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM job_runs WHERE id = ?", (run_id,))
+            return cursor.rowcount > 0
+
     def get_run_logs(self, run_id: int, level: str | None = None, limit: int = 5000) -> list[str]:
         """Get log lines for a specific run as a simple list of strings."""
         logs = self.get_logs(run_id=run_id, level=level, limit=limit)
