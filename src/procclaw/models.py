@@ -473,6 +473,7 @@ class JobState(BaseModel):
     last_error: str | None = None
     next_run: datetime | None = None  # For scheduled jobs
     next_retry: datetime | None = None  # For retry scheduling
+    paused: bool = False  # Temporarily paused (runtime, persists in state)
 
 
 class JobRun(BaseModel):

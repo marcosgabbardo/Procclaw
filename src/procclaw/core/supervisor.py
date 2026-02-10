@@ -1325,10 +1325,15 @@ class Supervisor:
         except Exception:
             pass
         
+        # Check if job is paused
+        is_paused = state.paused or self._scheduler.is_paused(job_id)
+        
         # Compute display status
         display_status = state.status.value
         if not job.enabled:
             display_status = JobStatus.DISABLED.value
+        elif is_paused:
+            display_status = "paused"
         elif state.status == JobStatus.RUNNING:
             display_status = JobStatus.RUNNING.value
         elif (job.schedule and next_run) or (job.run_at and next_run):
@@ -1342,6 +1347,7 @@ class Supervisor:
             "type": job.type.value,
             "status": display_status,
             "enabled": job.enabled,
+            "paused": is_paused,
             "pid": state.pid,
             "started_at": state.started_at.isoformat() if state.started_at else None,
             "uptime_seconds": uptime_seconds,
@@ -2185,6 +2191,10 @@ class Supervisor:
         for job_id, job in self.jobs.get_jobs_by_type(JobType.CONTINUOUS).items():
             if job.enabled:
                 state = self.db.get_state(job_id)
+                # Skip paused jobs
+                if state and state.paused:
+                    logger.info(f"Skipping paused continuous job '{job_id}'")
+                    continue
                 # Check if already running from previous session
                 if state and state.pid and self.check_pid(state.pid):
                     logger.info(f"Job '{job_id}' still running from previous session (PID {state.pid}), adopting")

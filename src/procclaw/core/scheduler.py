@@ -45,6 +45,7 @@ class Scheduler:
         self._pending_catchup: set[str] = set()  # jobs that need catchup run
         self._running = False
         self._operating_hours = OperatingHoursChecker(default_timezone=timezone)
+        self._paused_jobs: set[str] = set()  # Jobs that are temporarily paused
 
     def add_job(self, job_id: str, job: JobConfig) -> None:
         """Add a scheduled or oneshot job."""
@@ -64,6 +65,24 @@ class Scheduler:
         self._jobs.pop(job_id, None)
         self._next_runs.pop(job_id, None)
         self._queued.pop(job_id, None)
+        self._paused_jobs.discard(job_id)
+
+    def pause_job(self, job_id: str) -> None:
+        """Pause a scheduled job (skip runs until resumed)."""
+        self._paused_jobs.add(job_id)
+        logger.info(f"Job '{job_id}' paused")
+
+    def resume_job(self, job_id: str) -> None:
+        """Resume a paused job."""
+        self._paused_jobs.discard(job_id)
+        # Recalculate next run from now
+        if job_id in self._jobs:
+            self._calculate_next_run(job_id, check_missed=False)
+        logger.info(f"Job '{job_id}' resumed, next run: {self._next_runs.get(job_id)}")
+
+    def is_paused(self, job_id: str) -> bool:
+        """Check if a job is paused."""
+        return job_id in self._paused_jobs
 
     def update_jobs(self, jobs: dict[str, JobConfig]) -> None:
         """Update all scheduled and oneshot jobs."""
@@ -174,6 +193,10 @@ class Scheduler:
 
         for job_id, next_run in list(self._next_runs.items()):
             if next_run is None:
+                continue
+
+            # Skip paused jobs
+            if job_id in self._paused_jobs:
                 continue
 
             # Make next_run timezone-aware if it isn't

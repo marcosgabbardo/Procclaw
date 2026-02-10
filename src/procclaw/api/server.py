@@ -76,6 +76,7 @@ class JobSummary(BaseModel):
     type: str
     status: str
     enabled: bool
+    paused: bool = False
     pid: int | None = None
     started_at: str | None = None
     uptime_seconds: float | None = None
@@ -254,6 +255,7 @@ def create_app() -> FastAPI:
                     type=j["type"],
                     status=j["status"],
                     enabled=j["enabled"],
+                    paused=j.get("paused", False),
                     pid=j.get("pid"),
                     started_at=j.get("started_at"),
                     uptime_seconds=j.get("uptime_seconds"),
@@ -742,6 +744,97 @@ def create_app() -> FastAPI:
             message=f"Job '{job_id}' restarted",
             job_id=job_id,
             pid=pid,
+        )
+
+    @app.post("/api/v1/jobs/{job_id}/pause", response_model=ActionResponse)
+    async def pause_job(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Pause a job (skip scheduled runs, can be resumed)."""
+        from procclaw.models import JobState
+        
+        supervisor = get_supervisor()
+        
+        # Check job exists in config
+        job = supervisor.jobs.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        # Get or create state
+        state = supervisor.db.get_state(job_id)
+        if not state:
+            state = JobState(job_id=job_id)
+        
+        if state.paused:
+            return ActionResponse(
+                success=True,
+                message=f"Job '{job_id}' is already paused",
+                job_id=job_id,
+            )
+        
+        # If running (continuous job), stop it first
+        if supervisor.is_job_running(job_id):
+            supervisor.stop_job(job_id)
+        
+        # Update state
+        state.paused = True
+        supervisor.db.save_state(state)
+        
+        # Update scheduler to skip this job
+        if supervisor._scheduler:
+            supervisor._scheduler.pause_job(job_id)
+        
+        return ActionResponse(
+            success=True,
+            message=f"Job '{job_id}' paused",
+            job_id=job_id,
+        )
+
+    @app.post("/api/v1/jobs/{job_id}/resume", response_model=ActionResponse)
+    async def resume_job(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Resume a paused job."""
+        from procclaw.models import JobState
+        
+        supervisor = get_supervisor()
+        
+        # Check job exists in config
+        job = supervisor.jobs.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        # Get or create state
+        state = supervisor.db.get_state(job_id)
+        if not state:
+            state = JobState(job_id=job_id)
+        
+        if not state.paused:
+            return ActionResponse(
+                success=True,
+                message=f"Job '{job_id}' is not paused",
+                job_id=job_id,
+            )
+        
+        # Update state
+        state.paused = False
+        supervisor.db.save_state(state)
+        
+        # Re-enable in scheduler
+        if supervisor._scheduler:
+            supervisor._scheduler.resume_job(job_id)
+        
+        # For continuous jobs, auto-start after resume
+        from procclaw.models import JobType
+        if job.type == JobType.CONTINUOUS and not supervisor.is_job_running(job_id):
+            supervisor.start_job(job_id, trigger="resume")
+        
+        return ActionResponse(
+            success=True,
+            message=f"Job '{job_id}' resumed",
+            job_id=job_id,
         )
 
     @app.delete("/api/v1/jobs/{job_id}")

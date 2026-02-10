@@ -1219,6 +1219,48 @@ def disable_job_cmd(
         raise typer.Exit(1)
 
 
+@app.command("pause")
+def pause_job_cmd(
+    job_id: str = typer.Argument(..., help="Job ID to pause"),
+) -> None:
+    """Pause a scheduled job (skip runs until resumed)."""
+    from procclaw.cli.client import APIClient
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        response = client._get_client().post(f"/api/v1/jobs/{job_id}/pause")
+        response.raise_for_status()
+        console.print(f"[yellow]⏸ Job '{job_id}' paused[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("resume")
+def resume_job_cmd(
+    job_id: str = typer.Argument(..., help="Job ID to resume"),
+) -> None:
+    """Resume a paused job."""
+    from procclaw.cli.client import APIClient
+    
+    client = APIClient()
+    if not client.is_daemon_running():
+        console.print("[red]Daemon is not running[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        response = client._get_client().post(f"/api/v1/jobs/{job_id}/resume")
+        response.raise_for_status()
+        console.print(f"[green]▶️ Job '{job_id}' resumed[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
 @app.command("add")
 def add_job(
     job_id: str = typer.Argument(..., help="Job ID (unique identifier)"),

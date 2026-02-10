@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -365,6 +365,14 @@ class Database:
                 except sqlite3.OperationalError:
                     pass
         
+        if from_version < 8 and to_version >= 8:
+            # Migration to version 8: Add paused field to job_state
+            logger.info("Migrating to version 8: Adding paused field to job_state")
+            try:
+                conn.execute("ALTER TABLE job_state ADD COLUMN paused INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+        
         conn.execute("UPDATE schema_version SET version = ?", (to_version,))
 
     @contextmanager
@@ -412,8 +420,8 @@ class Database:
                 INSERT OR REPLACE INTO job_state (
                     job_id, status, pid, started_at, stopped_at,
                     restart_count, retry_attempt, last_exit_code, last_error,
-                    next_run, next_retry
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    next_run, next_retry, paused
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     state.job_id,
@@ -427,6 +435,7 @@ class Database:
                     state.last_error,
                     state.next_run.isoformat() if state.next_run else None,
                     state.next_retry.isoformat() if state.next_retry else None,
+                    1 if state.paused else 0,
                 ),
             )
 
@@ -437,6 +446,13 @@ class Database:
 
     def _row_to_state(self, row: sqlite3.Row) -> JobState:
         """Convert a database row to a JobState."""
+        # Handle paused column (may not exist in older databases)
+        paused = False
+        try:
+            paused = bool(row["paused"])
+        except (IndexError, KeyError):
+            pass
+        
         return JobState(
             job_id=row["job_id"],
             status=JobStatus(row["status"]),
@@ -449,6 +465,7 @@ class Database:
             last_error=row["last_error"],
             next_run=datetime.fromisoformat(row["next_run"]) if row["next_run"] else None,
             next_retry=datetime.fromisoformat(row["next_retry"]) if row["next_retry"] else None,
+            paused=paused,
         )
 
     # Job Runs Methods
