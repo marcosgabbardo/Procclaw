@@ -50,6 +50,7 @@ Access the dashboard at **http://localhost:9876** when the daemon is running.
 - 🚀 **Auto-start**: Continuous jobs start automatically on daemon startup
 - 💾 **SQLite Logs**: Logs saved to SQLite after completion (configurable: keep/delete files)
 - ⏰ **Missed Run Catchup**: Scheduled jobs catch up if daemon was down (60 min grace period)
+- 🛡️ **Crash Recovery**: Jobs complete even if daemon dies (heartbeat + completion markers)
 
 ### Enterprise Features
 
@@ -723,6 +724,78 @@ The API returns a `source` field indicating where logs came from:
 
 The Web UI shows a visual indicator: 📄 File (green) or 💾 SQLite (yellow).
 
+## Crash Recovery & Completion Tracking
+
+ProcClaw uses a **wrapper script** to reliably track job completion, even if the daemon crashes while a job is running.
+
+### How It Works
+
+Every job runs inside a transparent wrapper that provides:
+
+1. **Heartbeat**: A file updated every 5 seconds while the job runs
+2. **Completion Marker**: A file with the exit code, written when the job finishes
+
+```
+/tmp/procclaw-markers/
+├── procclaw-wrapper.sh        # The wrapper script (auto-generated)
+├── {job_id}-{run_id}.done     # Completion markers (exit code inside)
+
+/tmp/procclaw-heartbeats/
+└── {job_id}-{run_id}          # Heartbeat files (timestamp inside)
+```
+
+### Crash Recovery Scenarios
+
+| Scenario | Before | After |
+|----------|--------|-------|
+| Daemon dies, job completes | ❌ Lost (marked as killed) | ✅ Recovered from marker |
+| Daemon dies, job fails | ❌ Lost | ✅ Exit code recovered |
+| Daemon dies, job still running | ✅ Adopted (PID check) | ✅ Adopted + heartbeat |
+| Job killed (SIGKILL) | ❌ Unknown state | ⚠️ Detected via stale heartbeat |
+
+### On Daemon Restart
+
+When ProcClaw starts, it checks for incomplete jobs:
+
+1. **Completion Marker exists?** → Job finished while daemon was down, recover exit code
+2. **Heartbeat recent (<15s)?** → Job still running, adopt the process
+3. **Heartbeat stale (>15s)?** → Job died mid-execution (SIGKILL or crash)
+4. **No marker, no heartbeat?** → Job killed, mark as failed
+
+### Wrapper Behavior
+
+The wrapper handles signals gracefully:
+
+- **SIGTERM/SIGINT**: Cleanup runs, marker is written
+- **SIGKILL**: No cleanup possible, detected via stale heartbeat
+
+### Transparency
+
+Jobs don't need any modifications - the wrapper is completely transparent:
+
+```bash
+# What you define
+cmd: python my_script.py --arg value
+
+# What actually runs (automatic)
+/tmp/procclaw-markers/procclaw-wrapper.sh bash -c 'python my_script.py --arg value'
+```
+
+### Configuration
+
+The wrapper is enabled by default. Directories can be customized in code if needed:
+
+```python
+from procclaw.core.job_wrapper import init_wrapper_manager
+
+init_wrapper_manager(
+    marker_dir=Path("/custom/markers"),
+    heartbeat_dir=Path("/custom/heartbeats"),
+    heartbeat_interval=5,      # seconds
+    stale_threshold=15,        # seconds before considered dead
+)
+```
+
 ## Directory Structure
 
 ```
@@ -738,6 +811,13 @@ The Web UI shows a visual indicator: 📄 File (green) or 💾 SQLite (yellow).
     ├── daemon.audit.log     # Audit log (start/stop/config changes)
     ├── <job>.log            # Job stdout (if file_log_mode != disabled)
     └── <job>.error.log      # Job stderr
+
+/tmp/procclaw-markers/        # Crash recovery (auto-created)
+├── procclaw-wrapper.sh       # Job wrapper script
+└── <job>-<run_id>.done       # Completion markers
+
+/tmp/procclaw-heartbeats/     # Job heartbeats (auto-created)
+└── <job>-<run_id>            # Heartbeat files (timestamp)
 ```
 
 ## Comparison with Alternatives

@@ -57,6 +57,7 @@ from procclaw.openclaw import (
     render_trigger_template,
 )
 from procclaw.secrets import resolve_secret_ref
+from procclaw.core.job_wrapper import JobWrapperManager, get_wrapper_manager
 
 
 class ProcessHandle:
@@ -68,11 +69,13 @@ class ProcessHandle:
         process: subprocess.Popen[bytes],
         stdout_file: Any,
         stderr_file: Any,
+        run_id: int | None = None,
     ):
         self.job_id = job_id
         self.process = process
         self.stdout_file = stdout_file
         self.stderr_file = stderr_file
+        self.run_id = run_id
         self.started_at = datetime.now()
 
     @property
@@ -510,7 +513,18 @@ class Supervisor:
                 return False
 
         try:
-            handle = self._spawn_process(job_id, job)
+            # Create run record BEFORE spawning so we have run_id for the wrapper
+            now = datetime.now()
+            run = JobRun(
+                job_id=job_id,
+                started_at=now,
+                trigger=trigger,
+                composite_id=composite_id,
+            )
+            run.id = self.db.add_run(run)
+            
+            # Spawn process with run_id for wrapper tracking
+            handle = self._spawn_process(job_id, job, run_id=run.id)
             self._processes[job_id] = handle
 
             # Update state (preserve retry_attempt and restart_count from existing state)
@@ -529,15 +543,10 @@ class Supervisor:
                 state.restart_count += 1
             
             self.db.save_state(state)
-
-            # Record run
-            run = JobRun(
-                job_id=job_id,
-                started_at=handle.started_at,
-                trigger=trigger,
-                composite_id=composite_id,
-            )
-            run.id = self.db.add_run(run)
+            
+            # Update run with actual start time and PID info
+            run.started_at = handle.started_at
+            self.db.update_run(run)
 
             # Record execution for deduplication
             if job.dedup.enabled:
@@ -1459,8 +1468,14 @@ class Supervisor:
 
     # Process Spawning
 
-    def _spawn_process(self, job_id: str, job: JobConfig) -> ProcessHandle:
-        """Spawn a new process for a job."""
+    def _spawn_process(self, job_id: str, job: JobConfig, run_id: int | None = None) -> ProcessHandle:
+        """Spawn a new process for a job.
+        
+        Args:
+            job_id: The job ID
+            job: Job configuration
+            run_id: Run ID for wrapper tracking (completion markers & heartbeat)
+        """
         # Prepare working directory
         cwd = Path(job.cwd).expanduser() if job.cwd else Path.cwd()
         if not cwd.exists():
@@ -1471,6 +1486,8 @@ class Supervisor:
         for key, value in job.env.items():
             env[key] = resolve_secret_ref(value)
         env["PROCCLAW_JOB_ID"] = job_id
+        if run_id is not None:
+            env["PROCCLAW_RUN_ID"] = str(run_id)
 
         # Prepare log files
         logs_dir = DEFAULT_LOGS_DIR
@@ -1487,16 +1504,23 @@ class Supervisor:
         stdout_file.write(f"\n{'='*60}\n")
         stdout_file.write(f"[{timestamp}] Starting job: {job_id}\n")
         stdout_file.write(f"Command: {job.cmd}\n")
+        if run_id:
+            stdout_file.write(f"Run ID: {run_id}\n")
         stdout_file.write(f"{'='*60}\n\n")
         stdout_file.flush()
 
-        # Parse command (resolve secrets)
+        # Parse command (resolve secrets) and wrap with completion tracker
         resolved_cmd = resolve_secret_ref(job.cmd)
+        
+        # Use wrapper for reliable completion tracking (heartbeat + marker)
+        wrapper_manager = get_wrapper_manager()
+        wrapped_cmd = wrapper_manager.wrap_command(resolved_cmd)
+        
         if sys.platform == "win32":
-            cmd = resolved_cmd
+            cmd = resolved_cmd  # Windows: don't use wrapper (bash script)
             shell = True
         else:
-            cmd = resolved_cmd
+            cmd = wrapped_cmd
             shell = True
 
         # Spawn process
@@ -1510,7 +1534,7 @@ class Supervisor:
             start_new_session=True,  # Create new process group
         )
 
-        return ProcessHandle(job_id, process, stdout_file, stderr_file)
+        return ProcessHandle(job_id, process, stdout_file, stderr_file, run_id=run_id)
 
     def _finalize_job(self, job_id: str, handle: ProcessHandle) -> None:
         """Finalize a completed job."""
@@ -1520,6 +1544,12 @@ class Supervisor:
 
         # Close file handles
         handle.close_files()
+        
+        # Clean up completion marker and heartbeat (wrapper files)
+        if handle.run_id is not None:
+            wrapper_manager = get_wrapper_manager()
+            wrapper_manager.cleanup_marker(job_id, handle.run_id)
+            wrapper_manager.cleanup_heartbeat(job_id, handle.run_id)
 
         # Unregister from health checker
         self._health_checker.unregister_job(job_id)
@@ -2171,11 +2201,13 @@ class Supervisor:
     def _cleanup_zombie_runs(self) -> None:
         """Clean up zombie runs from previous daemon sessions.
         
-        Finds runs marked as 'running' where the process is no longer alive
-        and marks them as killed (exit code -15).
+        Checks completion markers first (job may have completed while daemon was down).
+        Falls back to heartbeat check, then marks as killed if no info available.
         """
         zombie_runs = self.db.get_running_runs()
         cleaned = 0
+        recovered = 0
+        wrapper_manager = get_wrapper_manager()
         
         for run in zombie_runs:
             # Check if the process is actually running
@@ -2186,14 +2218,78 @@ class Supervisor:
                 # Process is still running, skip
                 continue
             
-            # Process is dead but run is marked as running - it's a zombie
+            # Process is not running - check completion marker first
+            marker = wrapper_manager.check_completion_marker(run.job_id, run.id)
+            
+            if marker is not None:
+                # Job completed while daemon was down! Use marker data.
+                logger.info(
+                    f"Recovered run {run.id} for job '{run.job_id}' from completion marker "
+                    f"(exit code: {marker.exit_code})"
+                )
+                run.finished_at = marker.timestamp
+                run.exit_code = marker.exit_code
+                if marker.exit_code == 0:
+                    run.error = None
+                else:
+                    run.error = f"Exit code: {marker.exit_code} (recovered from marker)"
+                
+                # Calculate duration
+                if run.started_at:
+                    run.duration_seconds = (marker.timestamp - run.started_at).total_seconds()
+                
+                self.db.update_run(run)
+                
+                # Update job state
+                state = self.db.get_state(run.job_id) or JobState(job_id=run.job_id)
+                state.status = JobStatus.STOPPED if marker.exit_code == 0 else JobStatus.FAILED
+                state.stopped_at = marker.timestamp
+                state.last_exit_code = marker.exit_code
+                state.pid = None
+                self.db.save_state(state)
+                
+                # Clean up marker
+                wrapper_manager.cleanup_marker(run.job_id, run.id)
+                wrapper_manager.cleanup_heartbeat(run.job_id, run.id)
+                
+                recovered += 1
+                continue
+            
+            # No marker - check heartbeat to see if it died recently or a while ago
+            heartbeat = wrapper_manager.check_heartbeat(run.job_id, run.id)
+            
+            if heartbeat is not None:
+                if heartbeat.is_alive:
+                    # Recent heartbeat but no process - very recent crash?
+                    # This shouldn't happen normally, process might just be exiting
+                    logger.warning(
+                        f"Job '{run.job_id}' run {run.id} has recent heartbeat but no process, "
+                        f"waiting for completion marker..."
+                    )
+                    continue  # Give it a chance to write marker
+                else:
+                    # Stale heartbeat - job died mid-execution
+                    logger.info(
+                        f"Job '{run.job_id}' run {run.id} died mid-execution "
+                        f"(last heartbeat: {heartbeat.age_seconds:.1f}s ago)"
+                    )
+                    run.error = f"Killed mid-execution (no heartbeat for {heartbeat.age_seconds:.0f}s)"
+            
+            # Process is dead, no marker = zombie run
             logger.info(f"Cleaning up zombie run {run.id} for job '{run.job_id}'")
             run.finished_at = datetime.now()
             run.exit_code = -15  # SIGTERM
-            run.error = "Killed (daemon restart)"
+            if not run.error:
+                run.error = "Killed (daemon restart)"
             self.db.update_run(run)
+            
+            # Clean up any stale heartbeat
+            wrapper_manager.cleanup_heartbeat(run.job_id, run.id)
+            
             cleaned += 1
         
+        if recovered:
+            logger.info(f"Recovered {recovered} completed runs from markers")
         if cleaned:
             logger.info(f"Cleaned up {cleaned} zombie runs from previous session")
 
