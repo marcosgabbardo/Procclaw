@@ -51,6 +51,7 @@ Access the dashboard at **http://localhost:9876** when the daemon is running.
 - 💾 **SQLite Logs**: Logs saved to SQLite after completion (configurable: keep/delete files)
 - ⏰ **Missed Run Catchup**: Scheduled jobs catch up if daemon was down (60 min grace period)
 - 🛡️ **Crash Recovery**: Jobs complete even if daemon dies (heartbeat + completion markers)
+- 🤖 **AI Self-Healing**: Automatic failure analysis and remediation via OpenClaw
 
 ### Enterprise Features
 
@@ -796,6 +797,132 @@ init_wrapper_manager(
 )
 ```
 
+## AI Self-Healing
+
+ProcClaw can automatically analyze failed jobs and attempt to fix them using AI (via OpenClaw integration).
+
+### How It Works
+
+When a job fails with self-healing enabled:
+
+1. **Collect Context**: Logs, stderr, exit code, run history, job config
+2. **Spawn AI Session**: OpenClaw analyzes the failure
+3. **Diagnosis**: AI identifies root cause and category
+4. **Remediation**: If fixable, AI applies allowed actions
+5. **Validation**: Job is automatically re-run to verify the fix
+
+```
+Job fails → Context collected → AI analyzes → Fix applied → Job re-runs → ✅ Fixed
+                                    ↓
+                              Not fixable → Human notified
+```
+
+### Configuration
+
+Enable self-healing per job in `jobs.yaml`:
+
+```yaml
+jobs:
+  my-job:
+    name: My Job
+    cmd: python script.py
+    self_healing:
+      enabled: true
+      
+      # What to include in analysis
+      analysis:
+        include_logs: true
+        include_stderr: true
+        include_history: 5       # Last N runs
+        log_lines: 200           # Lines to include
+      
+      # What the AI can do
+      remediation:
+        max_attempts: 3
+        allowed_actions:
+          - analyze_only        # Just diagnose, don't fix
+          - restart_job         # Retry the job
+          - modify_env          # Change environment variables
+          - modify_config       # Edit job config
+          - run_command         # Execute shell commands
+          - edit_file           # Modify files (with restrictions)
+        forbidden_paths:        # Additional paths to protect
+          - ~/secrets/
+          - ~/.credentials/
+      
+      # Notification settings
+      notify:
+        on_success: true        # Alert when AI fixes a job
+        on_failure: true        # Alert when AI can't fix
+        channels: [whatsapp]
+```
+
+### Allowed Actions
+
+| Action | Description | Risk Level |
+|--------|-------------|------------|
+| `analyze_only` | Diagnose without making changes | None |
+| `restart_job` | Retry the failed job | Low |
+| `modify_env` | Change environment variables | Low |
+| `modify_config` | Edit job configuration | Medium |
+| `run_command` | Execute shell commands | Medium |
+| `edit_file` | Modify files in allowed paths | High |
+
+### Safety Guardrails
+
+The AI **cannot** modify these paths (hardcoded, not configurable):
+
+- ProcClaw source code (`~/.openclaw/workspace/projects/procclaw/`)
+- OpenClaw source code (`node_modules/openclaw/`)
+- SSH keys (`~/.ssh/`)
+- GPG keys (`~/.gnupg/`)
+- System directories (`/etc/`, `/usr/`, `/bin/`, `/sbin/`)
+- OpenClaw config (`~/.openclaw/openclaw.json`)
+
+### Healing Results
+
+The AI reports its findings:
+
+```json
+{
+  "status": "fixed",
+  "analysis": {
+    "root_cause": "Missing dependency: pandas not installed",
+    "confidence": "high",
+    "category": "dependency_error"
+  },
+  "actions_taken": [
+    {"action": "run_command", "command": "pip install pandas"}
+  ],
+  "should_retry": true
+}
+```
+
+### Healing Statuses
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Waiting for AI analysis |
+| `in_progress` | AI is analyzing/fixing |
+| `fixed` | Problem fixed, job re-running |
+| `manual_required` | AI can't fix, human needed |
+| `gave_up` | Max attempts reached |
+
+### Example: Auto-fixing a Python Import Error
+
+```
+❌ Job 'data-pipeline' failed (exit 1)
+   Error: ModuleNotFoundError: No module named 'requests'
+
+🤖 AI Self-Healing activated...
+   → Root cause: Missing Python package
+   → Confidence: high
+   → Action: pip install requests
+   
+✅ Fix applied, re-running job...
+✅ Job 'data-pipeline' completed successfully
+```
+
 ## Directory Structure
 
 ```
@@ -834,7 +961,19 @@ init_wrapper_manager(
 | Web UI built-in | ✅ | ❌ (flower) | ✅ | ✅ | ❌ |
 | Single binary | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Python native | ✅ | ✅ | ❌ | ✅ | ❌ |
+| Crash recovery | ✅ | ⚠️ (acks_late) | ⚠️ | ❌ | ❌ |
+| AI self-healing | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Setup complexity | Low | High | Low | Medium | Low |
+
+### Crash Recovery Comparison
+
+| System | Daemon crash recovery | Job completion tracking |
+|--------|----------------------|------------------------|
+| **ProcClaw** | ✅ Heartbeat + markers | ✅ Exit code preserved |
+| **Celery** | ⚠️ Only with acks_late | ⚠️ Task may be re-executed |
+| **PM2** | ⚠️ PID file only | ❌ Lost if daemon dies |
+| **Supervisor** | ❌ Re-runs everything | ❌ Lost if daemon dies |
+| **systemd** | ❌ No job-level tracking | ❌ Service-level only |
 
 ## Troubleshooting
 
