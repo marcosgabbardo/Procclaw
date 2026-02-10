@@ -183,6 +183,7 @@
                     <select x-model="filters.status" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
                         <option value="">All Status</option>
                         <option value="running">Running</option>
+                        <option value="queued">Queued</option>
                         <option value="planned">Planned</option>
                         <option value="stopped">Stopped</option>
                         <option value="failed">Failed</option>
@@ -191,6 +192,13 @@
                         <option value="">All Tags</option>
                         <template x-for="tag in allTags" :key="tag">
                             <option :value="tag" x-text="tag"></option>
+                        </template>
+                    </select>
+                    <select x-model="filters.queue" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                        <option value="">All Queues</option>
+                        <option value="__none__">No Queue</option>
+                        <template x-for="q in allQueues" :key="q">
+                            <option :value="q" x-text="q"></option>
                         </template>
                     </select>
                     <div class="ml-auto flex gap-2">
@@ -256,9 +264,19 @@
                                             <template x-if="col.id === 'status'">
                                                 <div class="flex items-center gap-2">
                                                     <span class="w-2 h-2 rounded-full"
-                                                        :class="job.status === 'running' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'paused' ? 'bg-yellow-500' : 'bg-dark-500'">
+                                                        :class="job.status === 'running' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'paused' ? 'bg-yellow-500' : job.status === 'queued' ? 'bg-indigo-500' : 'bg-dark-500'">
                                                     </span>
-                                                    <span class="text-sm" :class="!job.enabled && 'text-dark-500'" x-text="job.enabled ? job.status : 'disabled'"></span>
+                                                    <span class="text-sm" :class="!job.enabled && 'text-dark-500'">
+                                                        <span x-text="job.enabled ? job.status : 'disabled'"></span>
+                                                        <span x-show="job.status === 'queued' && job.queue_status" class="text-dark-400 text-xs ml-1" x-text="'#' + (job.queue_status?.position + 1)"></span>
+                                                    </span>
+                                                </div>
+                                            </template>
+                                            <!-- Queue -->
+                                            <template x-if="col.id === 'queue'">
+                                                <div class="flex items-center gap-1">
+                                                    <span x-show="job.queue" class="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300" x-text="job.queue"></span>
+                                                    <span x-show="!job.queue" class="text-dark-500">-</span>
                                                 </div>
                                             </template>
                                             <!-- Last Run -->
@@ -331,8 +349,10 @@
                                     <!-- Actions -->
                                     <td class="px-4 py-3 text-right" @click.stop>
                                         <div class="flex justify-end gap-0.5">
-                                            <button @click="startJob(job.id)" x-show="job.status !== 'running' && job.status !== 'paused'" 
+                                            <button @click="startJob(job.id)" x-show="job.status !== 'running' && job.status !== 'paused' && job.status !== 'queued'" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Start">▶</button>
+                                            <button @click="forceStartJob(job.id)" x-show="job.status === 'queued'" 
+                                                class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-orange-400 text-sm" title="Force Start (bypass queue)">⚡</button>
                                             <button @click="stopJob(job.id)" x-show="job.status === 'running'" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Stop">◼</button>
                                             <button @click="pauseJob(job.id)" x-show="!job.paused && (job.type === 'scheduled' || job.type === 'oneshot' || job.type === 'openclaw' || job.type === 'continuous')" 
@@ -367,7 +387,7 @@
                                 <div class="text-xs text-dark-400" x-text="job.name"></div>
                             </div>
                             <div class="flex items-center gap-2">
-                                <span class="w-2 h-2 rounded-full" :class="job.status === 'running' ? 'bg-green-500 animate-pulse-slow' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'paused' ? 'bg-yellow-500' : 'bg-dark-500'"></span>
+                                <span class="w-2 h-2 rounded-full" :class="job.status === 'running' ? 'bg-green-500 animate-pulse-slow' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'paused' ? 'bg-yellow-500' : job.status === 'queued' ? 'bg-indigo-500 animate-pulse-slow' : 'bg-dark-500'"></span>
                                 <span class="text-xs px-2 py-1 rounded-full" :class="getTypeClass(job.type)" x-text="job.type"></span>
                             </div>
                         </div>
@@ -390,7 +410,8 @@
                                 <span x-show="job.dependents?.length > 0" class="text-green-400">➡️ <span x-text="job.dependents?.length"></span></span>
                             </div>
                             <div class="flex gap-0.5">
-                                <button @click="startJob(job.id)" x-show="job.status !== 'running' && job.status !== 'paused'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Start">▶</button>
+                                <button @click="startJob(job.id)" x-show="job.status !== 'running' && job.status !== 'paused' && job.status !== 'queued'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Start">▶</button>
+                                <button @click="forceStartJob(job.id)" x-show="job.status === 'queued'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-orange-400 text-sm" title="Force Start (bypass queue)">⚡</button>
                                 <button @click="stopJob(job.id)" x-show="job.status === 'running'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Stop">◼</button>
                                 <button @click="pauseJob(job.id)" x-show="!job.paused && (job.type === 'scheduled' || job.type === 'oneshot' || job.type === 'openclaw' || job.type === 'continuous')" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-yellow-400 text-sm" title="Pause">⏸</button>
                                 <button @click="resumeJob(job.id)" x-show="job.paused" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Resume">▶️</button>
@@ -1388,8 +1409,9 @@
                             <div class="bg-dark-700 rounded-lg p-3">
                                 <div class="text-xs text-dark-400 mb-1">Status</div>
                                 <div class="flex items-center gap-2">
-                                    <span class="w-2 h-2 rounded-full" :class="selectedJob.status === 'running' ? 'bg-green-500' : selectedJob.status === 'failed' ? 'bg-red-500' : selectedJob.status === 'planned' ? 'bg-cyan-500' : selectedJob.status === 'paused' ? 'bg-yellow-500' : 'bg-dark-500'"></span>
+                                    <span class="w-2 h-2 rounded-full" :class="selectedJob.status === 'running' ? 'bg-green-500' : selectedJob.status === 'failed' ? 'bg-red-500' : selectedJob.status === 'planned' ? 'bg-cyan-500' : selectedJob.status === 'paused' ? 'bg-yellow-500' : selectedJob.status === 'queued' ? 'bg-indigo-500' : 'bg-dark-500'"></span>
                                     <span x-text="selectedJob.status"></span>
+                                    <span x-show="selectedJob.status === 'queued' && selectedJob.queue_status" class="text-indigo-300 text-xs" x-text="'(#' + (selectedJob.queue_status?.position + 1) + ' in ' + selectedJob.queue + ')'"></span>
                                 </div>
                             </div>
                             <div class="bg-dark-700 rounded-lg p-3">
@@ -1494,8 +1516,10 @@
                         </div>
 
                         <div class="flex flex-wrap gap-2 pt-4 border-t border-dark-700">
-                            <button @click="startJob(selectedJob.id)" x-show="selectedJob.status !== 'running'"
+                            <button @click="startJob(selectedJob.id)" x-show="selectedJob.status !== 'running' && selectedJob.status !== 'queued'"
                                 class="flex-1 min-w-[80px] py-2 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-lg transition">▶️ Start</button>
+                            <button @click="forceStartJob(selectedJob.id)" x-show="selectedJob.status === 'queued'"
+                                class="flex-1 min-w-[80px] py-2 bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 rounded-lg transition" title="Bypass queue and start immediately">⚡ Force Start</button>
                             <button @click="stopJob(selectedJob.id)" x-show="selectedJob.status === 'running'"
                                 class="flex-1 min-w-[80px] py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">⏹️ Stop</button>
                             <button @click="forceRunJob(selectedJob.id)" x-show="(selectedJob.schedule || selectedJob.run_at) && selectedJob.status !== 'running'"
@@ -1612,6 +1636,18 @@
                     <div>
                         <label class="block text-sm text-dark-400 mb-1">Tags (comma-separated)</label>
                         <input type="text" x-model="editJob.tagsStr" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" @input="syncEditFormToYaml()">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-dark-400 mb-1">Execution Queue <span class="text-dark-500">(jobs in same queue run sequentially)</span></label>
+                        <div class="flex gap-2">
+                            <input type="text" x-model="editJob.queue" list="queueList" class="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="e.g. openclaw" @input="syncEditFormToYaml()">
+                            <datalist id="queueList">
+                                <template x-for="q in allQueues" :key="q">
+                                    <option :value="q"></option>
+                                </template>
+                            </datalist>
+                            <button type="button" @click="editJob.queue = ''; syncEditFormToYaml()" class="px-3 py-2 bg-dark-600 hover:bg-dark-500 rounded-lg text-dark-400 text-sm" title="Clear queue">✕</button>
+                        </div>
                     </div>
                     
                     <!-- Self-Healing Settings -->
@@ -1906,6 +1942,7 @@
                 { id: 'id', label: 'Job', visible: true, sortKey: 'id' },
                 { id: 'type', label: 'Type', visible: true, sortKey: 'type' },
                 { id: 'status', label: 'Status', visible: true, sortKey: 'status' },
+                { id: 'queue', label: 'Queue', visible: true, sortKey: 'queue' },
                 { id: 'last_run', label: 'Last Run', visible: true, sortKey: 'started_at' },
                 { id: 'next_run', label: 'Next Run', visible: true, sortKey: 'next_run' },
                 { id: 'tags', label: 'Tags', visible: true, sortable: false },
@@ -1965,7 +2002,7 @@
                 allColumns: columns,
                 
                 // Filters & Sort
-                filters: { search: '', type: '', status: '', tag: '' },
+                filters: { search: '', type: '', status: '', tag: '', queue: '' },
                 sortBy: 'next_run',
                 sortDir: 'asc',
                 selectedLogJob: 'daemon',
@@ -1983,7 +2020,7 @@
                 createMode: 'form',
                 fullYamlContent: '',
                 fullYamlPath: '',
-                editJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: '', schedule: '', run_at: '', tagsStr: '', cronPreset: 'custom', cronMinutes: 5, cronHours: 1, cronTime: '09:00', cronDays: [1], cronDayOfMonth: 1 },
+                editJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: '', schedule: '', run_at: '', tagsStr: '', queue: '', cronPreset: 'custom', cronMinutes: 5, cronHours: 1, cronTime: '09:00', cronDays: [1], cronDayOfMonth: 1 },
                 editJobYaml: '',
                 editMode: 'form',
                 
@@ -2009,6 +2046,14 @@
                         if (this.filters.type && job.type !== this.filters.type) return false;
                         if (this.filters.status && job.status !== this.filters.status) return false;
                         if (this.filters.tag && !(job.tags || []).includes(this.filters.tag)) return false;
+                        // Queue filter
+                        if (this.filters.queue) {
+                            if (this.filters.queue === '__none__') {
+                                if (job.queue) return false;
+                            } else {
+                                if (job.queue !== this.filters.queue) return false;
+                            }
+                        }
                         return true;
                     });
                     
@@ -2043,6 +2088,12 @@
                     const tags = new Set();
                     this.jobs.forEach(job => (job.tags || []).forEach(tag => tags.add(tag)));
                     return Array.from(tags).sort();
+                },
+
+                get allQueues() {
+                    const queues = new Set();
+                    this.jobs.forEach(job => { if (job.queue) queues.add(job.queue); });
+                    return Array.from(queues).sort();
                 },
 
                 get filteredLogs() {
@@ -2303,6 +2354,12 @@
                     await this.refresh();
                 },
 
+                async forceStartJob(id) {
+                    const res = await this.api(`/jobs/${id}/force-start`, 'POST');
+                    this.toast(res.success ? `⚡ Force-started ${id} (queue bypassed)` : `Failed: ${res.message}`, res.success ? 'success' : 'error');
+                    await this.refresh();
+                },
+
                 async forceRunJob(id) {
                     const res = await this.api(`/jobs/${id}/start`, 'POST');
                     this.toast(res.success ? `⚡ Force started ${id}` : `Failed: ${res.message}`, res.success ? 'success' : 'error');
@@ -2330,6 +2387,7 @@
                         schedule: job.schedule || '',
                         run_at: runAtFormatted,
                         tagsStr: (job.tags || []).join(', '),
+                        queue: job.queue || '',
                         cronPreset: 'custom',
                         cronMinutes: 5,
                         cronHours: 1,
@@ -2457,6 +2515,7 @@
                         schedule: this.editJob.type === 'scheduled' ? (this.editJob.schedule || null) : null,
                         run_at: this.editJob.type === 'oneshot' ? (this.editJob.run_at || null) : null,
                         tags: this.editJob.tagsStr.split(',').map(t => t.trim()).filter(t => t),
+                        queue: this.editJob.queue || null,
                         self_healing: this.editJob.self_healing.enabled ? {
                             enabled: true,
                             analysis: this.editJob.self_healing.analysis,
