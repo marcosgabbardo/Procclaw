@@ -2184,6 +2184,21 @@ class Supervisor:
         # Load scheduled jobs into scheduler
         self._scheduler.update_jobs(self.jobs.get_enabled_jobs())
 
+        # Restore paused state from database for scheduled jobs
+        for job_id in self.jobs.get_enabled_jobs():
+            state = self.db.get_state(job_id)
+            if state and state.paused:
+                self._scheduler.pause_job(job_id)
+                logger.info(f"Restored paused state for scheduled job '{job_id}'")
+
+        # Restore pending retries from database
+        restored_retries = self._retry_manager.restore_pending_retries(
+            jobs=self.jobs.get_enabled_jobs(),
+            get_state=self.db.get_state
+        )
+        if restored_retries > 0:
+            logger.info(f"Restored {restored_retries} pending retries from database")
+
         # Clean up zombie runs from previous session (runs marked as running but process is dead)
         self._cleanup_zombie_runs()
 

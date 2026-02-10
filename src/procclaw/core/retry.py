@@ -79,6 +79,44 @@ class RetryManager:
         self._rate_limited_jobs: set[str] = set()  # Jobs currently rate-limited
         self._running = False
 
+    def restore_pending_retries(
+        self, 
+        jobs: dict[str, "JobConfig"], 
+        get_state: Callable[[str], "JobState | None"]
+    ) -> int:
+        """Restore pending retries from database state after daemon restart.
+        
+        Args:
+            jobs: Dict of job configs
+            get_state: Function to get job state from database
+            
+        Returns:
+            Number of retries restored
+        """
+        from procclaw.models import JobConfig, JobState
+        
+        restored = 0
+        now = datetime.now()
+        
+        for job_id, job in jobs.items():
+            if not job.retry.enabled:
+                continue
+                
+            state = get_state(job_id)
+            if state and state.next_retry and state.next_retry > now:
+                # Job has a pending retry scheduled
+                retry_info = RetryInfo(
+                    retry_time=state.next_retry,
+                    attempt=state.retry_count + 1,  # next attempt number
+                    config=job.retry,
+                    is_rate_limit=False,  # assume standard retry on restart
+                )
+                self._pending_retries[job_id] = retry_info
+                restored += 1
+                logger.info(f"Restored pending retry for '{job_id}' at {state.next_retry}")
+        
+        return restored
+
     def is_rate_limit_error(self, job_id: str, error_log: str | None = None) -> bool:
         """Check if a job failure was due to rate limiting.
         
