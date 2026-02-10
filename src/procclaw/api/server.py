@@ -801,6 +801,7 @@ def create_app() -> FastAPI:
         
         # If running (continuous job), stop it first
         if supervisor.is_job_running(job_id):
+            supervisor._manually_stopped.add(job_id)  # Mark as manual to avoid "failed" status
             supervisor.stop_job(job_id)
         
         # Update state
