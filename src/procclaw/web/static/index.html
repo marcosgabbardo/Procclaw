@@ -2521,7 +2521,7 @@
                         cmd: this.editJob.cmd,
                         cwd: this.editJob.cwd || null,
                         type: this.editJob.type,
-                        schedule: this.editJob.type === 'scheduled' ? (this.editJob.schedule || null) : null,
+                        schedule: (this.editJob.type === 'scheduled' || this.editJob.type === 'openclaw') ? (this.editJob.schedule || null) : null,
                         run_at: this.editJob.type === 'oneshot' ? (this.editJob.run_at || null) : null,
                         tags: this.editJob.tagsStr.split(',').map(t => t.trim()).filter(t => t),
                         queue: this.editJob.queue || null,
