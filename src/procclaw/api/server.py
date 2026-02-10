@@ -114,6 +114,9 @@ class JobSummary(BaseModel):
     description: str | None = None
     schedule: str | None = None
     run_at: str | None = None
+    # Execution queue
+    queue: str | None = None
+    queue_status: dict | None = None
 
 
 class JobDetail(JobSummary):
@@ -868,6 +871,133 @@ def create_app() -> FastAPI:
             message=f"Job '{job_id}' resumed",
             job_id=job_id,
         )
+
+    # ============ Queue Endpoints ============
+
+    @app.get("/api/v1/queues")
+    async def list_queues(
+        _auth: bool = Depends(verify_token),
+    ):
+        """List all active execution queues."""
+        supervisor = get_supervisor()
+        queues = supervisor._queue_manager.get_all_queues()
+        return {
+            "queues": queues,
+            "total": len(queues),
+        }
+
+    @app.get("/api/v1/queues/{queue_name}")
+    async def get_queue(
+        queue_name: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get details of a specific queue."""
+        supervisor = get_supervisor()
+        info = supervisor._queue_manager.get_queue_info(queue_name)
+        if not info:
+            raise HTTPException(status_code=404, detail=f"Queue '{queue_name}' not found or not active")
+        return info
+
+    @app.get("/api/v1/queues/{queue_name}/jobs")
+    async def get_queue_jobs(
+        queue_name: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get all jobs in a specific queue (running + pending)."""
+        supervisor = get_supervisor()
+        info = supervisor._queue_manager.get_queue_info(queue_name)
+        if not info:
+            raise HTTPException(status_code=404, detail=f"Queue '{queue_name}' not found or not active")
+        
+        jobs = []
+        if info["running"]:
+            jobs.append({
+                "job_id": info["running"],
+                "status": "running",
+                "since": info["running_since"],
+            })
+        for pending in info["pending"]:
+            jobs.append({
+                "job_id": pending["job_id"],
+                "status": "queued",
+                "position": pending["position"],
+                "queued_at": pending["queued_at"],
+                "trigger": pending["trigger"],
+            })
+        
+        return {
+            "queue": queue_name,
+            "jobs": jobs,
+            "total": len(jobs),
+        }
+
+    @app.post("/api/v1/jobs/{job_id}/force-start", response_model=ActionResponse)
+    async def force_start_job(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Force start a job, bypassing execution queue.
+        
+        Use when you need to run a job immediately regardless of queue state.
+        Note: This may cause concurrent execution of jobs in the same queue.
+        """
+        supervisor = get_supervisor()
+        
+        job = supervisor.jobs.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        if not job.enabled:
+            raise HTTPException(status_code=400, detail=f"Job '{job_id}' is disabled")
+        
+        if supervisor.is_job_running(job_id):
+            raise HTTPException(status_code=400, detail=f"Job '{job_id}' is already running")
+        
+        # Remove from queue if pending
+        if job.queue:
+            supervisor._queue_manager.remove_from_queue(job_id, job)
+        
+        # Start with _from_queue=True to skip queue check
+        success = supervisor.start_job(job_id, trigger="force", _from_queue=True)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail=f"Failed to force-start job '{job_id}'")
+        
+        state = supervisor.db.get_state(job_id)
+        pid = state.pid if state else None
+        
+        return ActionResponse(
+            success=True,
+            message=f"Job '{job_id}' force-started (queue bypassed)",
+            job_id=job_id,
+            pid=pid,
+        )
+
+    @app.delete("/api/v1/queues/{queue_name}")
+    async def clear_queue(
+        queue_name: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Clear all pending jobs from a queue.
+        
+        This removes all waiting jobs from the queue. Currently running job is not affected.
+        """
+        supervisor = get_supervisor()
+        
+        info = supervisor._queue_manager.get_queue_info(queue_name)
+        if not info:
+            raise HTTPException(status_code=404, detail=f"Queue '{queue_name}' not found or not active")
+        
+        count = supervisor._queue_manager.clear_queue(queue_name)
+        
+        return {
+            "success": True,
+            "message": f"Cleared {count} pending jobs from queue '{queue_name}'",
+            "queue": queue_name,
+            "cleared_count": count,
+        }
+
+    # ============ End Queue Endpoints ============
 
     @app.delete("/api/v1/jobs/{job_id}")
     async def delete_job(
