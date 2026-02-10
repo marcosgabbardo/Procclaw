@@ -1279,6 +1279,108 @@ def create_app() -> FastAPI:
             "backup": str(backup_path),
         }
 
+    # Auth Config Endpoints
+
+    @app.get("/api/v1/config/auth")
+    async def get_auth_config(_auth: bool = Depends(verify_token)):
+        """Get API authentication configuration."""
+        import yaml
+        from procclaw.config import DEFAULT_CONFIG_FILE
+        
+        config_data = {}
+        if DEFAULT_CONFIG_FILE.exists():
+            with open(DEFAULT_CONFIG_FILE) as f:
+                config_data = yaml.safe_load(f) or {}
+        
+        enabled = config_data.get("api", {}).get("auth", {}).get("enabled", False)
+        token = config_data.get("api", {}).get("auth", {}).get("token", "")
+        
+        # Mask token for display
+        token_masked = ""
+        if token:
+            token_masked = token[:4] + "*" * (len(token) - 8) + token[-4:] if len(token) > 8 else "****"
+        
+        return {
+            "enabled": enabled,
+            "token": token,
+            "tokenMasked": token_masked,
+        }
+
+    @app.post("/api/v1/config/auth/enable")
+    async def enable_auth(
+        data: dict = None,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Enable API authentication with a new or provided token."""
+        import secrets
+        import yaml
+        from procclaw.config import DEFAULT_CONFIG_FILE
+        
+        # Generate token if not provided
+        token = data.get("token") if data else None
+        if not token:
+            token = secrets.token_urlsafe(32)
+        
+        # Load current config
+        config_data = {}
+        if DEFAULT_CONFIG_FILE.exists():
+            with open(DEFAULT_CONFIG_FILE) as f:
+                config_data = yaml.safe_load(f) or {}
+        
+        # Update auth config
+        if "api" not in config_data:
+            config_data["api"] = {}
+        if "auth" not in config_data["api"]:
+            config_data["api"]["auth"] = {}
+        
+        config_data["api"]["auth"]["enabled"] = True
+        config_data["api"]["auth"]["token"] = token
+        
+        # Save config
+        with open(DEFAULT_CONFIG_FILE, "w") as f:
+            yaml.dump(config_data, f, default_flow_style=False)
+        
+        # Mask token for response
+        token_masked = token[:4] + "*" * (len(token) - 8) + token[-4:] if len(token) > 8 else "****"
+        
+        return {
+            "success": True,
+            "message": "Authentication enabled. Restart daemon to apply.",
+            "token": token,
+            "tokenMasked": token_masked,
+            "restartRequired": True,
+        }
+
+    @app.post("/api/v1/config/auth/disable")
+    async def disable_auth(_auth: bool = Depends(verify_token)):
+        """Disable API authentication."""
+        import yaml
+        from procclaw.config import DEFAULT_CONFIG_FILE
+        
+        # Load current config
+        config_data = {}
+        if DEFAULT_CONFIG_FILE.exists():
+            with open(DEFAULT_CONFIG_FILE) as f:
+                config_data = yaml.safe_load(f) or {}
+        
+        # Update auth config
+        if "api" not in config_data:
+            config_data["api"] = {}
+        if "auth" not in config_data["api"]:
+            config_data["api"]["auth"] = {}
+        
+        config_data["api"]["auth"]["enabled"] = False
+        
+        # Save config
+        with open(DEFAULT_CONFIG_FILE, "w") as f:
+            yaml.dump(config_data, f, default_flow_style=False)
+        
+        return {
+            "success": True,
+            "message": "Authentication disabled. Restart daemon to apply.",
+            "restartRequired": True,
+        }
+
     # DLQ Endpoints
 
     @app.get("/api/v1/dlq")
