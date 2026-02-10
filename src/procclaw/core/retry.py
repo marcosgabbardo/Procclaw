@@ -107,7 +107,7 @@ class RetryManager:
                 # Job has a pending retry scheduled
                 retry_info = RetryInfo(
                     retry_time=state.next_retry,
-                    attempt=state.retry_count + 1,  # next attempt number
+                    attempt=state.retry_attempt + 1,  # next attempt number
                     config=job.retry,
                     is_rate_limit=False,  # assume standard retry on restart
                 )
