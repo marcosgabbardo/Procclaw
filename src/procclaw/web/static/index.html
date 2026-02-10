@@ -452,10 +452,15 @@
                         <option value="dependency">Dependency</option>
                         <option value="api">API</option>
                     </select>
+                    <select x-model="runsFilter.hasSession" @change="runsPage = 1; selectedRuns = []" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                        <option value="">All Runs</option>
+                        <option value="yes">🧠 With AI Session</option>
+                        <option value="no">No AI Session</option>
+                    </select>
                     <button @click="loadRuns(); loadHealingQueue()" class="px-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm">🔄 Refresh</button>
                     <span class="text-sm text-dark-400 ml-auto">
-                        Showing <span class="text-dark-200" x-text="((runsPage-1)*runsPerPage+1) + '-' + Math.min(runsPage*runsPerPage, runs.length)"></span> 
-                        of <span class="text-dark-200" x-text="runs.length"></span>
+                        Showing <span class="text-dark-200" x-text="((runsPage-1)*runsPerPage+1) + '-' + Math.min(runsPage*runsPerPage, filteredRuns.length)"></span> 
+                        of <span class="text-dark-200" x-text="filteredRuns.length"></span>
                     </span>
                 </div>
                 
@@ -484,11 +489,36 @@
                     </div>
                 </div>
                 
+                <!-- Bulk Actions -->
+                <div x-show="selectedRuns.length > 0" class="mx-4 mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="text-red-400">🗑️</span>
+                        <span class="text-sm text-red-300">
+                            <span class="font-medium" x-text="selectedRuns.length"></span> run(s) selected
+                        </span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="selectedRuns = []" class="px-3 py-1.5 text-sm bg-dark-600 hover:bg-dark-500 rounded-lg text-dark-300">
+                            Clear
+                        </button>
+                        <button @click="bulkDeleteRuns()" class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-500 rounded-lg text-white flex items-center gap-1">
+                            <span>🗑️</span> Delete Selected
+                        </button>
+                    </div>
+                </div>
+                
                 <!-- Table -->
                 <div class="overflow-x-auto">
                 <table class="w-full min-w-[800px]">
                     <thead class="bg-dark-700">
                         <tr>
+                            <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3 w-10">
+                                <input type="checkbox" 
+                                    :checked="selectedRuns.length > 0 && selectedRuns.length === paginatedRuns.length"
+                                    :indeterminate="selectedRuns.length > 0 && selectedRuns.length < paginatedRuns.length"
+                                    @change="toggleSelectAllRuns($event)"
+                                    class="w-4 h-4 rounded border-dark-500 bg-dark-700 text-accent-500 focus:ring-accent-500 cursor-pointer">
+                            </th>
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Job</th>
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Status</th>
                             <th class="text-left text-xs font-medium text-dark-400 uppercase px-4 py-3">Trigger</th>
@@ -502,7 +532,13 @@
                     </thead>
                     <tbody class="divide-y divide-dark-700">
                         <template x-for="run in paginatedRuns" :key="run.id">
-                            <tr class="hover:bg-dark-750 transition cursor-pointer" @click="selectRun(run)">
+                            <tr class="hover:bg-dark-750 transition cursor-pointer" :class="selectedRuns.includes(run.id) ? 'bg-red-500/5' : ''" @click="selectRun(run)">
+                                <td class="px-4 py-3" @click.stop>
+                                    <input type="checkbox" 
+                                        :checked="selectedRuns.includes(run.id)"
+                                        @change="toggleRunSelection(run.id)"
+                                        class="w-4 h-4 rounded border-dark-500 bg-dark-700 text-accent-500 focus:ring-accent-500 cursor-pointer">
+                                </td>
                                 <td class="px-4 py-3">
                                     <div class="font-medium text-dark-100" x-text="run.job_id"></div>
                                     <div class="text-xs text-dark-400" x-text="run.job_name || ''"></div>
@@ -679,13 +715,26 @@
                         <p class="text-sm text-dark-400">
                             <span x-text="sessionRun?.job_id"></span> • 
                             <span x-text="sessionMessages.length"></span> messages
+                            <span x-show="sessionSearch" class="text-orange-400">
+                                • <span x-text="filteredSessionMessages.length"></span> matching
+                            </span>
                         </p>
                     </div>
                     <button @click="showSessionModal = false" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
                 </div>
                 
+                <!-- Search bar -->
+                <div class="px-4 pt-3">
+                    <div class="relative">
+                        <input type="text" x-model="sessionSearch" placeholder="Search in session..." 
+                            class="w-full bg-dark-700 border border-dark-600 rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-accent-500">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-dark-400">🔍</span>
+                        <button x-show="sessionSearch" @click="sessionSearch = ''" class="absolute right-3 top-1/2 -translate-y-1/2 text-dark-400 hover:text-dark-200">✕</button>
+                    </div>
+                </div>
+                
                 <div class="flex-1 overflow-auto p-4 space-y-4">
-                    <template x-for="(msg, idx) in sessionMessages" :key="idx">
+                    <template x-for="(msg, idx) in filteredSessionMessages" :key="idx">
                         <div class="rounded-lg p-3" 
                             :class="msg.role === 'user' ? 'bg-blue-500/10 border border-blue-500/30' : 
                                     msg.role === 'assistant' ? 'bg-green-500/10 border border-green-500/30' : 
@@ -1585,7 +1634,7 @@
                                 <option value="openclaw">OpenClaw</option>
                             </select>
                         </div>
-                        <div x-show="editJob.type === 'scheduled'" class="col-span-2">
+                        <div x-show="editJob.type === 'scheduled' || editJob.type === 'openclaw'" class="col-span-2">
                             <label class="block text-sm text-dark-400 mb-1">Schedule</label>
                             <div class="grid grid-cols-2 gap-2 mb-2">
                                 <select x-model="editJob.cronPreset" @change="updateCronFromPreset()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none text-sm">
@@ -1812,7 +1861,7 @@
                                     <option value="openclaw">OpenClaw</option>
                                 </select>
                             </div>
-                            <div x-show="newJob.type === 'scheduled'">
+                            <div x-show="newJob.type === 'scheduled' || newJob.type === 'openclaw'">
                                 <label class="block text-sm text-dark-400 mb-1">Schedule (cron)</label>
                                 <input type="text" x-model="newJob.schedule" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="0 * * * *" @input="syncFormToYaml()">
                             </div>
@@ -1980,15 +2029,17 @@
                 dlqStats: { pending: 0, total: 0 },
                 dlqEntries: [],
                 runs: [],
-                runsFilter: { job_id: '', status: 'completed', trigger: '' },
+                runsFilter: { job_id: '', status: 'completed', trigger: '', hasSession: '' },
                 runsPage: 1,
                 runsPerPage: 10,
+                selectedRuns: [],
                 selectedRun: null,
                 showRunLogs: false,
                 runLogContent: [],
                 showSessionModal: false,
                 sessionRun: null,
                 sessionMessages: [],
+                sessionSearch: '',
                 showHealingModal: false,
                 healingRun: null,
                 healingDetails: null,
@@ -2551,7 +2602,7 @@
                         cmd: this.newJob.cmd,
                         cwd: this.newJob.cwd || null,
                         type: this.newJob.type,
-                        schedule: this.newJob.type === 'scheduled' ? this.newJob.schedule : null,
+                        schedule: (this.newJob.type === 'scheduled' || this.newJob.type === 'openclaw') ? this.newJob.schedule : null,
                         run_at: this.newJob.type === 'oneshot' ? this.newJob.run_at : null,
                         tags: this.newJob.tags,
                         env: this.newJob.env || null,
@@ -2587,7 +2638,7 @@
                         if (job.cwd) yaml += `  cwd: ${job.cwd}\n`;
                         yaml += `  type: ${job.type}\n`;
                         yaml += `  enabled: true\n`;
-                        if (job.type === 'scheduled' && job.schedule) yaml += `  schedule: "${job.schedule}"\n`;
+                        if ((job.type === 'scheduled' || job.type === 'openclaw') && job.schedule) yaml += `  schedule: "${job.schedule}"\n`;
                         if (job.type === 'oneshot' && job.run_at) yaml += `  run_at: "${job.run_at}"\n`;
                         if (job.tags) {
                             yaml += `  tags:\n`;
@@ -2667,7 +2718,7 @@
                     if (job.cmd) yaml += `  cmd: ${job.cmd.includes(' ') ? '"' + job.cmd + '"' : job.cmd}\n`;
                     if (job.cwd) yaml += `  cwd: ${job.cwd}\n`;
                     yaml += `  type: ${job.type}\n`;
-                    if (job.type === 'scheduled' && job.schedule) yaml += `  schedule: "${job.schedule}"\n`;
+                    if ((job.type === 'scheduled' || job.type === 'openclaw') && job.schedule) yaml += `  schedule: "${job.schedule}"\n`;
                     if (job.type === 'oneshot' && job.run_at) yaml += `  run_at: "${job.run_at}"\n`;
                     if (job.tagsStr) {
                         yaml += `  tags:\n`;
@@ -2807,6 +2858,7 @@
                         }
                         this.runs = runs;
                         this.runsPage = 1; // Reset to first page on filter change
+                        this.selectedRuns = []; // Clear selection on filter change
                         
                         // Also load healing queue
                         this.loadHealingQueue();
@@ -2816,13 +2868,49 @@
                     }
                 },
 
+                get filteredRuns() {
+                    let filtered = this.runs;
+                    if (this.runsFilter.hasSession === 'yes') {
+                        filtered = filtered.filter(r => r.has_transcript);
+                    } else if (this.runsFilter.hasSession === 'no') {
+                        filtered = filtered.filter(r => !r.has_transcript);
+                    }
+                    return filtered;
+                },
+
+                get filteredSessionMessages() {
+                    if (!this.sessionSearch.trim()) return this.sessionMessages;
+                    const q = this.sessionSearch.toLowerCase();
+                    return this.sessionMessages.filter(msg => {
+                        // Search in string content
+                        if (typeof msg.content === 'string') {
+                            return msg.content.toLowerCase().includes(q);
+                        }
+                        // Search in array content
+                        if (Array.isArray(msg.content)) {
+                            return msg.content.some(part => {
+                                if (part.thinking) return part.thinking.toLowerCase().includes(q);
+                                if (part.text) return part.text.toLowerCase().includes(q);
+                                if (part.name) return part.name.toLowerCase().includes(q);
+                                if (part.arguments) return JSON.stringify(part.arguments).toLowerCase().includes(q);
+                                if (part.content) {
+                                    const c = typeof part.content === 'string' ? part.content : JSON.stringify(part.content);
+                                    return c.toLowerCase().includes(q);
+                                }
+                                return false;
+                            });
+                        }
+                        return false;
+                    });
+                },
+
                 get paginatedRuns() {
                     const start = (this.runsPage - 1) * this.runsPerPage;
-                    return this.runs.slice(start, start + this.runsPerPage);
+                    return this.filteredRuns.slice(start, start + this.runsPerPage);
                 },
 
                 get totalRunsPages() {
-                    return Math.ceil(this.runs.length / this.runsPerPage);
+                    return Math.ceil(this.filteredRuns.length / this.runsPerPage);
                 },
 
                 selectRun(run) {
@@ -2868,6 +2956,7 @@
                                 model: m.message.model,
                                 usage: m.message.usage
                             }));
+                        this.sessionSearch = '';
                         this.showSessionModal = true;
                         this.selectedRun = null;
                     } catch (e) {
@@ -2913,10 +3002,42 @@
                     try {
                         const res = await this.api(`/runs/${run.id}`, 'DELETE');
                         this.toast(res.message, 'success');
+                        this.selectedRuns = this.selectedRuns.filter(id => id !== run.id);
                         await this.loadRuns();
                     } catch (e) {
                         console.error('Error deleting run:', e);
                         this.toast('Error deleting run: ' + e.message, 'error');
+                    }
+                },
+
+                toggleRunSelection(runId) {
+                    if (this.selectedRuns.includes(runId)) {
+                        this.selectedRuns = this.selectedRuns.filter(id => id !== runId);
+                    } else {
+                        this.selectedRuns.push(runId);
+                    }
+                },
+
+                toggleSelectAllRuns(event) {
+                    if (event.target.checked) {
+                        this.selectedRuns = this.paginatedRuns.map(r => r.id);
+                    } else {
+                        this.selectedRuns = [];
+                    }
+                },
+
+                async bulkDeleteRuns() {
+                    const count = this.selectedRuns.length;
+                    if (!confirm(`Delete ${count} run(s)?\n\nThis will also delete all logs for these runs.`)) return;
+                    
+                    try {
+                        const res = await this.api('/runs/bulk-delete', 'POST', { run_ids: this.selectedRuns });
+                        this.toast(`Deleted ${res.deleted_count} runs`, 'success');
+                        this.selectedRuns = [];
+                        await this.loadRuns();
+                    } catch (e) {
+                        console.error('Error bulk deleting runs:', e);
+                        this.toast('Error deleting runs: ' + e.message, 'error');
                     }
                 },
 

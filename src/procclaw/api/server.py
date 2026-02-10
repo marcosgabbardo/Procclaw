@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 # Static files directory
 STATIC_DIR = Path(__file__).parent.parent / "web" / "static"
 
+
+# Request models
+class BulkDeleteRunsRequest(BaseModel):
+    """Request model for bulk delete runs."""
+    run_ids: list[int]
+
 # Global supervisor reference (set by daemon)
 _supervisor: "Supervisor | None" = None
 
@@ -624,6 +630,40 @@ def create_app() -> FastAPI:
             "success": True,
             "message": f"Run {run_id} deleted",
             "job_id": run.job_id,
+        }
+
+    @app.post("/api/v1/runs/bulk-delete")
+    async def bulk_delete_runs(
+        request: BulkDeleteRunsRequest,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Delete multiple job runs and their logs."""
+        supervisor = get_supervisor()
+        
+        deleted = []
+        not_found = []
+        
+        # Get all runs for validation
+        all_runs = supervisor.db.get_runs(limit=10000)
+        run_map = {r.id: r for r in all_runs}
+        
+        for run_id in request.run_ids:
+            if run_id not in run_map:
+                not_found.append(run_id)
+                continue
+            
+            # Delete logs first
+            supervisor.db.delete_logs(run_id=run_id)
+            # Delete the run
+            supervisor.db.delete_run(run_id)
+            deleted.append(run_id)
+        
+        return {
+            "success": True,
+            "deleted": deleted,
+            "deleted_count": len(deleted),
+            "not_found": not_found,
+            "message": f"Deleted {len(deleted)} runs",
         }
 
     @app.post("/api/v1/runs/{run_id}/extract-session")

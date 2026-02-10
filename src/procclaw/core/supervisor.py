@@ -2215,7 +2215,10 @@ class Supervisor:
             pid = state.pid if state else None
             
             if pid and self.check_pid(pid):
-                # Process is still running, skip
+                # Process is still running - ADOPT it so we can manage it
+                if run.job_id not in self._processes:
+                    logger.info(f"Adopting orphan process for '{run.job_id}' (PID {pid}, run {run.id})")
+                    self._adopt_orphan_process(run.job_id, pid)
                 continue
             
             # Process is not running - check completion marker first
@@ -2340,16 +2343,21 @@ class Supervisor:
         # Auto-start enabled continuous jobs
         for job_id, job in self.jobs.get_jobs_by_type(JobType.CONTINUOUS).items():
             if job.enabled:
+                # Skip if already adopted by _cleanup_zombie_runs
+                if job_id in self._processes and self._processes[job_id].is_running():
+                    logger.debug(f"Continuous job '{job_id}' already adopted, skipping auto-start")
+                    continue
+                    
                 state = self.db.get_state(job_id)
                 # Skip paused jobs
                 if state and state.paused:
                     logger.info(f"Skipping paused continuous job '{job_id}'")
                     continue
-                # Check if already running from previous session
+                # Check if already running from previous session (belt and suspenders)
                 if state and state.pid and self.check_pid(state.pid):
-                    logger.info(f"Job '{job_id}' still running from previous session (PID {state.pid}), adopting")
-                    # Adopt the orphaned process so we can manage it
-                    self._adopt_orphan_process(job_id, state.pid)
+                    if job_id not in self._processes:
+                        logger.info(f"Job '{job_id}' still running from previous session (PID {state.pid}), adopting")
+                        self._adopt_orphan_process(job_id, state.pid)
                     continue
                 # Not running - start it
                 logger.info(f"Auto-starting continuous job '{job_id}'")
