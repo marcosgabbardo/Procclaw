@@ -800,7 +800,8 @@ class Supervisor:
         # Allowed fields to update
         allowed_fields = {
             "name", "description", "tags", "cmd", "cwd", "env", "enabled",
-            "schedule", "run_at", "timezone", "type", "priority", "self_healing"
+            "schedule", "run_at", "timezone", "type", "priority", "self_healing",
+            "queue"  # Execution queue for sequential job execution
         }
         
         try:
@@ -1356,6 +1357,8 @@ class Supervisor:
             display_status = JobStatus.DISABLED.value
         elif is_paused:
             display_status = "paused"
+        elif state.status == JobStatus.QUEUED:
+            display_status = JobStatus.QUEUED.value
         elif state.status == JobStatus.RUNNING:
             display_status = JobStatus.RUNNING.value
         elif (job.schedule and next_run) or (job.run_at and next_run):

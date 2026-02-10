@@ -296,6 +296,8 @@ def create_app() -> FastAPI:
                     description=j.get("description"),
                     schedule=j.get("schedule"),
                     run_at=j.get("run_at"),
+                    queue=j.get("queue"),
+                    queue_status=j.get("queue_status"),
                 )
                 for j in jobs
             ],
@@ -695,6 +697,8 @@ def create_app() -> FastAPI:
             run_at=job_status.get("run_at"),
             max_retries=job_status.get("max_retries"),
             timeout_seconds=job_status.get("timeout_seconds"),
+            queue=job_status.get("queue"),
+            queue_status=job_status.get("queue_status"),
         )
 
     @app.post("/api/v1/jobs/{job_id}/start", response_model=ActionResponse)
@@ -703,6 +707,8 @@ def create_app() -> FastAPI:
         _auth: bool = Depends(verify_token),
     ):
         """Start a job."""
+        from procclaw.models import JobStatus
+        
         supervisor = get_supervisor()
 
         if supervisor.is_job_running(job_id):
@@ -713,9 +719,21 @@ def create_app() -> FastAPI:
         if not success:
             raise HTTPException(status_code=500, detail=f"Failed to start job '{job_id}'")
 
-        # Get the PID
+        # Get the state to check if queued or running
         state = supervisor.db.get_state(job_id)
         pid = state.pid if state else None
+        
+        # Check if job was queued instead of started
+        if state and state.status == JobStatus.QUEUED:
+            job = supervisor.jobs.get_job(job_id)
+            queue_info = supervisor._queue_manager.get_job_queue_status(job_id, job) if job else None
+            position = queue_info.get("position", 0) + 1 if queue_info else 1
+            return ActionResponse(
+                success=True,
+                message=f"Job '{job_id}' queued in '{job.queue}' (position #{position})",
+                job_id=job_id,
+                pid=None,
+            )
 
         return ActionResponse(
             success=True,
