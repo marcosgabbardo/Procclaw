@@ -1826,6 +1826,15 @@
                             <input type="text" x-model="newJob.tags" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="tag1, tag2" @input="syncFormToYaml()">
                         </div>
                         <div>
+                            <label class="block text-sm text-dark-400 mb-1">Execution Queue <span class="text-dark-500">(jobs in same queue run sequentially)</span></label>
+                            <input type="text" x-model="newJob.queue" list="newJobQueueList" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" placeholder="e.g. openclaw" @input="syncFormToYaml()">
+                            <datalist id="newJobQueueList">
+                                <template x-for="q in allQueues" :key="q">
+                                    <option :value="q"></option>
+                                </template>
+                            </datalist>
+                        </div>
+                        <div>
                             <label class="block text-sm text-dark-400 mb-1">Environment Variables</label>
                             <textarea x-model="newJob.env" rows="3" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500 font-mono text-sm" placeholder="KEY=value&#10;SECRET_TOKEN=abc123" @input="syncFormToYaml()"></textarea>
                         </div>
@@ -2015,7 +2024,7 @@
                 authConfig: { enabled: false, token: '', tokenMasked: '', showToken: false },
                 
                 // Forms
-                newJob: { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '' },
+                newJob: { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '' },
                 newJobYaml: '',
                 createMode: 'form',
                 fullYamlContent: '',
@@ -2546,6 +2555,7 @@
                         run_at: this.newJob.type === 'oneshot' ? this.newJob.run_at : null,
                         tags: this.newJob.tags,
                         env: this.newJob.env || null,
+                        queue: this.newJob.queue || null,
                         enabled: true,
                     };
                     
@@ -2554,7 +2564,7 @@
                         if (res.success) {
                             this.toast(`Job '${this.newJob.id}' created!`, 'success');
                             this.showCreateModal = false;
-                            this.newJob = { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '' };
+                            this.newJob = { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '' };
                             this.newJobYaml = '';
                             this.createMode = 'form';
                             await this.refresh();

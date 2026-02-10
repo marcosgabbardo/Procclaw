@@ -361,6 +361,8 @@ def create_app() -> FastAPI:
                     job_config["env"] = env_dict
             else:
                 job_config["env"] = job_data["env"]
+        if job_data.get("queue"):
+            job_config["queue"] = job_data["queue"]
         
         # Add metadata
         job_config["_metadata"] = {
