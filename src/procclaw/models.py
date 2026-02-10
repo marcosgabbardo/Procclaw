@@ -33,6 +33,7 @@ class JobStatus(str, Enum):
     PLANNED = "planned"  # Scheduled job waiting for next run
     PENDING = "pending"  # Waiting for dependency
     DISABLED = "disabled"
+    QUEUED = "queued"  # Waiting in execution queue
 
 
 class HealthCheckType(str, Enum):
@@ -434,6 +435,9 @@ class JobConfig(BaseModel):
     # Metadata
     tags: list[str] = Field(default_factory=list)
     
+    # Execution queue (jobs in same queue run sequentially)
+    queue: str | None = None
+    
     # Composite jobs (chain, group, chord)
     steps: list[str] = Field(default_factory=list)  # For CHAIN: sequential job IDs
     jobs: list[str] = Field(default_factory=list)  # For GROUP: parallel job IDs
@@ -474,6 +478,7 @@ class JobState(BaseModel):
     next_run: datetime | None = None  # For scheduled jobs
     next_retry: datetime | None = None  # For retry scheduling
     paused: bool = False  # Temporarily paused (runtime, persists in state)
+    queued_at: datetime | None = None  # When job was added to execution queue
 
 
 class JobRun(BaseModel):

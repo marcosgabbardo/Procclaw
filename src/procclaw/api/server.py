@@ -804,8 +804,13 @@ def create_app() -> FastAPI:
             supervisor._manually_stopped.add(job_id)  # Mark as manual to avoid "failed" status
             supervisor.stop_job(job_id)
         
+        # If queued (waiting in execution queue), remove from queue
+        if job.queue:
+            supervisor._queue_manager.remove_from_queue(job_id, job)
+        
         # Update state
         state.paused = True
+        state.queued_at = None  # Clear queued timestamp if any
         supervisor.db.save_state(state)
         
         # Update scheduler to skip this job

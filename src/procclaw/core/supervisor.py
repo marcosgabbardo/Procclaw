@@ -48,6 +48,7 @@ from procclaw.core.composite import CompositeExecutor
 from procclaw.core.watchdog import Watchdog, MissedRunInfo
 from procclaw.core.workflow import WorkflowManager, WorkflowConfig
 from procclaw.core.self_healing import SelfHealer, HealingResult
+from procclaw.core.queue_manager import QueueManager
 from procclaw.openclaw import (
     OpenClawIntegration, 
     init_integration, 
@@ -347,6 +348,11 @@ class Supervisor:
             logs_dir=DEFAULT_LOGS_DIR,
         )
 
+        # Initialize queue manager for sequential job execution
+        self._queue_manager = QueueManager(
+            on_job_ready=self._on_queue_job_ready,
+        )
+
         # Ensure directories exist
         ensure_config_dir()
 
@@ -393,6 +399,7 @@ class Supervisor:
         params: dict | None = None,
         idempotency_key: str | None = None,
         composite_id: str | None = None,
+        _from_queue: bool = False,
     ) -> bool:
         """Start a job.
         
@@ -402,9 +409,10 @@ class Supervisor:
             params: Optional parameters for the job
             idempotency_key: Optional idempotency key for deduplication
             composite_id: Workflow ID if run as part of chain/group/chord
+            _from_queue: Internal flag - job is starting from queue (skip queue check)
             
         Returns:
-            True if job was started, False otherwise
+            True if job was started (or queued), False otherwise
         """
         job = self.jobs.get_job(job_id)
         if not job:
@@ -475,6 +483,20 @@ class Supervisor:
                     elif result.status == DependencyStatus.WAITING:
                         logger.warning(f"Cannot start '{job_id}': {result.message}")
                         return False
+
+        # Check execution queue (jobs in same queue run sequentially)
+        # Manual starts bypass the queue
+        if job.queue and not _from_queue:
+            force_bypass = (trigger == "manual")
+            can_run = self._queue_manager.try_acquire(job_id, job, trigger=trigger, force=force_bypass)
+            if not can_run:
+                # Job was queued - update state to QUEUED
+                state = self.db.get_state(job_id) or JobState(job_id=job_id)
+                state.status = JobStatus.QUEUED
+                state.queued_at = datetime.now()
+                self.db.save_state(state)
+                logger.info(f"Job '{job_id}' queued in '{job.queue}' (waiting for slot)")
+                return True  # Return True because job was successfully queued
 
         # Acquire lock if enabled
         lock_acquired = False
@@ -1376,6 +1398,9 @@ class Supervisor:
             # Dependencies
             "depends_on": depends_on,
             "dependents": dependents,
+            # Execution queue
+            "queue": job.queue,
+            "queue_status": self._queue_manager.get_job_queue_status(job_id, job) if job.queue else None,
             # Metadata
             "created_at": created_at,
             "updated_at": updated_at,
@@ -1506,6 +1531,10 @@ class Supervisor:
         job = self.jobs.get_job(job_id)
         if job and job.lock.enabled:
             self._lock_manager.release(job_id)
+
+        # Release execution queue slot (triggers next job in queue if any)
+        if job and job.queue:
+            self._queue_manager.release(job_id, job)
 
         # Record job stop for concurrency tracking
         self._concurrency_limiter.record_stop(job_id)
@@ -1655,6 +1684,13 @@ class Supervisor:
             )
 
     # Callbacks
+
+    def _on_queue_job_ready(self, job_id: str, trigger: str) -> None:
+        """Called when a queued job is ready to run (previous job in queue finished)."""
+        logger.info(f"Queue released slot for job '{job_id}', starting now")
+        
+        # Start the job with _from_queue=True to skip queue check
+        self.start_job(job_id, trigger=trigger, _from_queue=True)
 
     def _on_health_fail(self, job_id: str, result: HealthCheckResult) -> None:
         """Called when a job fails health check."""
