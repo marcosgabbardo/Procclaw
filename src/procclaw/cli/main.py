@@ -47,6 +47,9 @@ app.add_typer(secret_app, name="secret")
 service_app = typer.Typer(help="System service management commands")
 app.add_typer(service_app, name="service")
 
+auth_app = typer.Typer(help="API authentication management")
+app.add_typer(auth_app, name="auth")
+
 
 def setup_logging(verbose: bool = False) -> None:
     """Setup logging configuration."""
@@ -889,6 +892,130 @@ def secret_delete(
         console.print(f"[green]✓ Secret '{name}' deleted[/green]")
     else:
         console.print(f"[yellow]Secret '{name}' not found or could not be deleted[/yellow]")
+
+
+# ============================================================================
+# Auth Commands
+# ============================================================================
+
+
+@auth_app.command("enable")
+def auth_enable(
+    token: str = typer.Option(None, "--token", "-t", help="Use specific token (generates random if not provided)"),
+) -> None:
+    """Enable API authentication with a token."""
+    import secrets
+    import yaml
+    from procclaw.config import DEFAULT_CONFIG_FILE
+    
+    # Generate token if not provided
+    if not token:
+        token = secrets.token_urlsafe(32)
+    
+    # Load current config
+    config_data = {}
+    if DEFAULT_CONFIG_FILE.exists():
+        with open(DEFAULT_CONFIG_FILE) as f:
+            config_data = yaml.safe_load(f) or {}
+    
+    # Update auth config
+    if "api" not in config_data:
+        config_data["api"] = {}
+    if "auth" not in config_data["api"]:
+        config_data["api"]["auth"] = {}
+    
+    config_data["api"]["auth"]["enabled"] = True
+    config_data["api"]["auth"]["token"] = token
+    
+    # Save config
+    with open(DEFAULT_CONFIG_FILE, "w") as f:
+        yaml.dump(config_data, f, default_flow_style=False)
+    
+    console.print("[green]✓ API authentication enabled[/green]")
+    console.print(f"[bold]Token:[/bold] {token}")
+    console.print("\n[dim]Use this token in the Authorization header:[/dim]")
+    console.print(f"[cyan]Authorization: Bearer {token}[/cyan]")
+    console.print("\n[yellow]⚠ Restart the daemon to apply changes[/yellow]")
+
+
+@auth_app.command("disable")
+def auth_disable() -> None:
+    """Disable API authentication."""
+    import yaml
+    from procclaw.config import DEFAULT_CONFIG_FILE
+    
+    # Load current config
+    config_data = {}
+    if DEFAULT_CONFIG_FILE.exists():
+        with open(DEFAULT_CONFIG_FILE) as f:
+            config_data = yaml.safe_load(f) or {}
+    
+    # Update auth config
+    if "api" not in config_data:
+        config_data["api"] = {}
+    if "auth" not in config_data["api"]:
+        config_data["api"]["auth"] = {}
+    
+    config_data["api"]["auth"]["enabled"] = False
+    
+    # Save config
+    with open(DEFAULT_CONFIG_FILE, "w") as f:
+        yaml.dump(config_data, f, default_flow_style=False)
+    
+    console.print("[green]✓ API authentication disabled[/green]")
+    console.print("\n[yellow]⚠ Restart the daemon to apply changes[/yellow]")
+
+
+@auth_app.command("status")
+def auth_status() -> None:
+    """Show API authentication status."""
+    import yaml
+    from procclaw.config import DEFAULT_CONFIG_FILE
+    
+    # Load current config
+    config_data = {}
+    if DEFAULT_CONFIG_FILE.exists():
+        with open(DEFAULT_CONFIG_FILE) as f:
+            config_data = yaml.safe_load(f) or {}
+    
+    enabled = config_data.get("api", {}).get("auth", {}).get("enabled", False)
+    token = config_data.get("api", {}).get("auth", {}).get("token")
+    
+    if enabled:
+        console.print("[green]● API authentication is ENABLED[/green]")
+        if token:
+            masked = token[:4] + "*" * (len(token) - 8) + token[-4:] if len(token) > 8 else "****"
+            console.print(f"[dim]Token:[/dim] {masked}")
+    else:
+        console.print("[yellow]○ API authentication is DISABLED[/yellow]")
+
+
+@auth_app.command("token")
+def auth_token(
+    show: bool = typer.Option(False, "--show", "-s", help="Show the full token"),
+) -> None:
+    """Show or regenerate the API token."""
+    import yaml
+    from procclaw.config import DEFAULT_CONFIG_FILE
+    
+    # Load current config
+    config_data = {}
+    if DEFAULT_CONFIG_FILE.exists():
+        with open(DEFAULT_CONFIG_FILE) as f:
+            config_data = yaml.safe_load(f) or {}
+    
+    token = config_data.get("api", {}).get("auth", {}).get("token")
+    
+    if not token:
+        console.print("[yellow]No token configured. Run 'procclaw auth enable' first.[/yellow]")
+        raise typer.Exit(1)
+    
+    if show:
+        console.print(f"[bold]Token:[/bold] {token}")
+    else:
+        masked = token[:4] + "*" * (len(token) - 8) + token[-4:] if len(token) > 8 else "****"
+        console.print(f"[bold]Token:[/bold] {masked}")
+        console.print("[dim]Use --show to reveal full token[/dim]")
 
 
 # ============================================================================

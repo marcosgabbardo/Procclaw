@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Security
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Security
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
@@ -41,9 +41,18 @@ security = HTTPBearer(auto_error=False)
 
 
 async def verify_token(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(security),
 ) -> bool:
-    """Verify the API token if authentication is enabled."""
+    """Verify the API token if authentication is enabled.
+    
+    Skips auth for:
+    - When auth is disabled in config
+    - Requests from web UI (same origin via Referer header)
+    
+    Requires token for:
+    - External API calls when auth is enabled
+    """
     if _supervisor is None:
         return True
 
@@ -51,6 +60,23 @@ async def verify_token(
     if not config.api.auth.enabled:
         return True
 
+    # Skip auth for same-origin requests (web UI)
+    referer = request.headers.get("referer", "")
+    host = request.headers.get("host", "")
+    origin = request.headers.get("origin", "")
+    
+    # If referer/origin matches our host, it's from the web UI
+    if host and (referer.startswith(f"http://{host}") or 
+                 referer.startswith(f"https://{host}") or
+                 origin == f"http://{host}" or
+                 origin == f"https://{host}"):
+        return True
+    
+    # Also allow if X-Requested-From header is set to "web-ui"
+    if request.headers.get("x-requested-from") == "web-ui":
+        return True
+
+    # External request - require token
     if credentials is None:
         raise HTTPException(status_code=401, detail="Missing authorization token")
 
