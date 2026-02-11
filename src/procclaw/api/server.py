@@ -1162,6 +1162,15 @@ def create_app() -> FastAPI:
         if not job_config:
             raise HTTPException(status_code=404, detail=f"Job '{request.job_id}' not found")
         
+        # Check if job is currently running - don't analyze incomplete data
+        if supervisor.is_job_running(request.job_id):
+            return {
+                "success": False,
+                "message": f"Job '{request.job_id}' is currently running. Wait for it to finish before healing.",
+                "job_id": request.job_id,
+                "reason": "job_running",
+            }
+        
         # Check if review is already running
         if supervisor._healing_engine.is_review_running(request.job_id):
             existing = supervisor._healing_engine.get_review_status(request.job_id)
@@ -1170,6 +1179,7 @@ def create_app() -> FastAPI:
                 "message": f"Review already running for job '{request.job_id}'",
                 "review_id": existing["id"] if existing else None,
                 "job_id": request.job_id,
+                "reason": "review_running",
             }
         
         # Trigger the review asynchronously

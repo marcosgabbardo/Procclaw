@@ -1631,6 +1631,8 @@ class Supervisor:
                     "session": job.self_healing.notify.session if job.self_healing.notify else "main",
                 } if job.self_healing.notify else None,
             } if job.self_healing else None,
+            # Healing status (is a review currently running?)
+            "is_healing": self._healing_engine.is_review_running(job_id),
         }
 
     def list_jobs(self) -> list[dict]:

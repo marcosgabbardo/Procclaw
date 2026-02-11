@@ -311,11 +311,12 @@
                                             <template x-if="col.id === 'status'">
                                                 <div class="flex items-center gap-2">
                                                     <span class="w-2 h-2 rounded-full"
-                                                        :class="job.status === 'running' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'disabled' ? 'bg-dark-400' : job.status === 'queued' ? 'bg-indigo-500' : 'bg-dark-500'">
+                                                        :class="job.is_healing ? 'bg-purple-500 animate-pulse' : job.status === 'running' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'disabled' ? 'bg-dark-400' : job.status === 'queued' ? 'bg-indigo-500' : 'bg-dark-500'">
                                                     </span>
                                                     <span class="text-sm" :class="!job.enabled && 'text-dark-500'">
-                                                        <span x-text="job.enabled ? job.status : 'disabled'"></span>
-                                                        <span x-show="job.status === 'queued' && job.queue_status" class="text-dark-400 text-xs ml-1" x-text="'#' + (job.queue_status?.position + 1)"></span>
+                                                        <span x-show="job.is_healing" class="text-purple-400">🧬 healing</span>
+                                                        <span x-show="!job.is_healing" x-text="job.enabled ? job.status : 'disabled'"></span>
+                                                        <span x-show="job.status === 'queued' && job.queue_status && !job.is_healing" class="text-dark-400 text-xs ml-1" x-text="'#' + (job.queue_status?.position + 1)"></span>
                                                     </span>
                                                 </div>
                                             </template>
@@ -426,8 +427,12 @@
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-cyan-400 text-sm" title="View Runs">🔍</button>
                                             <button @click="viewLogs(job.id)" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="Logs">📋</button>
-                                            <button @click="triggerJobHealing(job.id)" x-show="job.self_healing?.enabled"
-                                                class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Trigger Healing">🧬</button>
+                                            <button @click="triggerJobHealing(job.id)" 
+                                                x-show="job.self_healing?.enabled"
+                                                :disabled="job.is_healing || job.status === 'running'"
+                                                :class="job.is_healing ? 'animate-pulse text-purple-400' : job.status === 'running' ? 'opacity-50 cursor-not-allowed' : 'hover:bg-dark-600 hover:text-purple-400'"
+                                                class="w-7 h-7 flex items-center justify-center rounded text-dark-400 text-sm" 
+                                                :title="job.is_healing ? 'Healing in progress...' : job.status === 'running' ? 'Wait for job to finish' : 'Trigger Healing'">🧬</button>
                                             <button @click="deleteJob(job.id)" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Delete">✕</button>
                                         </div>
@@ -452,7 +457,8 @@
                                 <div class="text-xs text-dark-400" x-text="job.name"></div>
                             </div>
                             <div class="flex items-center gap-2">
-                                <span class="w-2 h-2 rounded-full" :class="job.status === 'running' ? 'bg-green-500 animate-pulse-slow' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'disabled' ? 'bg-dark-400' : job.status === 'queued' ? 'bg-indigo-500 animate-pulse-slow' : 'bg-dark-500'"></span>
+                                <span class="w-2 h-2 rounded-full" :class="job.is_healing ? 'bg-purple-500 animate-pulse' : job.status === 'running' ? 'bg-green-500 animate-pulse-slow' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'disabled' ? 'bg-dark-400' : job.status === 'queued' ? 'bg-indigo-500 animate-pulse-slow' : 'bg-dark-500'"></span>
+                                <span x-show="job.is_healing" class="text-xs text-purple-400">🧬</span>
                                 <span class="text-xs px-2 py-1 rounded-full" :class="getTypeClass(job.type)" x-text="job.type"></span>
                             </div>
                         </div>
@@ -482,7 +488,12 @@
                                 <button @click="enableJob(job.id)" x-show="!job.enabled" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Enable">✅</button>
                                 <button @click="forceRunJob(job.id)" x-show="job.schedule && job.status !== 'running' && job.enabled" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Run Now">⚡</button>
                                 <button @click="viewLogs(job.id)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="Logs">📋</button>
-                                <button @click="triggerJobHealing(job.id)" x-show="job.self_healing?.enabled" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Trigger Healing">🧬</button>
+                                <button @click="triggerJobHealing(job.id)" 
+                                    x-show="job.self_healing?.enabled"
+                                    :disabled="job.is_healing || job.status === 'running'"
+                                    :class="job.is_healing ? 'animate-pulse text-purple-400' : job.status === 'running' ? 'opacity-50 cursor-not-allowed' : 'hover:bg-dark-600 hover:text-purple-400'"
+                                    class="w-7 h-7 flex items-center justify-center rounded text-dark-400 text-sm" 
+                                    :title="job.is_healing ? 'Healing in progress...' : job.status === 'running' ? 'Wait for job to finish' : 'Trigger Healing'">🧬</button>
                                 <button @click="deleteJob(job.id)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Delete">✕</button>
                             </div>
                         </div>
@@ -4530,7 +4541,13 @@
                         });
                         const data = await res.json();
                         if (res.ok && data.success) {
-                            this.toast(`🧬 Healing review triggered for ${jobId}`, 'success');
+                            this.toast(`🧬 Healing started for ${jobId}. Check Self-Healing tab for results.`, 'success');
+                            // Refresh to show healing status
+                            await this.refresh();
+                        } else if (data.reason === 'job_running') {
+                            this.toast(`⏳ ${data.message}`, 'warning');
+                        } else if (data.reason === 'review_running') {
+                            this.toast(`🧬 ${data.message}`, 'info');
                         } else {
                             this.toast(data.detail || data.message || 'Failed to trigger review', 'error');
                         }
