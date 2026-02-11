@@ -1699,6 +1699,34 @@
                         </div>
                     </div>
                     
+                    <!-- OpenClaw-specific settings -->
+                    <div x-show="editJob.type === 'openclaw'" class="bg-dark-700/50 rounded-lg p-4 space-y-4">
+                        <div class="text-sm font-medium text-orange-400 mb-2">🦞 OpenClaw Settings</div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm text-dark-400 mb-1">Model <span class="text-dark-500">(configured per agent)</span></label>
+                                <select x-model="editJob.model" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none" @change="syncEditFormToYaml()">
+                                    <option value="">Default (procclaw = sonnet)</option>
+                                    <option value="sonnet">Sonnet</option>
+                                    <option value="opus">Opus</option>
+                                    <option value="haiku">Haiku</option>
+                                </select>
+                                <p class="text-xs text-dark-500 mt-1">To use a different model, create an agent: <code>openclaw agents add procclaw-opus --model opus</code></p>
+                            </div>
+                            <div>
+                                <label class="block text-sm text-dark-400 mb-1">Thinking Level</label>
+                                <select x-model="editJob.thinking" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none" @change="syncEditFormToYaml()">
+                                    <option value="">Default</option>
+                                    <option value="off">Off</option>
+                                    <option value="minimal">Minimal</option>
+                                    <option value="low">Low</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="high">High</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <!-- Self-Healing Settings -->
                     <details class="bg-dark-700 rounded-lg">
                         <summary class="p-3 cursor-pointer text-sm text-dark-300 hover:text-white flex items-center gap-2">
@@ -1882,6 +1910,33 @@
                                     <option :value="q"></option>
                                 </template>
                             </datalist>
+                        </div>
+                        <!-- OpenClaw-specific settings -->
+                        <div x-show="newJob.type === 'openclaw'" class="col-span-2 bg-dark-700/50 rounded-lg p-4 space-y-4">
+                            <div class="text-sm font-medium text-orange-400 mb-2">🦞 OpenClaw Settings</div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm text-dark-400 mb-1">Model <span class="text-dark-500">(configured per agent)</span></label>
+                                    <select x-model="newJob.model" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none" @change="syncFormToYaml()">
+                                        <option value="">Default (procclaw = sonnet)</option>
+                                        <option value="sonnet">Sonnet</option>
+                                        <option value="opus">Opus</option>
+                                        <option value="haiku">Haiku</option>
+                                    </select>
+                                    <p class="text-xs text-dark-500 mt-1">To use a different model, create an agent: <code>openclaw agents add procclaw-opus --model opus</code></p>
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-dark-400 mb-1">Thinking Level</label>
+                                    <select x-model="newJob.thinking" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none" @change="syncFormToYaml()">
+                                        <option value="">Default</option>
+                                        <option value="off">Off</option>
+                                        <option value="minimal">Minimal</option>
+                                        <option value="low">Low</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="high">High</option>
+                                    </select>
+                                </div>
+                            </div>
                         </div>
                         <div>
                             <label class="block text-sm text-dark-400 mb-1">Environment Variables</label>
@@ -2075,7 +2130,7 @@
                 authConfig: { enabled: false, token: '', tokenMasked: '', showToken: false },
                 
                 // Forms
-                newJob: { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '' },
+                newJob: { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '' },
                 newJobYaml: '',
                 createMode: 'form',
                 fullYamlContent: '',
@@ -2448,6 +2503,8 @@
                         run_at: runAtFormatted,
                         tagsStr: (job.tags || []).join(', '),
                         queue: job.queue || '',
+                        model: job.model || '',
+                        thinking: job.thinking || '',
                         cronPreset: 'custom',
                         cronMinutes: 5,
                         cronHours: 1,
@@ -2615,7 +2672,7 @@
                         if (res.success) {
                             this.toast(`Job '${this.newJob.id}' created!`, 'success');
                             this.showCreateModal = false;
-                            this.newJob = { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '' };
+                            this.newJob = { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '' };
                             this.newJobYaml = '';
                             this.createMode = 'form';
                             await this.refresh();
@@ -2640,6 +2697,13 @@
                         yaml += `  enabled: true\n`;
                         if ((job.type === 'scheduled' || job.type === 'openclaw') && job.schedule) yaml += `  schedule: "${job.schedule}"\n`;
                         if (job.type === 'oneshot' && job.run_at) yaml += `  run_at: "${job.run_at}"\n`;
+                        // Queue
+                        if (job.queue) yaml += `  queue: ${job.queue}\n`;
+                        // OpenClaw settings
+                        if (job.type === 'openclaw') {
+                            if (job.model) yaml += `  model: ${job.model}\n`;
+                            if (job.thinking) yaml += `  thinking: ${job.thinking}\n`;
+                        }
                         if (job.tags) {
                             yaml += `  tags:\n`;
                             job.tags.split(',').forEach(t => {
@@ -2720,6 +2784,13 @@
                     yaml += `  type: ${job.type}\n`;
                     if ((job.type === 'scheduled' || job.type === 'openclaw') && job.schedule) yaml += `  schedule: "${job.schedule}"\n`;
                     if (job.type === 'oneshot' && job.run_at) yaml += `  run_at: "${job.run_at}"\n`;
+                    // Queue
+                    if (job.queue) yaml += `  queue: ${job.queue}\n`;
+                    // OpenClaw settings
+                    if (job.type === 'openclaw') {
+                        if (job.model) yaml += `  model: ${job.model}\n`;
+                        if (job.thinking) yaml += `  thinking: ${job.thinking}\n`;
+                    }
                     if (job.tagsStr) {
                         yaml += `  tags:\n`;
                         job.tagsStr.split(',').forEach(t => {

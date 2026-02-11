@@ -438,6 +438,10 @@ class JobConfig(BaseModel):
     # Execution queue (jobs in same queue run sequentially)
     queue: str | None = None
     
+    # OpenClaw job settings
+    model: str | None = None  # Model for OpenClaw jobs (e.g., "sonnet", "opus")
+    thinking: str | None = None  # Thinking level: off, minimal, low, medium, high
+    
     # Composite jobs (chain, group, chord)
     steps: list[str] = Field(default_factory=list)  # For CHAIN: sequential job IDs
     jobs: list[str] = Field(default_factory=list)  # For GROUP: parallel job IDs
