@@ -264,9 +264,11 @@ def check_run_sla(
         if result.success_check:
             checks_passed += 1
     
-    # 2. Schedule adherence check (for scheduled jobs)
+    # 2. Schedule adherence check (for scheduled jobs, excluding manual runs)
     schedule_tolerance = sla_config.get("schedule_tolerance")
-    if schedule_tolerance is not None and job.schedule:
+    # Skip punctuality check for manual runs - they have no expected schedule
+    is_manual_run = getattr(run, 'trigger', None) == 'manual'
+    if schedule_tolerance is not None and job.schedule and not is_manual_run:
         checks_total += 1
         expected = get_expected_start_time(job, run.started_at)
         result.expected_start = expected
