@@ -936,9 +936,13 @@ Set auto_apply=true only for trivial, low-risk config changes.
         
         try:
             # Call OpenClaw for the change
+            import uuid
+            session_id = f"procclaw-apply-{uuid.uuid4().hex[:8]}"
+            
             proc = await asyncio.create_subprocess_exec(
-                "openclaw", "run",
-                "--model", "sonnet",
+                "openclaw", "agent",
+                "--local",
+                "--session-id", session_id,
                 "--message", prompt,
                 "--timeout", "60",
                 stdout=asyncio.subprocess.PIPE,
@@ -951,18 +955,27 @@ Set auto_apply=true only for trivial, low-risk config changes.
             )
             
             response = stdout.decode()
+            logger.info(f"AI apply response: {len(response)} chars")
+            logger.debug(f"AI apply response preview: {response[:500]}")
             
             # Extract new content from response
             import re
-            code_match = re.search(r'```(?:\w+)?\s*(.*?)\s*```', response, re.DOTALL)
+            code_match = re.search(r'```(?:yaml|json|python|sh|bash|markdown|md)?\s*(.*?)\s*```', response, re.DOTALL)
             if code_match:
                 new_content = code_match.group(1)
+                logger.info("Extracted content from code block")
             else:
-                # Try to use the whole response
+                # Try to use the whole response if it looks like file content
                 new_content = response.strip()
+                logger.info("Using raw response as content")
             
-            if not new_content or new_content == original_content:
-                return {"success": False, "error": "AI returned empty or unchanged content"}
+            if not new_content:
+                logger.warning(f"AI returned empty content. Response: {response[:500]}")
+                return {"success": False, "error": f"AI returned empty content. Response preview: {response[:200]}"}
+            
+            if new_content == original_content:
+                logger.warning("AI returned unchanged content")
+                return {"success": False, "error": "AI returned unchanged content (no modifications made)"}
             
             # Write new content
             file_path_obj.write_text(new_content)
