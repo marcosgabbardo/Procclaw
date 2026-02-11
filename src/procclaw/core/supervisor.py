@@ -48,6 +48,7 @@ from procclaw.core.composite import CompositeExecutor
 from procclaw.core.watchdog import Watchdog, MissedRunInfo
 from procclaw.core.workflow import WorkflowManager, WorkflowConfig
 from procclaw.core.self_healing import SelfHealer, HealingResult
+from procclaw.core.healing_engine import HealingEngine, ProactiveScheduler
 from procclaw.core.queue_manager import QueueManager
 from procclaw.openclaw import (
     OpenClawIntegration, 
@@ -345,10 +346,20 @@ class Supervisor:
             logs_dir=DEFAULT_LOGS_DIR,
         )
 
-        # Initialize self-healer
+        # Initialize self-healer (reactive - on failure)
         self._self_healer = SelfHealer(
             db=self.db,
             logs_dir=DEFAULT_LOGS_DIR,
+        )
+
+        # Initialize healing engine (proactive - scheduled reviews)
+        self._healing_engine = HealingEngine(
+            db=self.db,
+            supervisor=self,
+        )
+        self._proactive_scheduler = ProactiveScheduler(
+            engine=self._healing_engine,
+            supervisor=self,
         )
 
         # Initialize queue manager for sequential job execution
@@ -1673,7 +1684,13 @@ class Supervisor:
             if job and job.sla.enabled:
                 try:
                     from procclaw.sla import check_and_alert_sla_breach
-                    check_and_alert_sla_breach(self.db, job_id, job, last_run)
+                    sla_breached = check_and_alert_sla_breach(self.db, job_id, job, last_run)
+                    
+                    # Trigger proactive review on SLA breach
+                    if sla_breached:
+                        asyncio.create_task(
+                            self._proactive_scheduler.trigger_on_event(job_id, "sla_breach")
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to check SLA for job '{job_id}': {e}")
 
@@ -1774,6 +1791,11 @@ class Supervisor:
             if self._self_healer.is_healing_enabled(job):
                 logger.info(f"Triggering self-healing for job '{job_id}'")
                 asyncio.create_task(self._trigger_self_healing(job_id, job, last_run))
+            
+            # Trigger proactive review on failure (if configured)
+            asyncio.create_task(
+                self._proactive_scheduler.trigger_on_event(job_id, "failure")
+            )
 
     def _process_queued_jobs(self, job_id: str) -> None:
         """Process queued jobs after a job completes."""
@@ -2391,6 +2413,9 @@ class Supervisor:
         # Start OpenClaw integration
         await self._openclaw.start()
 
+        # Start proactive healing scheduler
+        await self._proactive_scheduler.start()
+
         # Load scheduled jobs into scheduler
         self._scheduler.update_jobs(self.jobs.get_enabled_jobs())
 
@@ -2492,6 +2517,7 @@ class Supervisor:
             self._resource_monitor.stop()
             self._trigger_manager.stop()
             self._concurrency_limiter.stop()
+            await self._proactive_scheduler.stop()
             await self._openclaw.stop()
 
             for task in [api_task, scheduler_task, health_task, retry_task, watchdog_task, log_rotator_task, resource_task, trigger_task, concurrency_task]:
