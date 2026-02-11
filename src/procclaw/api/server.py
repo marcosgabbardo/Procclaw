@@ -467,7 +467,7 @@ def create_app() -> FastAPI:
                 cmd=job.cmd if job else None,
                 composite_id=run.composite_id,
                 session_key=run.session_key,
-                has_transcript=bool(run.session_transcript),
+                has_transcript=bool(run.session_messages or run.session_transcript),
                 healing=healing_summary,
                 original_exit_code=run.original_exit_code,
             ))
@@ -507,7 +507,12 @@ def create_app() -> FastAPI:
         run_id: int,
         _auth: bool = Depends(verify_token),
     ):
-        """Get OpenClaw session transcript for a job run."""
+        """Get OpenClaw session transcript for a job run.
+        
+        Sources (in order of priority):
+        1. session_messages in SQLite (persisted at run completion)
+        2. session_transcript file (fallback, may not exist)
+        """
         import json
         from pathlib import Path
         
@@ -519,30 +524,49 @@ def create_app() -> FastAPI:
         if run is None:
             raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
         
-        if not run.session_transcript:
-            raise HTTPException(status_code=404, detail="No session transcript available for this run")
-        
-        transcript_path = Path(run.session_transcript)
-        if not transcript_path.exists():
-            raise HTTPException(status_code=404, detail=f"Transcript file not found: {run.session_transcript}")
-        
-        # Read and parse the JSONL transcript
         messages = []
-        try:
-            with open(transcript_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        msg = json.loads(line)
-                        messages.append(msg)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error reading transcript: {e}")
+        source = None
+        
+        # Priority 1: Use session_messages from DB (most reliable)
+        if run.session_messages:
+            try:
+                messages = json.loads(run.session_messages)
+                source = "database"
+            except json.JSONDecodeError:
+                pass
+        
+        # Priority 2: Fallback to transcript file
+        if not messages and run.session_transcript:
+            transcript_path = Path(run.session_transcript)
+            if transcript_path.exists():
+                try:
+                    with open(transcript_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                msg = json.loads(line)
+                                messages.append(msg)
+                    source = "file"
+                    
+                    # Backfill: Save to DB for future requests
+                    if messages:
+                        run.session_messages = json.dumps(messages)
+                        supervisor.db.update_run(run)
+                except Exception as e:
+                    pass
+        
+        if not messages:
+            raise HTTPException(
+                status_code=404, 
+                detail="No session data available. The transcript may have been deleted or the job didn't produce session output."
+            )
         
         return {
             "run_id": run_id,
             "job_id": run.job_id,
             "session_key": run.session_key,
-            "transcript_path": str(transcript_path),
+            "transcript_path": run.session_transcript,
+            "source": source,
             "messages": messages,
             "message_count": len(messages),
         }

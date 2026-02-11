@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS job_runs (
     composite_id TEXT,
     session_key TEXT,
     session_transcript TEXT,
+    session_messages TEXT,
     healing_status TEXT,
     healing_attempts INTEGER DEFAULT 0,
     healing_session_key TEXT,
@@ -373,6 +374,15 @@ class Database:
             except sqlite3.OperationalError:
                 pass
         
+        if from_version < 9 and to_version >= 9:
+            # Migration to version 9: Add session_messages to store AI session content in DB
+            # This makes session data persistent and independent of OpenClaw JSONL files
+            logger.info("Migrating to version 9: Adding session_messages to job_runs")
+            try:
+                conn.execute("ALTER TABLE job_runs ADD COLUMN session_messages TEXT")
+            except sqlite3.OperationalError:
+                pass
+        
         conn.execute("UPDATE schema_version SET version = ?", (to_version,))
 
     @contextmanager
@@ -515,6 +525,7 @@ class Database:
                     error = ?,
                     session_key = ?,
                     session_transcript = ?,
+                    session_messages = ?,
                     healing_status = ?,
                     healing_attempts = ?,
                     healing_session_key = ?,
@@ -529,6 +540,7 @@ class Database:
                     run.error,
                     run.session_key,
                     run.session_transcript,
+                    run.session_messages,
                     run.healing_status,
                     run.healing_attempts,
                     run.healing_session_key,
@@ -604,6 +616,7 @@ class Database:
             composite_id=row["composite_id"] if "composite_id" in keys else None,
             session_key=row["session_key"] if "session_key" in keys else None,
             session_transcript=row["session_transcript"] if "session_transcript" in keys else None,
+            session_messages=row["session_messages"] if "session_messages" in keys else None,
             healing_status=row["healing_status"] if "healing_status" in keys else None,
             healing_attempts=row["healing_attempts"] if "healing_attempts" in keys else 0,
             healing_session_key=row["healing_session_key"] if "healing_session_key" in keys else None,

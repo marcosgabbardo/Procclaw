@@ -958,6 +958,29 @@ class Supervisor:
             if session_key or session_transcript:
                 run.session_key = session_key
                 run.session_transcript = session_transcript
+                
+                # Read and persist session messages in DB (so we don't depend on JSONL files)
+                if session_transcript:
+                    try:
+                        from pathlib import Path
+                        import json
+                        transcript_path = Path(session_transcript)
+                        if transcript_path.exists():
+                            messages = []
+                            with open(transcript_path, "r", encoding="utf-8") as f:
+                                for line in f:
+                                    if line.strip():
+                                        try:
+                                            msg = json.loads(line)
+                                            messages.append(msg)
+                                        except json.JSONDecodeError:
+                                            pass
+                            if messages:
+                                run.session_messages = json.dumps(messages)
+                                logger.debug(f"Saved {len(messages)} session messages for job '{job_id}'")
+                    except Exception as e:
+                        logger.warning(f"Failed to read transcript for '{job_id}': {e}")
+                
                 self.db.update_run(run)
                 logger.debug(f"Extracted session info for job '{job_id}': key={session_key}")
                 

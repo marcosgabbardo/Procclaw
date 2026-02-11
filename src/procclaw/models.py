@@ -499,6 +499,7 @@ class JobRun(BaseModel):
     composite_id: str | None = None  # workflow ID if run as part of chain/group/chord
     session_key: str | None = None  # OpenClaw session key (for openclaw jobs)
     session_transcript: str | None = None  # Path to OpenClaw session transcript
+    session_messages: str | None = None  # JSON with session messages (persisted in DB)
     
     # Self-healing fields
     healing_status: str | None = None  # in_progress, fixed, gave_up, awaiting_approval
