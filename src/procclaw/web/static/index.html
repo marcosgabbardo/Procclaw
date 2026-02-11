@@ -2623,6 +2623,30 @@
                                     </div>
                                 </div>
                                 
+                                <!-- Auto-Apply Settings -->
+                                <div class="bg-dark-800/50 rounded-lg p-3 space-y-3">
+                                    <div class="text-sm font-medium text-green-400">⚡ Auto-Apply</div>
+                                    <div class="flex items-center gap-2">
+                                        <input type="checkbox" id="edit-auto-apply" x-model="editJob.self_healing.suggestions.auto_apply" class="rounded" @change="syncEditFormToYaml()">
+                                        <label for="edit-auto-apply" class="text-sm">Apply suggestions automatically (no approval needed)</label>
+                                    </div>
+                                    <div x-show="editJob.self_healing.suggestions?.auto_apply" class="space-y-3">
+                                        <div>
+                                            <label class="block text-xs text-dark-400 mb-1">Min Severity for Approval</label>
+                                            <select x-model="editJob.self_healing.suggestions.min_severity_for_approval" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncEditFormToYaml()">
+                                                <option value="low">Low (auto-apply nothing)</option>
+                                                <option value="medium">Medium (auto-apply low only)</option>
+                                                <option value="high">High (auto-apply low + medium)</option>
+                                                <option value="critical">Critical (auto-apply low + medium + high)</option>
+                                            </select>
+                                            <p class="text-xs text-dark-500 mt-1">Suggestions below this severity are auto-applied</p>
+                                        </div>
+                                    </div>
+                                    <div x-show="!editJob.self_healing.suggestions?.auto_apply" class="text-xs text-dark-500">
+                                        All suggestions will require manual approval in the UI
+                                    </div>
+                                </div>
+                                
                                 <!-- Notifications -->
                                 <div>
                                     <label class="block text-sm text-dark-400 mb-2">Notifications</label>
@@ -2920,6 +2944,26 @@
                                         </div>
                                     </div>
                                     
+                                    <!-- Auto-Apply Settings -->
+                                    <div class="bg-dark-800/50 rounded-lg p-3 space-y-3">
+                                        <div class="text-sm font-medium text-green-400">⚡ Auto-Apply</div>
+                                        <div class="flex items-center gap-2">
+                                            <input type="checkbox" id="new-auto-apply" x-model="newJob.self_healing.suggestions.auto_apply" class="rounded" @change="syncFormToYaml()">
+                                            <label for="new-auto-apply" class="text-sm">Apply suggestions automatically</label>
+                                        </div>
+                                        <div x-show="newJob.self_healing.suggestions?.auto_apply" class="space-y-3">
+                                            <div>
+                                                <label class="block text-xs text-dark-400 mb-1">Min Severity for Approval</label>
+                                                <select x-model="newJob.self_healing.suggestions.min_severity_for_approval" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncFormToYaml()">
+                                                    <option value="low">Low (auto-apply nothing)</option>
+                                                    <option value="medium">Medium (auto-apply low only)</option>
+                                                    <option value="high">High (auto-apply low + medium)</option>
+                                                    <option value="critical">Critical (auto-apply all except critical)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
                                     <!-- Notifications -->
                                     <div>
                                         <label class="block text-sm text-dark-400 mb-2">Notifications</label>
@@ -3167,6 +3211,7 @@
                         review_schedule: { frequency: 'daily', time: '03:00', day: 1, min_runs: 5 },
                         analysis: { include_logs: true, log_lines: 200, include_stderr: true, include_history: 5, include_config: true },
                         remediation: { enabled: true, max_attempts: 3, allowed_actions: ['restart_job'], forbidden_paths: [], require_approval: false },
+                        suggestions: { auto_apply: false, min_severity_for_approval: 'medium', notify_on_suggestion: true },
                         notify: { on_analysis: false, on_fix_attempt: true, on_success: true, on_give_up: true, session: 'main' }
                     }
                 },
@@ -3727,6 +3772,11 @@
                                 forbidden_paths: job.self_healing?.remediation?.forbidden_paths || [],
                                 require_approval: job.self_healing?.remediation?.require_approval ?? false
                             },
+                            suggestions: {
+                                auto_apply: job.self_healing?.suggestions?.auto_apply ?? false,
+                                min_severity_for_approval: job.self_healing?.suggestions?.min_severity_for_approval || 'medium',
+                                notify_on_suggestion: job.self_healing?.suggestions?.notify_on_suggestion ?? true
+                            },
                             notify: {
                                 on_analysis: job.self_healing?.notify?.on_analysis ?? false,
                                 on_fix_attempt: job.self_healing?.notify?.on_fix_attempt ?? true,
@@ -3983,6 +4033,7 @@
                             review_schedule: this.editJob.self_healing.mode === 'proactive' ? this.editJob.self_healing.review_schedule : undefined,
                             analysis: this.editJob.self_healing.analysis,
                             remediation: this.editJob.self_healing.remediation,
+                            suggestions: this.editJob.self_healing.suggestions,
                             notify: this.editJob.self_healing.notify
                         } : { enabled: false },
                         // SLA
@@ -4042,6 +4093,7 @@
                             review_schedule: this.newJob.self_healing.mode === 'proactive' ? this.newJob.self_healing.review_schedule : undefined,
                             analysis: this.newJob.self_healing.analysis,
                             remediation: this.newJob.self_healing.remediation,
+                            suggestions: this.newJob.self_healing.suggestions,
                             notify: this.newJob.self_healing.notify
                         } : null,
                     };
@@ -4060,6 +4112,7 @@
                                     review_schedule: { frequency: 'daily', time: '03:00', day: 1, min_runs: 5 },
                                     analysis: { include_logs: true, log_lines: 200, include_stderr: true, include_history: 5, include_config: true },
                                     remediation: { enabled: true, max_attempts: 3, allowed_actions: ['restart_job'], forbidden_paths: [], require_approval: false },
+                                    suggestions: { auto_apply: false, min_severity_for_approval: 'medium', notify_on_suggestion: true },
                                     notify: { on_analysis: false, on_fix_attempt: true, on_success: true, on_give_up: true, session: 'main' }
                                 }
                             };
