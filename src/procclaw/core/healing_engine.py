@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 import subprocess
+import yaml
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -892,21 +894,148 @@ Set auto_apply=true only for trivial, low-risk config changes.
             
             return {"success": False, "error": str(e)}
     
+    def _validate_file_for_job(self, job_id: str, file_path: str) -> tuple[bool, str | None]:
+        """Validate that a file belongs to a specific job.
+        
+        Returns:
+            (is_valid, error_message)
+        """
+        file_path_obj = Path(file_path).expanduser()
+        file_name = file_path_obj.name
+        
+        # Get job config to know allowed paths
+        job = self.supervisor.get_job(job_id)
+        if not job:
+            return False, f"Job {job_id} not found"
+        
+        # jobs.yaml is always allowed (we'll isolate the section)
+        if file_name == "jobs.yaml":
+            return True, None
+        
+        # Check if it's the job's script
+        if job.get("cmd"):
+            cmd = job["cmd"]
+            # Extract script path from cmd (e.g., "python3 /path/to/script.py")
+            try:
+                parts = shlex.split(cmd)
+                for part in parts:
+                    if part.endswith(('.py', '.sh', '.bash', '.js')):
+                        if Path(part).expanduser().resolve() == file_path_obj.resolve():
+                            return True, None
+            except:
+                pass
+        
+        # Check if it's in prompts directory
+        prompts_dir = Path("~/.procclaw/prompts").expanduser()
+        if file_path_obj.is_relative_to(prompts_dir):
+            # Must be for this job specifically
+            if job_id in str(file_path_obj):
+                return True, None
+            return False, f"Prompt file does not belong to job {job_id}"
+        
+        # Check if file contains job_id reference (loose check for other files)
+        try:
+            content = file_path_obj.read_text()
+            if job_id in content:
+                return True, None
+        except:
+            pass
+        
+        return False, f"File {file_path} is not associated with job {job_id}"
+
+    def _extract_job_section_from_yaml(self, content: str, job_id: str) -> tuple[str | None, int, int]:
+        """Extract just the job section from jobs.yaml.
+        
+        Returns:
+            (job_section_yaml, start_line, end_line)
+        """
+        try:
+            # Parse YAML
+            data = yaml.safe_load(content)
+            if not isinstance(data, dict):
+                return None, 0, 0
+            
+            if job_id not in data:
+                return None, 0, 0
+            
+            # Serialize just this job's config
+            job_section = {job_id: data[job_id]}
+            job_yaml = yaml.dump(job_section, default_flow_style=False, sort_keys=False)
+            
+            # Find line numbers (approximate)
+            lines = content.split('\n')
+            start_line = 0
+            end_line = len(lines)
+            
+            for i, line in enumerate(lines):
+                if line.startswith(f"{job_id}:"):
+                    start_line = i
+                    # Find next top-level key
+                    for j in range(i + 1, len(lines)):
+                        if lines[j] and not lines[j][0].isspace() and not lines[j].startswith('#'):
+                            end_line = j
+                            break
+                    break
+            
+            return job_yaml, start_line, end_line
+            
+        except Exception as e:
+            logger.warning(f"Failed to extract job section: {e}")
+            return None, 0, 0
+
+    def _merge_job_section_to_yaml(self, original_content: str, job_id: str, new_job_yaml: str) -> str:
+        """Merge the modified job section back into the full jobs.yaml."""
+        try:
+            # Parse both
+            original_data = yaml.safe_load(original_content)
+            new_job_data = yaml.safe_load(new_job_yaml)
+            
+            if not isinstance(original_data, dict) or not isinstance(new_job_data, dict):
+                raise ValueError("Invalid YAML structure")
+            
+            # Get the new job config
+            if job_id in new_job_data:
+                new_config = new_job_data[job_id]
+            else:
+                # AI might have returned without the key
+                new_config = new_job_data
+            
+            # Update only this job
+            original_data[job_id] = new_config
+            
+            # Serialize back
+            return yaml.dump(original_data, default_flow_style=False, sort_keys=False)
+            
+        except Exception as e:
+            logger.error(f"Failed to merge job section: {e}")
+            raise
+
     async def _apply_change_with_ai(
         self,
         job_id: str,
         file_path: str | None,
         suggested_change: str,
     ) -> dict:
-        """Use AI to apply a suggested change to a file."""
+        """Use AI to apply a suggested change to a file.
+        
+        SECURITY: This method validates that the file belongs to the specified job
+        and only allows modifications within the job's scope.
+        """
         
         if not file_path:
             return {"success": True}  # No file to change
         
         file_path_obj = Path(file_path).expanduser()
+        file_name = file_path_obj.name
         
         if not file_path_obj.exists():
             return {"success": False, "error": f"File not found: {file_path}"}
+        
+        # SECURITY: Validate file belongs to this job
+        is_valid, error = self._validate_file_for_job(job_id, file_path)
+        if not is_valid:
+            logger.warning(f"Security: blocked access to {file_path} for job {job_id}: {error}")
+            return {"success": False, "error": f"Access denied: {error}"}
         
         # Read original content
         try:
@@ -914,24 +1043,42 @@ Set auto_apply=true only for trivial, low-risk config changes.
         except Exception as e:
             return {"success": False, "error": f"Cannot read file: {e}"}
         
-        # Build prompt for AI to make the change
-        prompt = f"""Apply this change to the file.
+        # SPECIAL HANDLING: For jobs.yaml, only send the job's section
+        is_jobs_yaml = file_name == "jobs.yaml"
+        content_for_ai = original_content
+        
+        if is_jobs_yaml:
+            job_section, _, _ = self._extract_job_section_from_yaml(original_content, job_id)
+            if job_section:
+                content_for_ai = job_section
+                logger.info(f"Isolated job section for {job_id} ({len(job_section)} chars)")
+            else:
+                return {"success": False, "error": f"Job {job_id} not found in jobs.yaml"}
+        
+        # Build prompt for AI to make the change - with STRICT scope restrictions
+        prompt = f"""Apply this change to the configuration.
 
-## File: {file_path}
+## CRITICAL SECURITY CONSTRAINT
+You are modifying settings for job `{job_id}` ONLY.
+DO NOT add, remove, or modify any other job or configuration.
+Your output must contain ONLY the configuration for this single job.
 
-### Current Content
-```
-{original_content[:3000]}
+## Job: {job_id}
+
+### Current Configuration
+```yaml
+{content_for_ai[:3000]}
 ```
 
 ### Requested Change
 {suggested_change}
 
 ### Instructions
-1. Apply the requested change to the file content
-2. Output ONLY the new file content, no explanations
-3. Keep the rest of the file unchanged
-4. Start your response with ```
+1. Apply the requested change to the job `{job_id}` configuration
+2. Output ONLY the modified YAML for this job, no explanations
+3. DO NOT include other jobs - only `{job_id}`
+4. Keep all existing settings that are not being changed
+5. Start your response with ```yaml
 """
         
         try:
@@ -973,18 +1120,29 @@ Set auto_apply=true only for trivial, low-risk config changes.
                 logger.warning(f"AI returned empty content. Response: {response[:500]}")
                 return {"success": False, "error": f"AI returned empty content. Response preview: {response[:200]}"}
             
-            if new_content == original_content:
+            # For jobs.yaml, merge the job section back into the full file
+            final_content = new_content
+            if is_jobs_yaml:
+                try:
+                    final_content = self._merge_job_section_to_yaml(
+                        original_content, job_id, new_content
+                    )
+                    logger.info(f"Merged job {job_id} section back to jobs.yaml")
+                except Exception as e:
+                    return {"success": False, "error": f"Failed to merge job section: {e}"}
+            
+            if final_content == original_content:
                 logger.warning("AI returned unchanged content")
                 return {"success": False, "error": "AI returned unchanged content (no modifications made)"}
             
             # Write new content
-            file_path_obj.write_text(new_content)
+            file_path_obj.write_text(final_content)
             
             return {
                 "success": True,
                 "file_path": str(file_path_obj),
                 "original_content": original_content,
-                "new_content": new_content,
+                "new_content": final_content,
             }
             
         except asyncio.TimeoutError:
