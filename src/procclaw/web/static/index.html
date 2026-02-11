@@ -1793,6 +1793,12 @@
                                                 ✕ Reject
                                             </button>
                                         </div>
+                                        <div x-show="suggestion.status === 'approved'" class="flex gap-1">
+                                            <button @click="applySuggestion(suggestion.id)" 
+                                                class="px-2 py-1 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded text-xs transition">
+                                                ⚡ Apply
+                                            </button>
+                                        </div>
                                         <button @click="viewSuggestionDetails(suggestion.id)" 
                                             class="px-2 py-1 bg-dark-700 text-dark-300 hover:bg-dark-600 rounded text-xs transition">
                                             🔍 Details
@@ -4295,6 +4301,28 @@
                         }
                     } catch (e) {
                         this.toast('Failed to reject suggestion', 'error');
+                    }
+                },
+
+                async applySuggestion(suggestionId) {
+                    if (!confirm('Apply this suggestion? This will make actual changes to files.')) return;
+                    
+                    this.toast('Applying suggestion...', 'info');
+                    
+                    try {
+                        const res = await fetch(`/api/v1/healing/suggestions/${suggestionId}/apply`, {
+                            method: 'POST'
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.toast(data.message || 'Suggestion applied', 'success');
+                            await this.loadHealingData();
+                        } else {
+                            const data = await res.json();
+                            this.toast(data.detail || 'Failed to apply', 'error');
+                        }
+                    } catch (e) {
+                        this.toast('Failed to apply suggestion', 'error');
                     }
                 },
 
