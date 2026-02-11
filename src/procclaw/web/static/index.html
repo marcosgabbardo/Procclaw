@@ -1940,12 +1940,24 @@
                             <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
                                 <div class="flex items-center justify-between">
                                     <div class="flex-1 min-w-0">
-                                        <div class="flex items-center gap-2 mb-1">
-                                            <span class="px-2 py-0.5 bg-dark-700 rounded text-xs font-mono" x-text="action.action_type"></span>
-                                            <span class="text-dark-500" x-text="action.job_id"></span>
+                                        <!-- Suggestion title -->
+                                        <div class="text-sm text-dark-200 mb-1 truncate" x-show="action.suggestion_title" x-text="action.suggestion_title"></div>
+                                        <div class="flex items-center gap-2 mb-1 flex-wrap">
+                                            <span class="text-dark-500 text-xs" x-text="action.job_id"></span>
+                                            <span class="px-2 py-0.5 rounded text-xs"
+                                                :class="{
+                                                    'bg-purple-500/20 text-purple-400': action.suggestion_category === 'performance',
+                                                    'bg-blue-500/20 text-blue-400': action.suggestion_category === 'reliability',
+                                                    'bg-green-500/20 text-green-400': action.suggestion_category === 'config',
+                                                    'bg-orange-500/20 text-orange-400': action.suggestion_category === 'prompt',
+                                                    'bg-cyan-500/20 text-cyan-400': action.suggestion_category === 'script',
+                                                    'bg-dark-600 text-dark-400': !action.suggestion_category
+                                                }" 
+                                                x-show="action.suggestion_category"
+                                                x-text="action.suggestion_category"></span>
                                             <span class="text-dark-500 text-xs" x-show="action.execution_duration_ms" x-text="(action.execution_duration_ms / 1000).toFixed(1) + 's'"></span>
                                         </div>
-                                        <div class="text-sm text-dark-400 truncate" x-show="action.file_path" x-text="action.file_path"></div>
+                                        <div class="text-xs text-dark-500 truncate" x-show="action.file_path" x-text="action.file_path"></div>
                                         <div class="text-xs text-dark-500" x-text="formatDate(action.created_at)"></div>
                                         <!-- Error preview -->
                                         <div class="text-xs text-red-400 mt-1 truncate" x-show="action.error_message" x-text="action.error_message"></div>
@@ -2107,15 +2119,25 @@
                         <div class="flex items-center gap-3">
                             <span class="text-2xl">⚡</span>
                             <div>
-                                <h2 class="text-lg font-medium">Action Details</h2>
-                                <div class="flex items-center gap-2 mt-1">
-                                    <span class="px-2 py-0.5 bg-dark-700 rounded text-xs font-mono" x-text="selectedAction.action_type"></span>
+                                <h2 class="text-lg font-medium" x-text="selectedAction.suggestion_title || 'Action Details'"></h2>
+                                <div class="flex items-center gap-2 mt-1 flex-wrap">
                                     <span class="px-2 py-0.5 rounded text-xs"
                                         :class="{
                                             'bg-green-500/20 text-green-400': selectedAction.status === 'success',
                                             'bg-red-500/20 text-red-400': selectedAction.status === 'failed',
                                             'bg-yellow-500/20 text-yellow-400': selectedAction.status === 'rolled_back'
                                         }" x-text="selectedAction.status"></span>
+                                    <span class="px-2 py-0.5 rounded text-xs"
+                                        :class="{
+                                            'bg-purple-500/20 text-purple-400': selectedAction.suggestion_category === 'performance',
+                                            'bg-blue-500/20 text-blue-400': selectedAction.suggestion_category === 'reliability',
+                                            'bg-green-500/20 text-green-400': selectedAction.suggestion_category === 'config',
+                                            'bg-orange-500/20 text-orange-400': selectedAction.suggestion_category === 'prompt',
+                                            'bg-cyan-500/20 text-cyan-400': selectedAction.suggestion_category === 'script',
+                                            'bg-dark-600 text-dark-400': !selectedAction.suggestion_category
+                                        }"
+                                        x-show="selectedAction.suggestion_category"
+                                        x-text="selectedAction.suggestion_category"></span>
                                     <span class="text-dark-500 text-xs" x-text="selectedAction.job_id"></span>
                                 </div>
                             </div>

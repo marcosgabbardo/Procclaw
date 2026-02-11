@@ -1877,10 +1877,19 @@ class Database:
             return cursor.rowcount > 0
 
     def get_healing_action(self, action_id: int) -> dict | None:
-        """Get a healing action by ID."""
+        """Get a healing action by ID with suggestion info."""
         with self._connect() as conn:
             cursor = conn.execute(
-                "SELECT * FROM healing_actions WHERE id = ?",
+                """
+                SELECT 
+                    a.*,
+                    s.title as suggestion_title,
+                    s.category as suggestion_category,
+                    s.severity as suggestion_severity
+                FROM healing_actions a
+                LEFT JOIN healing_suggestions s ON a.suggestion_id = s.id
+                WHERE a.id = ?
+                """,
                 (action_id,),
             )
             row = cursor.fetchone()
@@ -1896,23 +1905,33 @@ class Database:
         offset: int = 0,
     ) -> list[dict]:
         """Get healing actions with optional filters."""
-        query = "SELECT * FROM healing_actions WHERE 1=1"
+        # JOIN with suggestions to get title and category
+        query = """
+            SELECT 
+                a.*,
+                s.title as suggestion_title,
+                s.category as suggestion_category,
+                s.severity as suggestion_severity
+            FROM healing_actions a
+            LEFT JOIN healing_suggestions s ON a.suggestion_id = s.id
+            WHERE 1=1
+        """
         params: list = []
         
         if job_id:
-            query += " AND job_id = ?"
+            query += " AND a.job_id = ?"
             params.append(job_id)
         if suggestion_id:
-            query += " AND suggestion_id = ?"
+            query += " AND a.suggestion_id = ?"
             params.append(suggestion_id)
         if status:
-            query += " AND status = ?"
+            query += " AND a.status = ?"
             params.append(status)
         if can_rollback is not None:
-            query += " AND can_rollback = ?"
+            query += " AND a.can_rollback = ?"
             params.append(1 if can_rollback else 0)
         
-        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        query += " ORDER BY a.created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         
         with self._connect() as conn:

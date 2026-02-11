@@ -318,6 +318,10 @@ class HealingActionDetail(BaseModel):
     execution_duration_ms: int | None = None
     ai_session_key: str | None = None
     created_at: str
+    # From joined suggestion
+    suggestion_title: str | None = None
+    suggestion_category: str | None = None
+    suggestion_severity: str | None = None
 
 
 class ApproveSuggestionRequest(BaseModel):
@@ -1057,6 +1061,9 @@ def create_app() -> FastAPI:
             execution_duration_ms=action.get("execution_duration_ms"),
             ai_session_key=action.get("ai_session_key"),
             created_at=action.get("created_at", ""),
+            suggestion_title=action.get("suggestion_title"),
+            suggestion_category=action.get("suggestion_category"),
+            suggestion_severity=action.get("suggestion_severity"),
         ).model_dump()
 
     @app.post("/api/v1/healing/actions/{action_id}/rollback")
