@@ -511,3 +511,92 @@ class TestAutoApply:
         suggestions = engine._parse_ai_response(response, job_config.self_healing)
         assert len(suggestions) == 1
         assert suggestions[0].auto_apply is False  # Blocked by severity
+
+
+class TestHealingQueue:
+    """Tests for healing queue behavior."""
+    
+    def test_semaphore_initialized(self, engine):
+        """Test that semaphore is initialized."""
+        assert hasattr(engine, '_semaphore')
+        assert engine._semaphore._value == 1
+    
+    def test_get_running_openclaw_jobs_empty(self, engine, mock_supervisor):
+        """Test no running jobs returns empty list."""
+        result = engine._get_running_openclaw_jobs()
+        assert result == []
+    
+    def test_get_running_openclaw_jobs_with_running(self, engine, mock_supervisor):
+        """Test detection of running openclaw jobs."""
+        # Add an openclaw job
+        job_config = MockJobConfig("oc-job", type="openclaw")
+        mock_supervisor.jobs.jobs["oc-job"] = job_config
+        
+        # Simulate running process
+        mock_supervisor._processes = {"oc-job": "mock_process"}
+        
+        result = engine._get_running_openclaw_jobs()
+        assert "oc-job" in result
+    
+    def test_get_running_openclaw_jobs_ignores_non_openclaw(self, engine, mock_supervisor):
+        """Test that non-openclaw jobs are ignored."""
+        # Add a manual job
+        job_config = MockJobConfig("manual-job", type="manual")
+        mock_supervisor.jobs.jobs["manual-job"] = job_config
+        
+        # Simulate running process
+        mock_supervisor._processes = {"manual-job": "mock_process"}
+        
+        result = engine._get_running_openclaw_jobs()
+        assert result == []
+    
+    @pytest.mark.asyncio
+    async def test_wait_for_openclaw_slot_immediate(self, engine, mock_supervisor):
+        """Test immediate slot available."""
+        # No running jobs
+        result = await engine._wait_for_openclaw_slot()
+        assert result is True
+    
+    @pytest.mark.asyncio
+    async def test_semaphore_prevents_parallel(self, engine, mock_supervisor, temp_db):
+        """Test that semaphore prevents parallel reviews."""
+        job_config = MockJobConfig("test-job")
+        mock_supervisor.jobs.jobs["test-job"] = job_config
+        
+        # Track execution order
+        execution_log = []
+        
+        async def mock_review(job_id, delay):
+            execution_log.append(f"start:{job_id}")
+            await asyncio.sleep(delay)
+            execution_log.append(f"end:{job_id}")
+        
+        # Patch the internal method
+        original = engine._run_review_internal
+        
+        async def patched(*args, **kwargs):
+            job_id = args[0]
+            await mock_review(job_id, 0.1)
+            return 1
+        
+        engine._run_review_internal = patched
+        
+        try:
+            # Start two reviews "simultaneously"
+            mock_supervisor.jobs.jobs["job-a"] = MockJobConfig("job-a")
+            mock_supervisor.jobs.jobs["job-b"] = MockJobConfig("job-b")
+            
+            task1 = asyncio.create_task(engine.run_review("job-a"))
+            task2 = asyncio.create_task(engine.run_review("job-b"))
+            
+            await asyncio.gather(task1, task2)
+            
+            # Verify sequential execution (not interleaved)
+            # Should be: start:a, end:a, start:b, end:b (or b then a)
+            assert len(execution_log) == 4
+            # First job should complete before second starts
+            first_end_idx = next(i for i, x in enumerate(execution_log) if x.startswith("end:"))
+            second_start_idx = next(i for i, x in enumerate(execution_log[first_end_idx:]) if x.startswith("start:")) + first_end_idx
+            assert first_end_idx < second_start_idx
+        finally:
+            engine._run_review_internal = original

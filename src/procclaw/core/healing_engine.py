@@ -79,12 +79,82 @@ class HealingEngine:
     2. Sends data to AI for analysis
     3. Generates improvement suggestions
     4. Optionally auto-applies low-risk changes
+    
+    Queue behavior:
+    - Only one healing review runs at a time (semaphore)
+    - Healing waits for OpenClaw jobs to finish before running
+    - This prevents token competition with real jobs
     """
+    
+    # How long to wait between checks for openclaw jobs (seconds)
+    OPENCLAW_CHECK_INTERVAL = 5
+    # Maximum time to wait for openclaw jobs before giving up (seconds)
+    OPENCLAW_MAX_WAIT = 300  # 5 minutes
     
     def __init__(self, db: "Database", supervisor: "Supervisor"):
         self.db = db
         self.supervisor = supervisor
         self._running_reviews: dict[str, int] = {}  # job_id -> review_id
+        self._semaphore = asyncio.Semaphore(1)  # Only 1 healing at a time
+    
+    def _get_running_openclaw_jobs(self) -> list[str]:
+        """Get list of currently running OpenClaw jobs.
+        
+        Returns:
+            List of job IDs that are type=openclaw and currently running
+        """
+        running = []
+        
+        # Get all jobs - handle both real supervisor and mocks
+        jobs_dict = {}
+        if hasattr(self.supervisor, 'jobs'):
+            if hasattr(self.supervisor.jobs, 'jobs'):
+                # Real supervisor: self.supervisor.jobs.jobs
+                jobs_dict = self.supervisor.jobs.jobs
+            elif hasattr(self.supervisor.jobs, 'items'):
+                # Dict-like mock
+                jobs_dict = dict(self.supervisor.jobs.items())
+            elif isinstance(self.supervisor.jobs, dict):
+                jobs_dict = self.supervisor.jobs
+        
+        # Check each openclaw job
+        for job_id, job_config in jobs_dict.items():
+            job_type = getattr(job_config.type, 'value', str(job_config.type))
+            if job_type == "openclaw":
+                # Check if this job has a running process
+                if hasattr(self.supervisor, '_processes'):
+                    if job_id in self.supervisor._processes:
+                        running.append(job_id)
+        
+        return running
+    
+    async def _wait_for_openclaw_slot(self) -> bool:
+        """Wait until no OpenClaw jobs are running.
+        
+        Returns:
+            True if slot became available, False if timed out
+        """
+        start_time = asyncio.get_event_loop().time()
+        
+        while True:
+            running = self._get_running_openclaw_jobs()
+            
+            if not running:
+                return True
+            
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed >= self.OPENCLAW_MAX_WAIT:
+                logger.warning(
+                    f"Timed out waiting for OpenClaw jobs: {running} "
+                    f"(waited {elapsed:.0f}s)"
+                )
+                return False
+            
+            logger.debug(
+                f"Waiting for OpenClaw jobs to finish: {running} "
+                f"(waited {elapsed:.0f}s)"
+            )
+            await asyncio.sleep(self.OPENCLAW_CHECK_INTERVAL)
     
     async def run_review(
         self,
@@ -95,11 +165,53 @@ class HealingEngine:
     ) -> int:
         """Run a healing review for a job.
         
+        This method:
+        1. Acquires semaphore (only 1 healing at a time)
+        2. Waits for OpenClaw jobs to finish (lower priority than real jobs)
+        3. Runs the actual review
+        
         Args:
             job_id: Job to analyze
             job_config: Optional job config (fetched if not provided)
             trigger: What triggered this review ('scheduled', 'failure', 'sla_breach', 'manual')
             failed_run_id: Specific run ID when triggered by failure (reactive mode)
+            
+        Returns:
+            Review ID
+        """
+        # Acquire semaphore - only 1 healing at a time
+        async with self._semaphore:
+            logger.debug(f"Acquired healing semaphore for {job_id}")
+            
+            # Wait for OpenClaw jobs to finish
+            if not await self._wait_for_openclaw_slot():
+                logger.warning(f"Skipping healing for {job_id}: OpenClaw jobs still running")
+                # Create a skipped review record
+                review_id = self.db.create_healing_review(job_id)
+                self.db.update_healing_review(
+                    review_id,
+                    status="skipped",
+                    finished_at=datetime.now(),
+                    error_message="Timed out waiting for OpenClaw jobs",
+                )
+                return review_id
+            
+            return await self._run_review_internal(job_id, job_config, trigger, failed_run_id)
+    
+    async def _run_review_internal(
+        self,
+        job_id: str,
+        job_config: JobConfig | None = None,
+        trigger: str = "scheduled",
+        failed_run_id: int | None = None,
+    ) -> int:
+        """Internal review logic (called after acquiring semaphore).
+        
+        Args:
+            job_id: Job to analyze
+            job_config: Optional job config (fetched if not provided)
+            trigger: What triggered this review
+            failed_run_id: Specific run ID when triggered by failure
             
         Returns:
             Review ID
