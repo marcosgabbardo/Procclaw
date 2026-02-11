@@ -1906,7 +1906,29 @@
                     
                     <!-- Actions Sub-tab -->
                     <div x-show="healingSubTab === 'actions'" class="space-y-3">
-                        <template x-if="healingActions.length === 0">
+                        <!-- Pending action (currently applying) -->
+                        <template x-if="pendingAction">
+                            <div class="bg-dark-800 border border-accent-500/50 rounded-xl p-4 animate-pulse-slow">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <div class="flex items-center gap-2 mb-1">
+                                            <span class="px-2 py-0.5 bg-dark-700 rounded text-xs font-mono" x-text="pendingAction.action_type"></span>
+                                            <span class="text-dark-500" x-text="pendingAction.job_id"></span>
+                                        </div>
+                                        <div class="text-sm text-dark-300" x-text="pendingAction.title"></div>
+                                        <div class="text-sm text-dark-400" x-show="pendingAction.file_path" x-text="pendingAction.file_path"></div>
+                                        <div class="text-xs text-dark-500" x-text="formatDate(pendingAction.created_at)"></div>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="px-2 py-1 rounded text-xs bg-accent-500/20 text-accent-400 flex items-center gap-1">
+                                            <span class="animate-spin">⏳</span> applying...
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                        
+                        <template x-if="healingActions.length === 0 && !pendingAction">
                             <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
                                 <p class="text-4xl mb-3">⚡</p>
                                 <p>No actions taken yet</p>
@@ -3220,6 +3242,7 @@
                 showSuggestionModal: false,
                 healingStats: null,
                 applyingSuggestionId: null,  // Track which suggestion is being applied
+                pendingAction: null,  // Show in Actions tab while applying
                 
                 // Forms
                 newJob: { 
@@ -4927,7 +4950,19 @@
                     
                     if (!confirm('Apply this suggestion? This will make actual changes to files.')) return;
                     
+                    // Find suggestion to show in Actions tab
+                    const suggestion = this.healingSuggestions.find(s => s.id === suggestionId);
+                    
                     this.applyingSuggestionId = suggestionId;
+                    this.pendingAction = suggestion ? {
+                        id: 'pending-' + suggestionId,
+                        job_id: suggestion.job_id,
+                        action_type: suggestion.category || 'apply',
+                        file_path: suggestion.file_path || null,
+                        status: 'applying',
+                        title: suggestion.title,
+                        created_at: new Date().toISOString()
+                    } : null;
                     this.toast('Applying suggestion... This may take up to a minute.', 'info');
                     
                     try {
@@ -4947,6 +4982,7 @@
                         this.toast('Failed to apply suggestion', 'error');
                     } finally {
                         this.applyingSuggestionId = null;
+                        this.pendingAction = null;
                     }
                 },
 
