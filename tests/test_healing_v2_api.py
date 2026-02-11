@@ -34,6 +34,37 @@ class MockConfig:
     api = Api()
 
 
+class MockHealingEngine:
+    """Mock healing engine for API tests."""
+    
+    def __init__(self, db: Database):
+        self.db = db
+        self._running_reviews = {}
+    
+    def is_review_running(self, job_id: str) -> bool:
+        return job_id in self._running_reviews
+    
+    def get_review_status(self, job_id: str):
+        review_id = self._running_reviews.get(job_id)
+        if review_id:
+            return self.db.get_healing_review(review_id)
+        return None
+    
+    async def run_review(self, job_id: str, job_config=None):
+        review_id = self.db.create_healing_review(job_id)
+        self.db.update_healing_review(review_id, status="completed")
+        return review_id
+    
+    async def apply_approved_suggestion(self, suggestion_id: int):
+        suggestion = self.db.get_healing_suggestion(suggestion_id)
+        if not suggestion:
+            return {"success": False, "error": "Suggestion not found"}
+        if suggestion["status"] != "approved":
+            return {"success": False, "error": "Not approved"}
+        self.db.update_healing_suggestion(suggestion_id, status="applied")
+        return {"success": True, "message": "Applied", "action_id": None}
+
+
 class MockSupervisor:
     """Mock supervisor for API tests."""
     
@@ -42,6 +73,7 @@ class MockSupervisor:
         self.jobs = MockJobsConfig()
         self.config = MockConfig()
         self._self_healer = MagicMock()
+        self._healing_engine = MockHealingEngine(db)
 
 
 @pytest.fixture
@@ -397,12 +429,7 @@ class TestTriggerReviewAPI:
         data = response.json()
         assert data["success"] is True
         assert data["job_id"] == "test-job"
-        assert "review_id" in data
-        
-        # Verify review was created
-        review = temp_db.get_healing_review(data["review_id"])
-        assert review is not None
-        assert review["job_id"] == "test-job"
+        assert data["status"] == "pending"  # Review runs async
     
     def test_trigger_review_job_not_found(self, client):
         """Test triggering review for non-existent job."""
@@ -411,3 +438,32 @@ class TestTriggerReviewAPI:
             json={"job_id": "non-existent-job"}
         )
         assert response.status_code == 404
+
+
+class TestApplySuggestionAPI:
+    """Tests for apply suggestion API."""
+    
+    def test_apply_approved_suggestion(self, client, temp_db):
+        """Test applying an approved suggestion."""
+        review_id = temp_db.create_healing_review("test-job")
+        suggestion_id = temp_db.create_healing_suggestion(
+            review_id, "test-job", "config", "low", "Title", "Desc"
+        )
+        # Approve first
+        temp_db.update_healing_suggestion(suggestion_id, status="approved")
+        
+        response = client.post(f"/api/v1/healing/suggestions/{suggestion_id}/apply")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+    
+    def test_apply_non_approved_fails(self, client, temp_db):
+        """Test that applying non-approved suggestion fails."""
+        review_id = temp_db.create_healing_review("test-job")
+        suggestion_id = temp_db.create_healing_suggestion(
+            review_id, "test-job", "config", "low", "Title", "Desc"
+        )
+        # Don't approve
+        
+        response = client.post(f"/api/v1/healing/suggestions/{suggestion_id}/apply")
+        assert response.status_code == 400

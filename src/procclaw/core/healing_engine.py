@@ -508,13 +508,12 @@ Set auto_apply=true only for trivial, low-risk changes.
         suggestion_id: int,
         suggestion: SuggestionData,
     ) -> bool:
-        """Apply a suggestion automatically."""
-        
-        # For now, just mark as applied
-        # TODO: Implement actual file modifications
+        """Apply a suggestion automatically (internal)."""
         
         logger.info(f"Auto-applying suggestion {suggestion_id}: {suggestion.title}")
         
+        # For auto-apply, we just mark as applied without actual changes
+        # Real changes require human review
         self.db.update_healing_suggestion(
             suggestion_id,
             status="applied",
@@ -523,6 +522,216 @@ Set auto_apply=true only for trivial, low-risk changes.
         )
         
         return True
+    
+    async def apply_approved_suggestion(
+        self,
+        suggestion_id: int,
+    ) -> dict:
+        """Apply an approved suggestion with actual changes.
+        
+        Args:
+            suggestion_id: The suggestion to apply
+            
+        Returns:
+            Result dict with action_id and status
+        """
+        suggestion = self.db.get_healing_suggestion(suggestion_id)
+        if not suggestion:
+            return {"success": False, "error": "Suggestion not found"}
+        
+        if suggestion["status"] != "approved":
+            return {"success": False, "error": f"Suggestion is not approved (status: {suggestion['status']})"}
+        
+        job_id = suggestion["job_id"]
+        affected_files = suggestion.get("affected_files") or []
+        suggested_change = suggestion.get("suggested_change")
+        
+        start_time = datetime.now()
+        
+        try:
+            # Determine action type from category
+            category = suggestion["category"]
+            if category == "prompt":
+                action_type = "edit_prompt"
+            elif category == "script":
+                action_type = "edit_script"
+            elif category == "config":
+                action_type = "edit_config"
+            else:
+                action_type = "manual"
+            
+            # For now, we need the AI to actually make the change
+            # This requires calling OpenClaw with the specific change request
+            if not affected_files or not suggested_change:
+                # Mark as applied but no actual change
+                self.db.update_healing_suggestion(
+                    suggestion_id,
+                    status="applied",
+                    applied_at=datetime.now(),
+                )
+                return {
+                    "success": True,
+                    "action_id": None,
+                    "message": "Suggestion applied (no file changes needed)",
+                }
+            
+            # Apply the change via AI
+            result = await self._apply_change_with_ai(
+                job_id=job_id,
+                file_path=affected_files[0] if affected_files else None,
+                suggested_change=suggested_change,
+            )
+            
+            duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            
+            if result["success"]:
+                # Record the action
+                action_id = self.db.create_healing_action(
+                    suggestion_id=suggestion_id,
+                    job_id=job_id,
+                    action_type=action_type,
+                    file_path=result.get("file_path"),
+                    original_content=result.get("original_content"),
+                    new_content=result.get("new_content"),
+                    status="success",
+                    execution_duration_ms=duration_ms,
+                    ai_session_key=result.get("session_key"),
+                )
+                
+                # Update suggestion
+                self.db.update_healing_suggestion(
+                    suggestion_id,
+                    status="applied",
+                    applied_at=datetime.now(),
+                    action_id=action_id,
+                )
+                
+                return {
+                    "success": True,
+                    "action_id": action_id,
+                    "message": "Suggestion applied successfully",
+                }
+            else:
+                # Record failed action
+                action_id = self.db.create_healing_action(
+                    suggestion_id=suggestion_id,
+                    job_id=job_id,
+                    action_type=action_type,
+                    file_path=affected_files[0] if affected_files else None,
+                    status="failed",
+                    error_message=result.get("error"),
+                    execution_duration_ms=duration_ms,
+                )
+                
+                self.db.update_healing_suggestion(
+                    suggestion_id,
+                    status="failed",
+                )
+                
+                return {
+                    "success": False,
+                    "action_id": action_id,
+                    "error": result.get("error", "Apply failed"),
+                }
+                
+        except Exception as e:
+            logger.error(f"Failed to apply suggestion {suggestion_id}: {e}")
+            
+            self.db.update_healing_suggestion(
+                suggestion_id,
+                status="failed",
+            )
+            
+            return {"success": False, "error": str(e)}
+    
+    async def _apply_change_with_ai(
+        self,
+        job_id: str,
+        file_path: str | None,
+        suggested_change: str,
+    ) -> dict:
+        """Use AI to apply a suggested change to a file."""
+        
+        if not file_path:
+            return {"success": True}  # No file to change
+        
+        file_path_obj = Path(file_path).expanduser()
+        
+        if not file_path_obj.exists():
+            return {"success": False, "error": f"File not found: {file_path}"}
+        
+        # Read original content
+        try:
+            original_content = file_path_obj.read_text()
+        except Exception as e:
+            return {"success": False, "error": f"Cannot read file: {e}"}
+        
+        # Build prompt for AI to make the change
+        prompt = f"""Apply this change to the file.
+
+## File: {file_path}
+
+### Current Content
+```
+{original_content[:3000]}
+```
+
+### Requested Change
+{suggested_change}
+
+### Instructions
+1. Apply the requested change to the file content
+2. Output ONLY the new file content, no explanations
+3. Keep the rest of the file unchanged
+4. Start your response with ```
+"""
+        
+        try:
+            # Call OpenClaw for the change
+            proc = await asyncio.create_subprocess_exec(
+                "openclaw", "run",
+                "--model", "sonnet",
+                "--message", prompt,
+                "--timeout", "60",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=90
+            )
+            
+            response = stdout.decode()
+            
+            # Extract new content from response
+            import re
+            code_match = re.search(r'```(?:\w+)?\s*(.*?)\s*```', response, re.DOTALL)
+            if code_match:
+                new_content = code_match.group(1)
+            else:
+                # Try to use the whole response
+                new_content = response.strip()
+            
+            if not new_content or new_content == original_content:
+                return {"success": False, "error": "AI returned empty or unchanged content"}
+            
+            # Write new content
+            file_path_obj.write_text(new_content)
+            
+            return {
+                "success": True,
+                "file_path": str(file_path_obj),
+                "original_content": original_content,
+                "new_content": new_content,
+            }
+            
+        except asyncio.TimeoutError:
+            return {"success": False, "error": "AI timed out"}
+        except FileNotFoundError:
+            return {"success": False, "error": "OpenClaw CLI not found"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
     
     def get_review_status(self, job_id: str) -> dict | None:
         """Get status of running review for a job."""

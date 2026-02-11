@@ -965,6 +965,32 @@ def create_app() -> FastAPI:
             "suggestion_id": suggestion_id,
         }
 
+    @app.post("/api/v1/healing/suggestions/{suggestion_id}/apply")
+    async def apply_healing_suggestion(
+        suggestion_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Apply an approved healing suggestion.
+        
+        This will use AI to make the actual file changes.
+        """
+        supervisor = get_supervisor()
+        
+        result = await supervisor._healing_engine.apply_approved_suggestion(suggestion_id)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "Failed to apply suggestion")
+            )
+        
+        return {
+            "success": True,
+            "message": result.get("message", "Suggestion applied"),
+            "suggestion_id": suggestion_id,
+            "action_id": result.get("action_id"),
+        }
+
     @app.get("/api/v1/healing/actions")
     async def list_healing_actions(
         job_id: str | None = Query(None),
@@ -1118,6 +1144,7 @@ def create_app() -> FastAPI:
         _auth: bool = Depends(verify_token),
     ):
         """Manually trigger a healing review for a job."""
+        import asyncio
         supervisor = get_supervisor()
         
         # Verify job exists
@@ -1125,16 +1152,30 @@ def create_app() -> FastAPI:
         if not job_config:
             raise HTTPException(status_code=404, detail=f"Job '{request.job_id}' not found")
         
-        # Create a new review
-        review_id = supervisor.db.create_healing_review(request.job_id)
+        # Check if review is already running
+        if supervisor._healing_engine.is_review_running(request.job_id):
+            existing = supervisor._healing_engine.get_review_status(request.job_id)
+            return {
+                "success": False,
+                "message": f"Review already running for job '{request.job_id}'",
+                "review_id": existing["id"] if existing else None,
+                "job_id": request.job_id,
+            }
         
-        # TODO: Queue the review for processing by the healing engine
-        # For now, just create the record
+        # Trigger the review asynchronously
+        async def run_review():
+            try:
+                await supervisor._healing_engine.run_review(request.job_id, job_config)
+            except Exception as e:
+                logger.error(f"Review failed for {request.job_id}: {e}")
         
+        asyncio.create_task(run_review())
+        
+        # Return immediately with pending status
         return {
             "success": True,
             "message": f"Healing review triggered for job '{request.job_id}'",
-            "review_id": review_id,
+            "status": "pending",
             "job_id": request.job_id,
         }
 
