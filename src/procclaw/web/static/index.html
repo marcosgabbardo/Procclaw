@@ -3492,6 +3492,13 @@
                         if (this.autoRefreshLogs && this.currentTab === 'logs') this.loadLogs();
                     }, 5000);
                     
+                    // Auto-refresh healing data when switching to healing tab
+                    this.$watch('currentTab', (newTab) => {
+                        if (newTab === 'healing') {
+                            this.loadHealingData();
+                        }
+                    });
+                    
                     document.addEventListener('keydown', (e) => {
                         if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
                         if (e.key === 'r' && !e.metaKey && !e.ctrlKey) { this.refresh(); e.preventDefault(); }
@@ -3500,6 +3507,7 @@
                         if (e.key === '3') { this.currentTab = 'logs'; e.preventDefault(); }
                         if (e.key === '4') { this.currentTab = 'dlq'; e.preventDefault(); }
                         if (e.key === '5') { this.currentTab = 'config'; e.preventDefault(); }
+                        if (e.key === '6') { this.currentTab = 'healing'; e.preventDefault(); }
                         if (e.key === 'Escape') { this.selectedJob = null; this.showCreateModal = false; this.showEditModal = false; this.showTagInput = false; this.showColumnSettings = false; }
                         if (e.key === '/' && this.currentTab === 'jobs') { 
                             document.querySelector('input[placeholder="Search jobs..."]')?.focus(); 
