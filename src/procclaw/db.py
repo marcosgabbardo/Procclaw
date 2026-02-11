@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -285,6 +285,7 @@ CREATE TABLE IF NOT EXISTS healing_suggestions (
     expected_impact TEXT,
     affected_files TEXT,
     proposed_content TEXT,
+    current_content TEXT,
     target_file TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     reviewed_at TEXT,
@@ -647,6 +648,14 @@ class Database:
             # Add target_file column (which file will be modified)
             try:
                 conn.execute("ALTER TABLE healing_suggestions ADD COLUMN target_file TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column might already exist
+        
+        if to_version >= 13:
+            # Migration to version 13: Add current_content to suggestions for diff view
+            logger.info("Migrating to version 13: Adding current_content to healing_suggestions")
+            try:
+                conn.execute("ALTER TABLE healing_suggestions ADD COLUMN current_content TEXT")
             except sqlite3.OperationalError:
                 pass  # Column might already exist
         
@@ -1672,6 +1681,7 @@ class Database:
         expected_impact: str | None = None,
         affected_files: list[str] | None = None,
         proposed_content: str | None = None,
+        current_content: str | None = None,
         target_file: str | None = None,
     ) -> int:
         """Create a new healing suggestion.
@@ -1688,13 +1698,13 @@ class Database:
                 INSERT INTO healing_suggestions 
                 (review_id, job_id, category, severity, title, description,
                  current_state, suggested_change, expected_impact, affected_files,
-                 proposed_content, target_file, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                 proposed_content, current_content, target_file, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
                 """,
                 (
                     review_id, job_id, category, severity, title, description,
                     current_state, suggested_change, expected_impact, affected_files_json,
-                    proposed_content, target_file,
+                    proposed_content, current_content, target_file,
                     datetime.now().isoformat(),
                 ),
             )

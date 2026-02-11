@@ -67,6 +67,7 @@ class SuggestionData:
     auto_apply: bool = False
     # Pre-generated content for review before apply
     proposed_content: str | None = None  # The new file content
+    current_content: str | None = None  # The current file content (for diff)
     target_file: str | None = None  # Which file to modify
 
 
@@ -268,6 +269,7 @@ class HealingEngine:
                     expected_impact=suggestion.expected_impact,
                     affected_files=suggestion.affected_files,
                     proposed_content=suggestion.proposed_content,
+                    current_content=suggestion.current_content,
                     target_file=suggestion.target_file,
                 )
                 
@@ -681,7 +683,11 @@ Look for improvements in these areas:
 - **Prompt**: Clearer instructions? Better examples? Reduce tokens?
 - **Script**: Code improvements? Edge cases? Better logging?
 
-IMPORTANT:
+CRITICAL RULES:
+- **NEVER ask questions or request clarification.** You have all the information you need.
+- If you are uncertain about something, make your best recommendation and note the uncertainty in the description.
+- If you truly cannot make any recommendation, return an empty suggestions array: {"suggestions": []}
+- You MUST respond ONLY with JSON. No prose, no questions, no conversation.
 - You MUST provide at least one suggestion
 - Even successful jobs can be improved (faster, cheaper, more reliable)
 - Look at run duration - could it be faster?
@@ -799,6 +805,12 @@ Output your analysis in JSON format:
   ]
 }}
 ```
+
+CRITICAL RULES:
+- **NEVER ask questions or request clarification.** You have all the data you need above.
+- If uncertain, make your best recommendation and note uncertainty in the description.
+- If you cannot make any recommendation, return: {{"suggestions": []}}
+- Respond ONLY with JSON. No prose, no questions, no conversation.
 
 ### Rules for proposed_content:
 1. MUST be complete - the entire file content, not just a snippet
@@ -968,6 +980,7 @@ Output your analysis in JSON format:
                     affected_files=s.get("affected_files"),
                     auto_apply=auto_apply,
                     proposed_content=s.get("proposed_content"),
+                    current_content=self._read_current_content(s.get("target_file")),
                     target_file=s.get("target_file"),
                 ))
             
@@ -1140,6 +1153,19 @@ Output your analysis in JSON format:
             
             return {"success": False, "action_id": action_id, "error": str(e)}
     
+    @staticmethod
+    def _read_current_content(target_file: str | None) -> str | None:
+        """Read current content of a target file for diff display."""
+        if not target_file:
+            return None
+        try:
+            expanded = Path(target_file).expanduser()
+            if expanded.exists() and expanded.is_file():
+                return expanded.read_text()
+        except Exception:
+            pass
+        return None
+
     def _validate_file_for_job(self, job_id: str, file_path: str) -> tuple[bool, str | None]:
         """Validate that a file belongs to a specific job.
         

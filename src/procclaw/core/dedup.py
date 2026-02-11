@@ -125,11 +125,28 @@ class DeduplicationManager:
             
             with self._lock:
                 for run in recent:
-                    key = f"{run.job_id}:{run.fingerprint}" if hasattr(run, 'fingerprint') else run.job_id
-                    self._cache[key] = (run.started_at, run.run_id)
+                    # sqlite3.Row supports both dict-style and attribute access
+                    job_id = run["job_id"] if isinstance(run, dict) or hasattr(run, "keys") else getattr(run, "job_id", None)
+                    run_id = run["id"] if isinstance(run, dict) or hasattr(run, "keys") else getattr(run, "run_id", None)
+                    started_at = run["started_at"] if isinstance(run, dict) or hasattr(run, "keys") else getattr(run, "started_at", None)
+                    fingerprint = run["fingerprint"] if (isinstance(run, dict) or hasattr(run, "keys")) and "fingerprint" in run.keys() else None
+                    idem_key = run["idempotency_key"] if (isinstance(run, dict) or hasattr(run, "keys")) and "idempotency_key" in run.keys() else None
                     
-                    if hasattr(run, 'idempotency_key') and run.idempotency_key:
-                        self._idempotency_cache[run.idempotency_key] = (run.started_at, run.run_id)
+                    if not job_id:
+                        continue
+                    
+                    # Convert string timestamp to datetime if needed
+                    if isinstance(started_at, str):
+                        try:
+                            started_at = datetime.fromisoformat(started_at)
+                        except (ValueError, TypeError):
+                            continue
+                    
+                    key = f"{job_id}:{fingerprint}" if fingerprint else job_id
+                    self._cache[key] = (started_at, run_id)
+                    
+                    if idem_key:
+                        self._idempotency_cache[idem_key] = (started_at, run_id)
             
             logger.debug(f"Loaded {len(recent)} recent executions for dedup")
         except Exception as e:

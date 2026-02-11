@@ -99,7 +99,30 @@ class Watchdog:
         
         # Track already-alerted missed runs to avoid duplicate alerts
         self._alerted_misses: set[tuple[str, datetime]] = set()
+        self._startup_suppressed = False
     
+    def _suppress_startup_alerts(self) -> None:
+        """Pre-populate alerted_misses with current missed runs on startup.
+        
+        This prevents alert storms when the daemon restarts — we only want
+        to alert about NEW missed runs, not ones that were already missed
+        before the restart.
+        """
+        try:
+            missed = self.check_all_jobs()
+            logger.info(f"Watchdog startup: found {len(missed)} pre-existing missed runs")
+            for miss in missed:
+                self._alerted_misses.add((miss.job_id, miss.expected_time))
+            if missed:
+                logger.info(
+                    f"Watchdog: suppressed {len(missed)} pre-existing missed run alerts on startup "
+                    f"({', '.join(m.job_id for m in missed)})"
+                )
+            else:
+                logger.info("Watchdog: no pre-existing missed runs to suppress")
+        except Exception as e:
+            logger.warning(f"Failed to suppress startup alerts: {e}", exc_info=True)
+
     def _get_schedule_interval_seconds(self, schedule: str) -> int:
         """Estimate the interval between runs from a cron expression.
         
@@ -269,6 +292,12 @@ class Watchdog:
     async def run(self) -> None:
         """Run the watchdog loop."""
         self._running = True
+        
+        # Suppress pre-existing missed runs on first check
+        if not self._startup_suppressed:
+            self._suppress_startup_alerts()
+            self._startup_suppressed = True
+        
         logger.info(f"Watchdog started (check interval: {self._check_interval}s)")
         
         while self._running:
@@ -286,6 +315,11 @@ class Watchdog:
         missed_runs = self.check_all_jobs()
         
         for miss in missed_runs:
+            # Skip already alerted misses
+            miss_key = (miss.job_id, miss.expected_time)
+            if miss_key in self._alerted_misses:
+                continue
+            
             logger.warning(
                 f"Missed run detected: {miss.job_id} "
                 f"(expected: {miss.expected_time}, "
@@ -293,7 +327,6 @@ class Watchdog:
             )
             
             # Mark as alerted
-            miss_key = (miss.job_id, miss.expected_time)
             self._alerted_misses.add(miss_key)
             
             # Trigger callback

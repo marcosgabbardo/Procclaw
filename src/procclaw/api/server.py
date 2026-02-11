@@ -272,6 +272,7 @@ class HealingSuggestionSummary(BaseModel):
     expected_impact: str | None = None
     affected_files: list[str] = []
     proposed_content: str | None = None
+    current_content: str | None = None
     target_file: str | None = None
     status: str
     created_at: str
@@ -291,6 +292,7 @@ class HealingSuggestionDetail(BaseModel):
     expected_impact: str | None = None
     affected_files: list[str] = []
     proposed_content: str | None = None  # Pre-generated file content
+    current_content: str | None = None  # Current file content (for diff)
     target_file: str | None = None  # File to modify
     status: str
     reviewed_at: str | None = None
@@ -890,6 +892,7 @@ def create_app() -> FastAPI:
                     expected_impact=s.get("expected_impact"),
                     affected_files=s.get("affected_files", []),
                     proposed_content=s.get("proposed_content"),
+                    current_content=s.get("current_content"),
                     target_file=s.get("target_file"),
                     status=s["status"],
                     created_at=s.get("created_at", ""),
@@ -924,6 +927,7 @@ def create_app() -> FastAPI:
             expected_impact=suggestion.get("expected_impact"),
             affected_files=suggestion.get("affected_files", []),
             proposed_content=suggestion.get("proposed_content"),
+            current_content=suggestion.get("current_content"),
             target_file=suggestion.get("target_file"),
             status=suggestion["status"],
             reviewed_at=suggestion.get("reviewed_at"),
@@ -2026,7 +2030,7 @@ def create_app() -> FastAPI:
         _auth: bool = Depends(verify_token),
     ):
         """Get job logs. Tries file first, falls back to SQLite if empty."""
-        from procclaw.config import DEFAULT_CONFIG_DIR
+        from procclaw.config import DEFAULT_LOGS_DIR
 
         supervisor = get_supervisor()
         job = supervisor.jobs.get_job(job_id)
@@ -2035,9 +2039,9 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
         if error:
-            log_path = job.get_log_stderr_path(DEFAULT_CONFIG_DIR, job_id)
+            log_path = job.get_log_stderr_path(DEFAULT_LOGS_DIR, job_id)
         else:
-            log_path = job.get_log_stdout_path(DEFAULT_CONFIG_DIR, job_id)
+            log_path = job.get_log_stdout_path(DEFAULT_LOGS_DIR, job_id)
 
         # Try reading from file first (for running jobs)
         file_lines = []
