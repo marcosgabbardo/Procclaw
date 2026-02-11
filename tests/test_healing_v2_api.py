@@ -467,3 +467,45 @@ class TestApplySuggestionAPI:
         
         response = client.post(f"/api/v1/healing/suggestions/{suggestion_id}/apply")
         assert response.status_code == 400
+
+
+class TestHealingStatsAPI:
+    """Tests for healing stats API."""
+    
+    def test_get_stats_empty(self, client):
+        """Test getting stats when empty."""
+        response = client.get("/api/v1/healing/stats")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["suggestions"]["total"] == 0
+        assert data["reviews"]["total"] == 0
+        assert data["actions"]["total"] == 0
+    
+    def test_get_stats_with_data(self, client, temp_db):
+        """Test getting stats with data."""
+        # Create some data
+        review_id = temp_db.create_healing_review("job-1")
+        temp_db.update_healing_review(review_id, status="completed")
+        
+        s1 = temp_db.create_healing_suggestion(
+            review_id, "job-1", "prompt", "high", "Title 1", "Desc 1"
+        )
+        s2 = temp_db.create_healing_suggestion(
+            review_id, "job-1", "config", "low", "Title 2", "Desc 2"
+        )
+        temp_db.update_healing_suggestion(s1, status="applied")
+        temp_db.update_healing_suggestion(s2, status="rejected")
+        
+        response = client.get("/api/v1/healing/stats")
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data["suggestions"]["total"] == 2
+        assert data["suggestions"]["applied"] == 1
+        assert data["suggestions"]["rejected"] == 1
+        assert data["reviews"]["total"] == 1
+        assert data["reviews"]["completed"] == 1
+        assert "prompt" in data["by_category"]
+        assert "config" in data["by_category"]
+        assert "high" in data["by_severity"]
+        assert "low" in data["by_severity"]
