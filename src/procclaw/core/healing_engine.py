@@ -162,6 +162,7 @@ class HealingEngine:
         job_config: JobConfig | None = None,
         trigger: str = "scheduled",
         failed_run_id: int | None = None,
+        force: bool = False,
     ) -> int:
         """Run a healing review for a job.
         
@@ -175,6 +176,7 @@ class HealingEngine:
             job_config: Optional job config (fetched if not provided)
             trigger: What triggered this review ('scheduled', 'failure', 'sla_breach', 'manual')
             failed_run_id: Specific run ID when triggered by failure (reactive mode)
+            force: If True, analyze all runs ignoring min_runs and last review time
             
         Returns:
             Review ID
@@ -196,7 +198,7 @@ class HealingEngine:
                 )
                 return review_id
             
-            return await self._run_review_internal(job_id, job_config, trigger, failed_run_id)
+            return await self._run_review_internal(job_id, job_config, trigger, failed_run_id, force)
     
     async def _run_review_internal(
         self,
@@ -204,6 +206,7 @@ class HealingEngine:
         job_config: JobConfig | None = None,
         trigger: str = "scheduled",
         failed_run_id: int | None = None,
+        force: bool = False,
     ) -> int:
         """Internal review logic (called after acquiring semaphore).
         
@@ -240,7 +243,7 @@ class HealingEngine:
             
             # Collect context
             context = await self._collect_context(
-                job_id, job_config, scope, trigger=trigger, failed_run_id=failed_run_id
+                job_id, job_config, scope, trigger=trigger, failed_run_id=failed_run_id, force=force
             )
             
             # Run AI analysis
@@ -331,6 +334,7 @@ class HealingEngine:
         scope: Any,
         trigger: str = "scheduled",
         failed_run_id: int | None = None,
+        force: bool = False,
     ) -> AnalysisContext:
         """Collect all context data for analysis.
         
@@ -340,6 +344,7 @@ class HealingEngine:
             scope: What to analyze (logs, runs, ai_sessions, sla)
             trigger: What triggered this review ('scheduled', 'failure', 'sla_breach', 'manual')
             failed_run_id: Specific run ID when triggered by failure (reactive mode)
+            force: If True, analyze all recent runs ignoring time scope and min_runs
         """
         healing_config = job_config.self_healing
         
@@ -356,34 +361,40 @@ class HealingEngine:
                     runs = self.db.get_runs(job_id=job_id, status="failed", limit=1)
                 logger.debug(f"Reactive mode: analyzing {len(runs)} failed run(s)")
             else:
-                # PROACTIVE: Runs since last completed review
-                last_review = self.db.get_last_completed_review(job_id)
-                
-                if last_review and last_review.get("finished_at"):
-                    # Parse the finished_at timestamp
-                    finished_at = last_review["finished_at"]
-                    if isinstance(finished_at, str):
-                        since = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
-                    else:
-                        since = finished_at
-                    logger.debug(f"Proactive mode: analyzing runs since {since}")
+                # PROACTIVE: Runs since last completed review (or all recent if force)
+                if force:
+                    # Force mode: analyze all runs from last 30 days
+                    since = datetime.now() - timedelta(days=30)
+                    logger.debug(f"Proactive mode (FORCE): analyzing all runs since {since}")
                 else:
-                    # No previous review: last 7 days
-                    since = datetime.now() - timedelta(days=7)
-                    logger.debug(f"Proactive mode (no prior review): analyzing runs since {since}")
+                    last_review = self.db.get_last_completed_review(job_id)
+                    
+                    if last_review and last_review.get("finished_at"):
+                        # Parse the finished_at timestamp
+                        finished_at = last_review["finished_at"]
+                        if isinstance(finished_at, str):
+                            since = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+                        else:
+                            since = finished_at
+                        logger.debug(f"Proactive mode: analyzing runs since {since}")
+                    else:
+                        # No previous review: last 7 days
+                        since = datetime.now() - timedelta(days=7)
+                        logger.debug(f"Proactive mode (no prior review): analyzing runs since {since}")
                 
                 runs = self.db.get_runs(job_id=job_id, since=since, limit=100)
                 
-                # Check min_runs threshold
-                min_runs = healing_config.review_schedule.min_runs
-                if len(runs) < min_runs:
-                    logger.info(
-                        f"Skipping review for {job_id}: only {len(runs)} runs "
-                        f"since last review, need {min_runs}"
-                    )
-                    raise SkipReviewError(
-                        f"Insufficient runs: {len(runs)} < {min_runs} required"
-                    )
+                # Check min_runs threshold (skip if force)
+                if not force:
+                    min_runs = healing_config.review_schedule.min_runs
+                    if len(runs) < min_runs:
+                        logger.info(
+                            f"Skipping review for {job_id}: only {len(runs)} runs "
+                            f"since last review, need {min_runs}"
+                        )
+                        raise SkipReviewError(
+                            f"Insufficient runs: {len(runs)} < {min_runs} required"
+                        )
             
             recent_runs = [
                 {
@@ -570,7 +581,10 @@ class HealingEngine:
         prompt += """
 ## Instructions
 
-Analyze the job and output suggestions in JSON format:
+You MUST analyze the job and provide at least 1-3 suggestions for improvement.
+Even if the job is working, there's ALWAYS room for improvement.
+
+Output your analysis in JSON format:
 
 ```json
 {
@@ -579,28 +593,35 @@ Analyze the job and output suggestions in JSON format:
       "category": "performance|cost|reliability|security|config|prompt|script",
       "severity": "low|medium|high|critical",
       "title": "Short title",
-      "description": "Detailed description of the issue",
+      "description": "Detailed description of the issue or improvement opportunity",
       "current_state": "What's currently happening",
       "suggested_change": "What should be changed",
       "expected_impact": "Expected improvement",
-      "affected_files": ["list of files to modify"],
+      "affected_files": ["list of files to modify, if any"],
       "auto_apply": false
     }
   ]
 }
 ```
 
-Focus on:
-- Performance issues (slow runs, high resource usage)
-- Reliability problems (frequent failures, flaky behavior)
-- Cost optimization (reduce API calls, optimize prompts)
-- Security concerns (exposed credentials, unsafe practices)
-- Configuration improvements (better timeouts, retries)
-- Prompt improvements (clearer instructions, better examples)
-- Script bugs or improvements
+Look for improvements in these areas:
+- **Performance**: Slow runs? High resource usage? Could be faster?
+- **Reliability**: Any failures? Flaky behavior? Missing error handling? Retries?
+- **Cost**: Too many API calls? Verbose prompts? Unnecessary runs?
+- **Security**: Hardcoded secrets? Unsafe practices?
+- **Config**: Better timeouts? Schedule optimization? Resource limits?
+- **Prompt**: Clearer instructions? Better examples? Reduce tokens?
+- **Script**: Code improvements? Edge cases? Better logging?
 
-Only suggest changes with clear evidence from the data.
-Set auto_apply=true only for trivial, low-risk changes.
+IMPORTANT:
+- You MUST provide at least one suggestion
+- Even successful jobs can be improved (faster, cheaper, more reliable)
+- Look at run duration - could it be faster?
+- Look at schedule - is it optimal?
+- Look at logs - any warnings or inefficiencies?
+- If truly perfect, suggest monitoring or documentation improvements
+
+Set auto_apply=true only for trivial, low-risk config changes.
 """
         
         return prompt
@@ -646,6 +667,10 @@ Set auto_apply=true only for trivial, low-risk changes.
         
         suggestions = []
         
+        # Log raw response for debugging
+        logger.debug(f"AI response length: {len(response)}")
+        logger.debug(f"AI response preview: {response[:500]}...")
+        
         # Try to find JSON in response
         import re
         json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
@@ -654,14 +679,19 @@ Set auto_apply=true only for trivial, low-risk changes.
             json_match = re.search(r'\{[\s\S]*"suggestions"[\s\S]*\}', response)
         
         if not json_match:
-            logger.warning("No JSON found in AI response")
+            logger.warning(f"No JSON found in AI response. Full response: {response[:1000]}")
             return []
         
         try:
             json_str = json_match.group(1) if '```' in response else json_match.group(0)
             data = json.loads(json_str)
             
-            for s in data.get("suggestions", []):
+            raw_suggestions = data.get("suggestions", [])
+            logger.info(f"AI returned {len(raw_suggestions)} raw suggestions")
+            if not raw_suggestions:
+                logger.warning(f"AI returned empty suggestions array. Parsed data: {data}")
+            
+            for s in raw_suggestions:
                 # Validate category
                 category = s.get("category", "config")
                 if category not in [c.value for c in SuggestionCategory]:

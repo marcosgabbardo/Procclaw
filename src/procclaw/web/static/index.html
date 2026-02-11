@@ -4333,7 +4333,7 @@
                     await this.refresh();
                 },
 
-                async triggerJobHealing(jobId) {
+                async triggerJobHealing(jobId, force = true) {
                     try {
                         const res = await fetch('/api/v1/healing/trigger', {
                             method: 'POST',
@@ -4341,7 +4341,7 @@
                                 'Content-Type': 'application/json',
                                 ...this.authHeaders
                             },
-                            body: JSON.stringify({ job_id: jobId })
+                            body: JSON.stringify({ job_id: jobId, force: force })
                         });
                         const data = await res.json();
                         if (res.ok && data.success) {

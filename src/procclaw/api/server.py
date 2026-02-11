@@ -334,6 +334,7 @@ class RejectSuggestionRequest(BaseModel):
 class TriggerReviewRequest(BaseModel):
     """Request to trigger a healing review."""
     job_id: str
+    force: bool = False  # If True, analyze all recent runs ignoring time scope
 
 
 # Create FastAPI app
@@ -1167,7 +1168,9 @@ def create_app() -> FastAPI:
         # Trigger the review asynchronously
         async def run_review():
             try:
-                await supervisor._healing_engine.run_review(request.job_id, job_config)
+                await supervisor._healing_engine.run_review(
+                    request.job_id, job_config, trigger="manual", force=request.force
+                )
             except Exception as e:
                 logger.error(f"Review failed for {request.job_id}: {e}")
         
