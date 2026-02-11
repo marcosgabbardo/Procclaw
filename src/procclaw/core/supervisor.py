@@ -1639,6 +1639,12 @@ class Supervisor:
                     "on_give_up": job.self_healing.notify.on_give_up if job.self_healing.notify else True,
                     "session": job.self_healing.notify.session if job.self_healing.notify else "main",
                 } if job.self_healing.notify else None,
+                "business_log": {
+                    "path": job.self_healing.business_log.path,
+                    "max_lines": job.self_healing.business_log.max_lines,
+                    "summary_path": job.self_healing.business_log.summary_path,
+                    "context_prompt": job.self_healing.business_log.context_prompt,
+                } if job.self_healing.business_log else None,
             } if job.self_healing else None,
             # Healing status (is a review currently running?)
             "is_healing": self._healing_engine.is_review_running(job_id),

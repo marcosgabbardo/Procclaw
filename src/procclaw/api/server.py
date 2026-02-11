@@ -2668,6 +2668,60 @@ def create_app() -> FastAPI:
     # Additional Endpoints for Web UI
     # =========================================================================
 
+    @app.get("/api/v1/jobs/{job_id}/business-logs")
+    async def get_business_logs(
+        job_id: str,
+        lines: int = Query(200, ge=1, le=5000, description="Number of lines"),
+        event: str | None = Query(None, description="Filter by event type"),
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get business decision logs (JSONL) for a job."""
+        import json as json_mod
+        
+        supervisor = get_supervisor()
+        job = supervisor.jobs.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        bl = job.self_healing.business_log
+        if not bl or not bl.path:
+            return {"job_id": job_id, "entries": [], "total": 0, "event_types": []}
+        
+        from pathlib import Path
+        log_path = Path(bl.path).expanduser()
+        
+        if not log_path.exists():
+            return {"job_id": job_id, "entries": [], "total": 0, "event_types": []}
+        
+        try:
+            with open(log_path, "r") as f:
+                all_lines = f.readlines()
+            
+            entries = []
+            event_types = set()
+            for line in all_lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json_mod.loads(line)
+                    event_types.add(entry.get("event", "unknown"))
+                    if event and entry.get("event") != event:
+                        continue
+                    entries.append(entry)
+                except json_mod.JSONDecodeError:
+                    continue
+            
+            # Return last N entries
+            return {
+                "job_id": job_id,
+                "entries": entries[-lines:],
+                "total": len(entries),
+                "event_types": sorted(event_types),
+            }
+        except Exception as e:
+            return {"job_id": job_id, "entries": [], "total": 0, "error": str(e)}
+
     @app.get("/api/v1/daemon/logs")
     async def get_daemon_logs(
         lines: int = Query(100, description="Number of lines"),
