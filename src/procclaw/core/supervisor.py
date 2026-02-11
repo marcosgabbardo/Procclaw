@@ -373,8 +373,19 @@ class Supervisor:
 
     def reload_jobs(self) -> None:
         """Reload jobs configuration."""
+        from procclaw.sla import save_sla_snapshot
+        
         self.jobs = load_jobs()
         self._scheduler.update_jobs(self.jobs.get_enabled_jobs())
+        
+        # Save SLA snapshots for all jobs to track config changes
+        # This allows us to detect when schedule changed and filter SLA accordingly
+        for job_id, job in self.jobs.jobs.items():
+            try:
+                save_sla_snapshot(self.db, job_id, job)
+            except Exception as e:
+                logger.warning(f"Failed to save SLA snapshot for {job_id}: {e}")
+        
         logger.info(f"Reloaded {len(self.jobs.jobs)} jobs")
 
     def _get_last_run_info(self, job_id: str) -> tuple[datetime | None, int | None] | None:
@@ -2549,6 +2560,15 @@ class Supervisor:
 
         # Load scheduled jobs into scheduler
         self._scheduler.update_jobs(self.jobs.get_enabled_jobs())
+
+        # Save SLA snapshots for all jobs on startup to track config changes
+        # This allows detecting when schedule changes and filtering SLA accordingly
+        from procclaw.sla import save_sla_snapshot
+        for job_id, job in self.jobs.jobs.items():
+            try:
+                save_sla_snapshot(self.db, job_id, job)
+            except Exception as e:
+                logger.warning(f"Failed to save initial SLA snapshot for {job_id}: {e}")
 
         # Restore paused state from database for scheduled jobs
         for job_id in self.jobs.get_enabled_jobs():

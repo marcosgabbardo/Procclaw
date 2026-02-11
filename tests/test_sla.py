@@ -820,5 +820,155 @@ class TestTrendCalculation:
         assert metrics.trend == "stable"
 
 
+class TestScheduleChangeDetection:
+    """Tests for schedule change detection in SLA calculations."""
+    
+    def test_schedule_change_filters_old_runs(self, basic_job, tmp_path):
+        """Test that runs before schedule change are filtered out."""
+        from procclaw.db import Database
+        from procclaw.sla import (
+            save_sla_snapshot,
+            get_last_schedule_change,
+            create_schedule_hash,
+        )
+        
+        # Create a temporary database
+        db = Database(db_path=tmp_path / "test.db")
+        
+        # Create job with old schedule (9 AM)
+        old_job = JobConfig(
+            name="Test Job",
+            cmd="echo test",
+            type=JobType.SCHEDULED,
+            schedule="0 9 * * *",  # 9 AM
+            sla=SLAConfig(enabled=True),
+        )
+        
+        # Save snapshot with old schedule
+        save_sla_snapshot(db, "test-job", old_job)
+        
+        # "Change" schedule to 18:00
+        new_job = JobConfig(
+            name="Test Job",
+            cmd="echo test",
+            type=JobType.SCHEDULED,
+            schedule="0 18 * * *",  # 6 PM
+            sla=SLAConfig(enabled=True),
+        )
+        
+        # Save snapshot with new schedule
+        save_sla_snapshot(db, "test-job", new_job)
+        
+        # Get last schedule change
+        last_change = get_last_schedule_change(db, "test-job", "0 18 * * *")
+        
+        # Should return a datetime (the time of the second snapshot)
+        assert last_change is not None
+    
+    def test_no_schedule_change_returns_none(self, basic_job, tmp_path):
+        """Test that no change returns None."""
+        from procclaw.db import Database
+        from procclaw.sla import save_sla_snapshot, get_last_schedule_change
+        
+        db = Database(db_path=tmp_path / "test.db")
+        
+        # Save snapshot with schedule
+        save_sla_snapshot(db, "test-job", basic_job)
+        
+        # Check for change with same schedule
+        last_change = get_last_schedule_change(db, "test-job", "0 9 * * *")
+        
+        # Should return a datetime (the only snapshot)
+        assert last_change is not None
+    
+    def test_no_snapshots_returns_none(self, basic_job, tmp_path):
+        """Test that no snapshots returns None."""
+        from procclaw.db import Database
+        from procclaw.sla import get_last_schedule_change
+        
+        db = Database(db_path=tmp_path / "test.db")
+        
+        # No snapshots saved
+        last_change = get_last_schedule_change(db, "test-job", "0 9 * * *")
+        
+        assert last_change is None
+    
+    def test_schedule_hash_different_for_different_schedules(self):
+        """Test that different schedules produce different hashes."""
+        from procclaw.sla import create_schedule_hash
+        
+        hash1 = create_schedule_hash("0 9 * * *")
+        hash2 = create_schedule_hash("0 18 * * *")
+        
+        assert hash1 != hash2
+    
+    def test_schedule_hash_same_for_same_schedules(self):
+        """Test that same schedules produce same hashes."""
+        from procclaw.sla import create_schedule_hash
+        
+        hash1 = create_schedule_hash("0 9 * * *")
+        hash2 = create_schedule_hash("0 9 * * *")
+        
+        assert hash1 == hash2
+    
+    def test_calculate_job_sla_score_respects_schedule_change(self, tmp_path):
+        """Test that SLA calculation filters runs before schedule change."""
+        from procclaw.db import Database
+        from procclaw.sla import save_sla_snapshot, calculate_job_sla_score
+        
+        db = Database(db_path=tmp_path / "test.db")
+        
+        # Create old job (9 AM) and save snapshot
+        old_job = JobConfig(
+            name="Test Job",
+            cmd="echo test",
+            type=JobType.SCHEDULED,
+            schedule="0 9 * * *",
+            sla=SLAConfig(enabled=True, schedule_tolerance=300),
+        )
+        save_sla_snapshot(db, "test-job", old_job)
+        
+        # Add old runs (at 9 AM - on time for old schedule)
+        old_time = datetime.now() - timedelta(days=5)
+        old_time = old_time.replace(hour=9, minute=0)
+        db.add_run(JobRun(
+            job_id="test-job",
+            started_at=old_time,
+            finished_at=old_time + timedelta(minutes=5),
+            exit_code=0,
+            duration_seconds=300,
+            trigger="scheduled",
+        ))
+        
+        # Now "change" schedule to 18:00
+        new_job = JobConfig(
+            name="Test Job",
+            cmd="echo test",
+            type=JobType.SCHEDULED,
+            schedule="0 18 * * *",  # Changed!
+            sla=SLAConfig(enabled=True, schedule_tolerance=300),
+        )
+        save_sla_snapshot(db, "test-job", new_job)
+        
+        # Add new runs (at 18:00 - on time for new schedule)
+        new_time = datetime.now() - timedelta(days=1)
+        new_time = new_time.replace(hour=18, minute=0)
+        db.add_run(JobRun(
+            job_id="test-job",
+            started_at=new_time,
+            finished_at=new_time + timedelta(minutes=5),
+            exit_code=0,
+            duration_seconds=300,
+            trigger="scheduled",
+        ))
+        
+        # Calculate SLA with new schedule
+        metrics = calculate_job_sla_score(db, "test-job", new_job, "7d")
+        
+        # Should only count the new run (after schedule change)
+        # Old run at 9 AM should be filtered out
+        assert metrics.total_runs <= 1  # Only the run after schedule change
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

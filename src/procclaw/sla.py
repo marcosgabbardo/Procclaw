@@ -500,6 +500,16 @@ def calculate_job_sla_score(
     period_end = datetime.now()
     period_start = period_end - period_delta
     
+    # Check if schedule was changed - if so, only count runs after the change
+    # This prevents marking old runs as "late" when they ran on-time under old schedule
+    schedule_change_at = get_last_schedule_change(db, job_id, job.schedule)
+    if schedule_change_at and schedule_change_at > period_start:
+        logger.debug(
+            f"SLA for {job_id}: schedule changed at {schedule_change_at}, "
+            f"filtering runs before that date"
+        )
+        period_start = schedule_change_at
+    
     # Get runs in the period
     runs = db.get_runs(job_id=job_id, limit=1000, since=period_start)
     
@@ -526,6 +536,74 @@ def create_config_hash(job: "JobConfig") -> str:
         },
     }, sort_keys=True)
     return hashlib.sha256(config_str.encode()).hexdigest()[:16]
+
+
+def create_schedule_hash(schedule: str | None) -> str:
+    """Create a hash of just the schedule for detecting schedule changes."""
+    return hashlib.sha256((schedule or "").encode()).hexdigest()[:16]
+
+
+def get_last_schedule_change(
+    db: "Database",
+    job_id: str,
+    current_schedule: str | None,
+) -> datetime | None:
+    """Get the timestamp when the job's schedule was last changed.
+    
+    This is used to filter out runs that happened under a different schedule,
+    since comparing them against the current schedule would be misleading.
+    
+    For example, if a job was scheduled for 09:00 and later changed to 18:00,
+    runs at 09:00 should NOT be marked as "late" when evaluated against 18:00.
+    
+    Args:
+        db: Database instance
+        job_id: Job identifier
+        current_schedule: Current schedule cron expression
+    
+    Returns:
+        datetime of last schedule change, or None if no change detected
+    """
+    current_hash = create_schedule_hash(current_schedule)
+    
+    with db._connect() as conn:
+        # Get all snapshots for this job, ordered by date DESC (newest first)
+        cursor = conn.execute(
+            """
+            SELECT snapshot_at, config_json 
+            FROM job_sla_snapshots 
+            WHERE job_id = ? 
+            ORDER BY snapshot_at DESC
+            """,
+            (job_id,),
+        )
+        rows = cursor.fetchall()
+        
+        if not rows:
+            return None
+        
+        # Find when the schedule changed to the current value
+        # We iterate from newest to oldest, looking for when schedule became different
+        last_change_at = None
+        
+        for row in rows:
+            try:
+                config = json.loads(row["config_json"])
+                snapshot_schedule = config.get("schedule")
+                snapshot_hash = create_schedule_hash(snapshot_schedule)
+                
+                if snapshot_hash == current_hash:
+                    # This snapshot has the same schedule as current
+                    # The change happened AT this snapshot (or before)
+                    last_change_at = datetime.fromisoformat(row["snapshot_at"])
+                else:
+                    # Found a snapshot with different schedule
+                    # The change happened AFTER this snapshot
+                    break
+            except (json.JSONDecodeError, ValueError):
+                continue
+        
+        return last_change_at
 
 
 def save_sla_snapshot(
