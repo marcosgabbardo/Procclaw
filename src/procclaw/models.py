@@ -433,6 +433,19 @@ class SuggestionBehaviorConfig(BaseModel):
     notify_channel: str = "whatsapp"
 
 
+class BusinessLogConfig(BaseModel):
+    """Configuration for business-level log analysis.
+    
+    When configured, self-healing analyzes business decisions and outcomes
+    (not just technical metrics) to suggest strategy improvements.
+    """
+    
+    path: str  # Path to JSONL file with business decisions/outcomes
+    summary_path: str | None = None  # Optional separate summary file
+    max_lines: int = 500  # Max lines to feed to AI (most recent)
+    context_prompt: str | None = None  # Domain-specific instructions for AI
+
+
 class SelfHealingConfig(BaseModel):
     """Self-healing configuration for a job.
     
@@ -458,6 +471,9 @@ class SelfHealingConfig(BaseModel):
     
     # v2: How to handle suggestions
     suggestions: SuggestionBehaviorConfig = Field(default_factory=SuggestionBehaviorConfig)
+    
+    # v2: Business-level log analysis (for continuous jobs with business logic)
+    business_log: BusinessLogConfig | None = None
     
     # Existing: Analysis configuration
     analysis: HealingAnalysisConfig = Field(default_factory=HealingAnalysisConfig)

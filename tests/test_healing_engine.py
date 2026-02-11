@@ -378,6 +378,58 @@ class TestHealingEngine:
         assert "suggestions" in prompt
 
 
+    def test_build_business_analysis_prompt(self, engine):
+        """Test building business analysis prompt when business_logs present."""
+        context = AnalysisContext(
+            job_id="stock-scanner",
+            job_config={"cmd": "python scanner.py", "type": "continuous"},
+            recent_runs=[
+                {"id": 1, "exit_code": 0, "duration_seconds": 3600.0, "trigger": "auto"}
+            ],
+            log_samples={},
+            ai_sessions=[],
+            sla_metrics=None,
+            sla_violations=[],
+            prompt_content=None,
+            script_content="import yfinance\n# scanner code here",
+            business_logs='{"ts":"2026-02-11","event":"alert","symbol":"URG","score":45}\n{"ts":"2026-02-11","event":"summary","win_rate":0.33}',
+            business_context="This is a stock accumulation scanner. Focus on detection accuracy.",
+        )
+        
+        prompt = engine._build_analysis_prompt(context)
+        
+        # Should use business prompt, not technical
+        assert "business strategy analyst" in prompt
+        assert "stock accumulation scanner" in prompt
+        assert "Decision Quality" in prompt
+        assert "URG" in prompt
+        assert "scanner code here" in prompt
+    
+    def test_build_technical_prompt_without_business_logs(self, engine):
+        """Test that without business_logs, technical prompt is used."""
+        context = AnalysisContext(
+            job_id="test-job",
+            job_config={"cmd": "echo test", "type": "manual"},
+            recent_runs=[
+                {"id": 1, "exit_code": 0, "duration_seconds": 5.0, "trigger": "manual"}
+            ],
+            log_samples={},
+            ai_sessions=[],
+            sla_metrics=None,
+            sla_violations=[],
+            prompt_content=None,
+            script_content=None,
+            business_logs=None,
+            business_context=None,
+        )
+        
+        prompt = engine._build_analysis_prompt(context)
+        
+        # Should use technical prompt
+        assert "business strategy analyst" not in prompt
+        assert "Analyze this ProcClaw job" in prompt
+
+
 class TestProactiveScheduler:
     """Tests for ProactiveScheduler."""
     

@@ -49,6 +49,8 @@ class AnalysisContext:
     sla_violations: list[dict]
     prompt_content: str | None
     script_content: str | None
+    business_logs: str | None = None  # JSONL business decision/outcome logs
+    business_context: str | None = None  # Domain-specific prompt from config
 
 
 @dataclass
@@ -468,6 +470,36 @@ class HealingEngine:
                 except Exception as e:
                     logger.warning(f"Failed to read script: {e}")
         
+        # Get business logs (for continuous jobs with business logic)
+        business_logs = None
+        business_context = None
+        if healing_config.business_log:
+            bl_config = healing_config.business_log
+            log_path = Path(bl_config.path).expanduser()
+            if log_path.exists():
+                try:
+                    lines = log_path.read_text().splitlines()
+                    max_lines = bl_config.max_lines or 500
+                    recent = lines[-max_lines:]
+                    business_logs = "\n".join(recent)
+                    logger.info(f"Read {len(recent)} business log lines from {log_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to read business log: {e}")
+            else:
+                logger.warning(f"Business log not found: {log_path}")
+            
+            # Also read summary file if configured
+            if bl_config.summary_path:
+                summary_path = Path(bl_config.summary_path).expanduser()
+                if summary_path.exists():
+                    try:
+                        summary = summary_path.read_text()[:2000]
+                        business_logs = (business_logs or "") + "\n\n### Summary File\n" + summary
+                    except Exception as e:
+                        logger.warning(f"Failed to read business summary: {e}")
+            
+            business_context = bl_config.context_prompt
+        
         return AnalysisContext(
             job_id=job_id,
             job_config=job_config.model_dump(),
@@ -478,6 +510,8 @@ class HealingEngine:
             sla_violations=sla_violations,
             prompt_content=prompt_content,
             script_content=script_content,
+            business_logs=business_logs,
+            business_context=business_context,
         )
     
     def _get_prompt_path(self, job_config: JobConfig) -> Path | None:
@@ -560,6 +594,10 @@ class HealingEngine:
     
     def _build_analysis_prompt(self, context: AnalysisContext) -> str:
         """Build the analysis prompt for AI."""
+        
+        # Bifurcate: business analysis vs technical analysis
+        if context.business_logs:
+            return self._build_business_analysis_prompt(context)
         
         prompt = f"""Analyze this ProcClaw job and suggest improvements.
 
@@ -652,6 +690,122 @@ IMPORTANT:
 - If truly perfect, suggest monitoring or documentation improvements
 
 Set auto_apply=true only for trivial, low-risk config changes.
+"""
+        
+        return prompt
+    
+    def _build_business_analysis_prompt(self, context: AnalysisContext) -> str:
+        """Build analysis prompt focused on business logic and outcomes."""
+        
+        domain_context = context.business_context or "Analyze the business logic and suggest improvements based on decision outcomes."
+        
+        prompt = f"""You are a business strategy analyst reviewing operational data from an automated system.
+Your goal is to find patterns in decisions and outcomes that can improve business results.
+
+## Domain Context
+{domain_context}
+
+## Job: {context.job_id}
+
+### Configuration
+```json
+{json.dumps(context.job_config, indent=2, default=str)[:2000]}
+```
+
+"""
+        
+        if context.script_content:
+            prompt += f"""### Script (the code making decisions)
+```
+{context.script_content[:5000]}
+```
+
+"""
+        
+        # Technical context as secondary info
+        if context.recent_runs:
+            restarts = len([r for r in context.recent_runs if r.get("exit_code", 0) != 0])
+            prompt += f"""### Technical Context (supplementary)
+- Total runs/restarts: {len(context.recent_runs)} (last period)
+- Crashes (non-zero exit): {restarts}
+"""
+            if context.recent_runs:
+                last_run = context.recent_runs[0]
+                prompt += f"- Last run: exit={last_run.get('exit_code')}, duration={last_run.get('duration_seconds', 0):.0f}s\n"
+            prompt += "\n"
+        
+        # The main event: business logs
+        lines = context.business_logs.strip().split("\n") if context.business_logs else []
+        prompt += f"""### Business Decision Log ({len(lines)} entries)
+Each line is a JSONL record of a decision, action, or outcome.
+
+```jsonl
+{context.business_logs or "(no entries)"}
+```
+
+## Analysis Instructions
+
+Analyze the business decision log and identify actionable improvements:
+
+### 1. Performance Patterns
+- What decisions lead to good outcomes vs bad outcomes?
+- Are there categories/types that perform consistently better or worse?
+- What's the overall success rate and trend over time?
+
+### 2. Decision Quality
+- Are the entry/exit criteria effective?
+- Are there missed opportunities (too many skips with good potential)?
+- Are there repeated mistakes (same bad pattern recurring)?
+
+### 3. Parameter Optimization
+- Which thresholds should be tightened or relaxed? (cite data!)
+- What filters are too aggressive or too loose?
+- What timing parameters could improve results?
+
+### 4. Risk Management
+- Is capital/resources being used efficiently?
+- Are losses concentrated in specific scenarios?
+- Is there adequate diversification?
+
+### 5. Strategy Improvements
+- What new rules would improve outcomes based on the data?
+- What existing rules should be removed or modified?
+- Are there edge cases not being handled?
+
+**IMPORTANT**: Back every suggestion with data from the log. Cite specific entries, 
+calculate percentages, show the pattern. Don't make generic suggestions.
+
+**For each suggestion that modifies the script or config**, you MUST include the COMPLETE 
+proposed file content in `proposed_content`. The user needs to see EXACTLY what changes.
+
+Output your analysis in JSON format:
+
+```json
+{{
+  "suggestions": [
+    {{
+      "category": "performance|cost|reliability|security|config|prompt|script",
+      "severity": "low|medium|high|critical",
+      "title": "Short title",
+      "description": "Detailed description with data-backed evidence",
+      "current_state": "What's currently happening (with numbers)",
+      "suggested_change": "What should be changed",
+      "expected_impact": "Expected improvement (quantified when possible)",
+      "affected_files": ["list of files to modify"],
+      "target_file": "/path/to/file.ext",
+      "proposed_content": "The COMPLETE new file content",
+      "auto_apply": false
+    }}
+  ]
+}}
+```
+
+### Rules for proposed_content:
+1. MUST be complete - the entire file content, not just a snippet
+2. MUST be ready to apply - no placeholders, no "..." or "[rest of file]"
+3. For config changes to jobs.yaml, include ONLY the affected job section
+4. For scripts (.py, .sh), include the full script with changes clearly commented
+5. If no file change needed (just an observation), set target_file and proposed_content to null
 """
         
         return prompt

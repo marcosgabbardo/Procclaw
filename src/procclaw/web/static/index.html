@@ -2975,6 +2975,34 @@
                                     </div>
                                 </div>
                                 
+                                <!-- Business Log Analysis -->
+                                <div class="bg-dark-800/50 rounded-lg p-3 space-y-3">
+                                    <div class="text-sm font-medium text-amber-400">📊 Business Log Analysis</div>
+                                    <p class="text-xs text-dark-500">Analyze business decisions and outcomes (trading P&L, conversion rates, etc.) instead of just technical metrics.</p>
+                                    <div>
+                                        <label class="block text-xs text-dark-400 mb-1">JSONL Log Path</label>
+                                        <input type="text" x-model="editJob.self_healing.business_log_path" placeholder="~/.procclaw/logs/my-bot/decisions.jsonl" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm font-mono" @change="syncEditFormToYaml()">
+                                        <p class="text-xs text-dark-500 mt-1">Path to JSONL file where your script logs decisions and outcomes</p>
+                                    </div>
+                                    <div x-show="editJob.self_healing.business_log_path">
+                                        <div class="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label class="block text-xs text-dark-400 mb-1">Max Lines</label>
+                                                <input type="number" x-model.number="editJob.self_healing.business_log_max_lines" min="50" max="2000" placeholder="500" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncEditFormToYaml()">
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs text-dark-400 mb-1">Summary File (optional)</label>
+                                                <input type="text" x-model="editJob.self_healing.business_log_summary" placeholder="summary.json" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm font-mono" @change="syncEditFormToYaml()">
+                                            </div>
+                                        </div>
+                                        <div class="mt-2">
+                                            <label class="block text-xs text-dark-400 mb-1">Context Prompt</label>
+                                            <textarea x-model="editJob.self_healing.business_log_context" rows="3" placeholder="This is a trading bot. Focus on win rate, risk management, entry criteria..." class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncEditFormToYaml()"></textarea>
+                                            <p class="text-xs text-dark-500 mt-1">Tell the AI what this job does and what to focus on</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
                                 <!-- Notifications -->
                                 <div>
                                     <label class="block text-sm text-dark-400 mb-2">Notifications</label>
@@ -4123,7 +4151,12 @@
                                 on_success: job.self_healing?.notify?.on_success ?? true,
                                 on_give_up: job.self_healing?.notify?.on_give_up ?? true,
                                 session: job.self_healing?.notify?.session || 'main'
-                            }
+                            },
+                            // Business log (flat fields for UI)
+                            business_log_path: job.self_healing?.business_log?.path || '',
+                            business_log_max_lines: job.self_healing?.business_log?.max_lines ?? 500,
+                            business_log_summary: job.self_healing?.business_log?.summary_path || '',
+                            business_log_context: job.self_healing?.business_log?.context_prompt || ''
                         },
                         sla: {
                             enabled: job.sla?.enabled || false,
@@ -4375,7 +4408,13 @@
                             analysis: this.editJob.self_healing.analysis,
                             remediation: this.editJob.self_healing.remediation,
                             suggestions: this.editJob.self_healing.suggestions,
-                            notify: this.editJob.self_healing.notify
+                            notify: this.editJob.self_healing.notify,
+                            business_log: this.editJob.self_healing.business_log_path ? {
+                                path: this.editJob.self_healing.business_log_path,
+                                max_lines: this.editJob.self_healing.business_log_max_lines || 500,
+                                summary_path: this.editJob.self_healing.business_log_summary || null,
+                                context_prompt: this.editJob.self_healing.business_log_context || null
+                            } : null
                         } : { enabled: false },
                         // SLA
                         sla: this.editJob.sla?.enabled ? {
