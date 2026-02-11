@@ -1895,6 +1895,121 @@
         </div>
     </main>
 
+    <!-- Suggestion Detail Modal -->
+    <div x-show="showSuggestionModal" x-cloak class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" @click.self="closeSuggestionModal()" @keydown.escape.window="closeSuggestionModal()">
+        <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-2xl max-h-[80vh] overflow-hidden" @click.stop>
+            <template x-if="selectedSuggestion">
+                <div>
+                    <!-- Header -->
+                    <div class="p-4 border-b border-dark-600 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <span class="text-2xl">💡</span>
+                            <div>
+                                <h2 class="text-lg font-medium" x-text="selectedSuggestion.title"></h2>
+                                <div class="flex items-center gap-2 mt-1">
+                                    <span class="px-2 py-0.5 rounded text-xs font-medium"
+                                        :class="{
+                                            'bg-red-500/20 text-red-400': selectedSuggestion.severity === 'critical',
+                                            'bg-orange-500/20 text-orange-400': selectedSuggestion.severity === 'high',
+                                            'bg-yellow-500/20 text-yellow-400': selectedSuggestion.severity === 'medium',
+                                            'bg-blue-500/20 text-blue-400': selectedSuggestion.severity === 'low'
+                                        }" x-text="selectedSuggestion.severity?.toUpperCase()"></span>
+                                    <span class="px-2 py-0.5 bg-dark-700 rounded text-xs" x-text="selectedSuggestion.category"></span>
+                                    <span class="text-dark-500 text-xs" x-text="selectedSuggestion.job_id"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <button @click="closeSuggestionModal()" class="p-2 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white">✕</button>
+                    </div>
+                    
+                    <!-- Content -->
+                    <div class="p-4 space-y-4 overflow-y-auto max-h-[60vh]">
+                        <!-- Description -->
+                        <div>
+                            <h3 class="text-sm font-medium text-dark-400 mb-2">Description</h3>
+                            <p class="text-dark-200" x-text="selectedSuggestion.description"></p>
+                        </div>
+                        
+                        <!-- Current State -->
+                        <div x-show="selectedSuggestion.current_state">
+                            <h3 class="text-sm font-medium text-dark-400 mb-2">Current State</h3>
+                            <pre class="bg-dark-900 border border-dark-600 rounded-lg p-3 text-sm font-mono overflow-x-auto" x-text="selectedSuggestion.current_state"></pre>
+                        </div>
+                        
+                        <!-- Suggested Change -->
+                        <div x-show="selectedSuggestion.suggested_change">
+                            <h3 class="text-sm font-medium text-dark-400 mb-2">Suggested Change</h3>
+                            <pre class="bg-dark-900 border border-dark-600 rounded-lg p-3 text-sm font-mono overflow-x-auto text-green-400" x-text="selectedSuggestion.suggested_change"></pre>
+                        </div>
+                        
+                        <!-- Expected Impact -->
+                        <div x-show="selectedSuggestion.expected_impact">
+                            <h3 class="text-sm font-medium text-dark-400 mb-2">Expected Impact</h3>
+                            <p class="text-dark-200" x-text="selectedSuggestion.expected_impact"></p>
+                        </div>
+                        
+                        <!-- Affected Files -->
+                        <div x-show="selectedSuggestion.affected_files?.length > 0">
+                            <h3 class="text-sm font-medium text-dark-400 mb-2">Affected Files</h3>
+                            <ul class="space-y-1">
+                                <template x-for="file in selectedSuggestion.affected_files" :key="file">
+                                    <li class="text-sm font-mono text-dark-300 bg-dark-700 px-2 py-1 rounded" x-text="file"></li>
+                                </template>
+                            </ul>
+                        </div>
+                        
+                        <!-- Status Info -->
+                        <div class="flex items-center gap-4 pt-4 border-t border-dark-700">
+                            <div>
+                                <span class="text-xs text-dark-500">Status:</span>
+                                <span class="ml-1 px-2 py-0.5 rounded text-xs"
+                                    :class="{
+                                        'bg-yellow-500/20 text-yellow-400': selectedSuggestion.status === 'pending',
+                                        'bg-green-500/20 text-green-400': selectedSuggestion.status === 'approved',
+                                        'bg-red-500/20 text-red-400': selectedSuggestion.status === 'rejected',
+                                        'bg-blue-500/20 text-blue-400': selectedSuggestion.status === 'applied'
+                                    }" x-text="selectedSuggestion.status"></span>
+                            </div>
+                            <div x-show="selectedSuggestion.reviewed_by">
+                                <span class="text-xs text-dark-500">Reviewed by:</span>
+                                <span class="ml-1 text-xs text-dark-300" x-text="selectedSuggestion.reviewed_by"></span>
+                            </div>
+                            <div x-show="selectedSuggestion.rejection_reason">
+                                <span class="text-xs text-dark-500">Rejection reason:</span>
+                                <span class="ml-1 text-xs text-red-400" x-text="selectedSuggestion.rejection_reason"></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Actions -->
+                    <div class="p-4 border-t border-dark-600 flex justify-end gap-2">
+                        <template x-if="selectedSuggestion.status === 'pending'">
+                            <div class="flex gap-2">
+                                <button @click="approveSuggestion(selectedSuggestion.id); closeSuggestionModal()" 
+                                    class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm transition">
+                                    ✓ Approve
+                                </button>
+                                <button @click="rejectSuggestion(selectedSuggestion.id); closeSuggestionModal()" 
+                                    class="px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg text-sm transition">
+                                    ✕ Reject
+                                </button>
+                            </div>
+                        </template>
+                        <template x-if="selectedSuggestion.status === 'approved'">
+                            <button @click="applySuggestion(selectedSuggestion.id); closeSuggestionModal()" 
+                                class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm transition">
+                                ⚡ Apply Changes
+                            </button>
+                        </template>
+                        <button @click="closeSuggestionModal()" class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition">
+                            Close
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
     <!-- Job Detail Modal -->
     <div x-show="selectedJob" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="selectedJob = null">
         <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-2xl max-h-[80vh] overflow-hidden" @click.stop>
@@ -2765,6 +2880,8 @@
                 healingReviews: [],
                 healingSuggestions: [],
                 healingActions: [],
+                selectedSuggestion: null,
+                showSuggestionModal: false,
                 
                 // Forms
                 newJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '' },
@@ -4330,14 +4447,17 @@
                     try {
                         const res = await fetch(`/api/v1/healing/suggestions/${suggestionId}`);
                         if (res.ok) {
-                            const data = await res.json();
-                            // TODO: Open a modal with details
-                            console.log('Suggestion details:', data);
-                            alert(`Suggestion: ${data.title}\n\nDescription: ${data.description}\n\nSuggested Change:\n${data.suggested_change || 'N/A'}\n\nExpected Impact: ${data.expected_impact || 'N/A'}`);
+                            this.selectedSuggestion = await res.json();
+                            this.showSuggestionModal = true;
                         }
                     } catch (e) {
                         this.toast('Failed to load details', 'error');
                     }
+                },
+                
+                closeSuggestionModal() {
+                    this.showSuggestionModal = false;
+                    this.selectedSuggestion = null;
                 },
 
                 async rollbackAction(actionId) {

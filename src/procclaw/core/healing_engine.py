@@ -162,6 +162,17 @@ class HealingEngine:
                 f"{len(suggestions)} suggestions, {auto_applied} auto-applied"
             )
             
+            # Send notification if configured and has pending suggestions
+            pending_count = len(suggestions) - auto_applied
+            if pending_count > 0 and healing_config.suggestions.notify_on_suggestion:
+                await self._send_notification(
+                    job_id=job_id,
+                    review_id=review_id,
+                    suggestions=suggestions,
+                    pending_count=pending_count,
+                    channel=healing_config.suggestions.notify_channel,
+                )
+            
             return review_id
             
         except Exception as e:
@@ -732,6 +743,55 @@ Set auto_apply=true only for trivial, low-risk changes.
             return {"success": False, "error": "OpenClaw CLI not found"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+    
+    async def _send_notification(
+        self,
+        job_id: str,
+        review_id: int,
+        suggestions: list[SuggestionData],
+        pending_count: int,
+        channel: str = "whatsapp",
+    ) -> None:
+        """Send notification about new suggestions."""
+        try:
+            from procclaw.openclaw import _write_pending_alert
+            
+            # Build notification message
+            severity_emoji = {
+                "critical": "🔴",
+                "high": "🟠",
+                "medium": "🟡",
+                "low": "🔵",
+            }
+            
+            lines = [
+                f"🧬 **Self-Healing Review** for `{job_id}`",
+                f"",
+                f"Found **{pending_count}** suggestions requiring review:",
+                "",
+            ]
+            
+            for s in suggestions[:5]:  # Limit to 5 in notification
+                emoji = severity_emoji.get(s.severity, "⚪")
+                lines.append(f"{emoji} [{s.severity.upper()}] {s.title}")
+            
+            if len(suggestions) > 5:
+                lines.append(f"... and {len(suggestions) - 5} more")
+            
+            lines.extend([
+                "",
+                f"Review in ProcClaw UI → Self-Healing tab",
+            ])
+            
+            message = "\n".join(lines)
+            
+            # Write to pending alerts file for OpenClaw to pick up
+            _write_pending_alert(message, channel=channel)
+            
+            logger.debug(f"Notification sent for {job_id} review")
+            
+        except Exception as e:
+            logger.warning(f"Failed to send notification: {e}")
     
     def get_review_status(self, job_id: str) -> dict | None:
         """Get status of running review for a job."""
