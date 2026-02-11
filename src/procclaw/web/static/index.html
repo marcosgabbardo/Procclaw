@@ -199,6 +199,12 @@
                     class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
                     🔧 Config
                 </button>
+                <button @click="currentTab = 'healing'; loadHealingData()" 
+                    :class="currentTab === 'healing' ? 'bg-dark-700 text-accent-400 border-b-2 border-accent-500' : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700'"
+                    class="px-4 py-3 text-sm font-medium transition rounded-t-lg">
+                    🧬 Self-Healing
+                    <span x-show="healingPending > 0" class="ml-1 px-1.5 py-0.5 bg-yellow-500 text-black text-xs rounded-full" x-text="healingPending"></span>
+                </button>
             </div>
         </div>
     </nav>
@@ -1655,6 +1661,232 @@
             </div>
             </div>
         </div>
+
+        <!-- Self-Healing Tab -->
+        <div x-show="currentTab === 'healing'" x-cloak>
+            <div class="grid lg:grid-cols-3 gap-6">
+                
+                <!-- Overview Panel -->
+                <div class="lg:col-span-1 space-y-4">
+                    <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                        <h3 class="font-medium mb-4">🧬 Healing Overview</h3>
+                        
+                        <!-- Stats -->
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
+                                <span class="text-dark-400">Pending Suggestions</span>
+                                <span class="text-xl font-semibold" :class="healingPending > 0 ? 'text-yellow-400' : 'text-dark-300'" x-text="healingPending"></span>
+                            </div>
+                            <div class="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
+                                <span class="text-dark-400">Recent Reviews</span>
+                                <span class="text-xl font-semibold text-dark-300" x-text="healingReviews.length"></span>
+                            </div>
+                            <div class="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
+                                <span class="text-dark-400">Rollbackable Actions</span>
+                                <span class="text-xl font-semibold text-dark-300" x-text="healingActions.filter(a => a.can_rollback && !a.rolled_back_at).length"></span>
+                            </div>
+                        </div>
+                        
+                        <!-- Filter by Job -->
+                        <div class="mt-4">
+                            <label class="text-sm text-dark-400">Filter by Job</label>
+                            <select x-model="healingJobFilter" @change="loadHealingData()"
+                                class="w-full mt-1 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm">
+                                <option value="">All Jobs</option>
+                                <template x-for="job in jobs" :key="job.id">
+                                    <option :value="job.id" x-text="job.name || job.id"></option>
+                                </template>
+                            </select>
+                        </div>
+                        
+                        <!-- Trigger Review -->
+                        <div class="mt-4">
+                            <button @click="triggerHealingReview()" 
+                                :disabled="!healingJobFilter"
+                                :class="healingJobFilter ? 'bg-accent-500 hover:bg-accent-600' : 'bg-dark-600 cursor-not-allowed'"
+                                class="w-full py-2 text-white rounded-lg text-sm transition">
+                                ⚡ Trigger Review
+                            </button>
+                            <p class="mt-1 text-xs text-dark-500" x-show="!healingJobFilter">Select a job to trigger a review</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Main Content -->
+                <div class="lg:col-span-2 space-y-4">
+                    
+                    <!-- Sub-tabs -->
+                    <div class="flex gap-2 mb-4">
+                        <button @click="healingSubTab = 'suggestions'" 
+                            :class="healingSubTab === 'suggestions' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                            class="px-4 py-2 rounded-lg text-sm transition">
+                            💡 Suggestions
+                            <span x-show="healingPending > 0" class="ml-1 px-1.5 py-0.5 bg-yellow-500 text-black text-xs rounded-full" x-text="healingPending"></span>
+                        </button>
+                        <button @click="healingSubTab = 'reviews'" 
+                            :class="healingSubTab === 'reviews' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                            class="px-4 py-2 rounded-lg text-sm transition">
+                            📋 Reviews
+                        </button>
+                        <button @click="healingSubTab = 'actions'" 
+                            :class="healingSubTab === 'actions' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                            class="px-4 py-2 rounded-lg text-sm transition">
+                            ⚡ Actions
+                        </button>
+                    </div>
+                    
+                    <!-- Suggestions Sub-tab -->
+                    <div x-show="healingSubTab === 'suggestions'" class="space-y-3">
+                        <template x-if="healingSuggestions.length === 0">
+                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
+                                <p class="text-4xl mb-3">✨</p>
+                                <p>No suggestions at the moment</p>
+                                <p class="text-sm mt-1">Everything looks healthy!</p>
+                            </div>
+                        </template>
+                        
+                        <template x-for="suggestion in healingSuggestions" :key="suggestion.id">
+                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                                <div class="flex items-start justify-between gap-4">
+                                    <div class="flex-1">
+                                        <div class="flex items-center gap-2 mb-2">
+                                            <span class="px-2 py-0.5 rounded text-xs font-medium"
+                                                :class="{
+                                                    'bg-red-500/20 text-red-400': suggestion.severity === 'critical',
+                                                    'bg-orange-500/20 text-orange-400': suggestion.severity === 'high',
+                                                    'bg-yellow-500/20 text-yellow-400': suggestion.severity === 'medium',
+                                                    'bg-blue-500/20 text-blue-400': suggestion.severity === 'low'
+                                                }" x-text="suggestion.severity.toUpperCase()"></span>
+                                            <span class="px-2 py-0.5 bg-dark-700 rounded text-xs" x-text="suggestion.category"></span>
+                                            <span class="text-dark-500 text-xs" x-text="suggestion.job_id"></span>
+                                        </div>
+                                        <h4 class="font-medium text-dark-100" x-text="suggestion.title"></h4>
+                                        <p class="text-sm text-dark-400 mt-1" x-text="suggestion.description || ''"></p>
+                                        
+                                        <!-- Affected Files -->
+                                        <div x-show="suggestion.affected_files?.length > 0" class="mt-2">
+                                            <span class="text-xs text-dark-500">Affected: </span>
+                                            <template x-for="file in suggestion.affected_files" :key="file">
+                                                <span class="text-xs font-mono text-dark-400 bg-dark-700 px-1 rounded mr-1" x-text="file"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Status & Actions -->
+                                    <div class="flex flex-col items-end gap-2">
+                                        <span class="px-2 py-1 rounded text-xs"
+                                            :class="{
+                                                'bg-yellow-500/20 text-yellow-400': suggestion.status === 'pending',
+                                                'bg-green-500/20 text-green-400': suggestion.status === 'approved',
+                                                'bg-red-500/20 text-red-400': suggestion.status === 'rejected',
+                                                'bg-blue-500/20 text-blue-400': suggestion.status === 'applied',
+                                                'bg-dark-600 text-dark-400': suggestion.status === 'failed'
+                                            }" x-text="suggestion.status"></span>
+                                        
+                                        <div x-show="suggestion.status === 'pending'" class="flex gap-1">
+                                            <button @click="approveSuggestion(suggestion.id)" 
+                                                class="px-2 py-1 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded text-xs transition">
+                                                ✓ Approve
+                                            </button>
+                                            <button @click="rejectSuggestion(suggestion.id)" 
+                                                class="px-2 py-1 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded text-xs transition">
+                                                ✕ Reject
+                                            </button>
+                                        </div>
+                                        <button @click="viewSuggestionDetails(suggestion.id)" 
+                                            class="px-2 py-1 bg-dark-700 text-dark-300 hover:bg-dark-600 rounded text-xs transition">
+                                            🔍 Details
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    
+                    <!-- Reviews Sub-tab -->
+                    <div x-show="healingSubTab === 'reviews'" class="space-y-3">
+                        <template x-if="healingReviews.length === 0">
+                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
+                                <p class="text-4xl mb-3">📋</p>
+                                <p>No reviews yet</p>
+                                <p class="text-sm mt-1">Trigger a review to analyze job behavior</p>
+                            </div>
+                        </template>
+                        
+                        <template x-for="review in healingReviews" :key="review.id">
+                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <div class="flex items-center gap-2 mb-1">
+                                            <span class="font-medium" x-text="review.job_id"></span>
+                                            <span class="px-2 py-0.5 rounded text-xs"
+                                                :class="{
+                                                    'bg-blue-500/20 text-blue-400': review.status === 'running',
+                                                    'bg-green-500/20 text-green-400': review.status === 'completed',
+                                                    'bg-red-500/20 text-red-400': review.status === 'failed'
+                                                }" x-text="review.status"></span>
+                                        </div>
+                                        <div class="text-xs text-dark-500">
+                                            Started: <span x-text="formatDate(review.started_at)"></span>
+                                            <span x-show="review.finished_at"> • Finished: <span x-text="formatDate(review.finished_at)"></span></span>
+                                        </div>
+                                    </div>
+                                    <div class="text-right">
+                                        <div class="text-sm">
+                                            <span class="text-dark-400">Runs:</span> <span x-text="review.runs_analyzed"></span>
+                                        </div>
+                                        <div class="text-sm">
+                                            <span class="text-dark-400">Suggestions:</span> 
+                                            <span :class="review.suggestions_count > 0 ? 'text-yellow-400' : ''" x-text="review.suggestions_count"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    
+                    <!-- Actions Sub-tab -->
+                    <div x-show="healingSubTab === 'actions'" class="space-y-3">
+                        <template x-if="healingActions.length === 0">
+                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
+                                <p class="text-4xl mb-3">⚡</p>
+                                <p>No actions taken yet</p>
+                                <p class="text-sm mt-1">Actions will appear here after suggestions are applied</p>
+                            </div>
+                        </template>
+                        
+                        <template x-for="action in healingActions" :key="action.id">
+                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <div class="flex items-center gap-2 mb-1">
+                                            <span class="px-2 py-0.5 bg-dark-700 rounded text-xs font-mono" x-text="action.action_type"></span>
+                                            <span class="text-dark-500" x-text="action.job_id"></span>
+                                        </div>
+                                        <div class="text-sm text-dark-400" x-show="action.file_path" x-text="action.file_path"></div>
+                                        <div class="text-xs text-dark-500" x-text="formatDate(action.created_at)"></div>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="px-2 py-1 rounded text-xs"
+                                            :class="{
+                                                'bg-green-500/20 text-green-400': action.status === 'success',
+                                                'bg-red-500/20 text-red-400': action.status === 'failed',
+                                                'bg-yellow-500/20 text-yellow-400': action.status === 'rolled_back'
+                                            }" x-text="action.status"></span>
+                                        <button x-show="action.can_rollback && action.status === 'success'" 
+                                            @click="rollbackAction(action.id)"
+                                            class="px-2 py-1 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded text-xs transition">
+                                            ↩️ Rollback
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
     </main>
 
     <!-- Job Detail Modal -->
@@ -2519,6 +2751,14 @@
                 
                 // Auth config
                 authConfig: { enabled: false, token: '', tokenMasked: '', showToken: false },
+                
+                // Self-Healing v2
+                healingSubTab: 'suggestions',
+                healingJobFilter: '',
+                healingPending: 0,
+                healingReviews: [],
+                healingSuggestions: [],
+                healingActions: [],
                 
                 // Forms
                 newJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '' },
@@ -3978,6 +4218,141 @@
                     if (this.authConfig.token) {
                         navigator.clipboard.writeText(this.authConfig.token);
                         this.toast('Token copied to clipboard', 'success');
+                    }
+                },
+
+                // Self-Healing v2
+                async loadHealingData() {
+                    try {
+                        const params = new URLSearchParams();
+                        if (this.healingJobFilter) {
+                            params.set('job_id', this.healingJobFilter);
+                        }
+                        params.set('limit', '50');
+                        const queryString = params.toString();
+                        
+                        // Load suggestions
+                        const sugRes = await fetch(`/api/v1/healing/suggestions?${queryString}`);
+                        if (sugRes.ok) {
+                            const data = await sugRes.json();
+                            this.healingSuggestions = data.suggestions || [];
+                            this.healingPending = data.pending_count || 0;
+                        }
+                        
+                        // Load reviews
+                        const revRes = await fetch(`/api/v1/healing/reviews?${queryString}`);
+                        if (revRes.ok) {
+                            const data = await revRes.json();
+                            this.healingReviews = data.reviews || [];
+                        }
+                        
+                        // Load actions
+                        const actRes = await fetch(`/api/v1/healing/actions?${queryString}`);
+                        if (actRes.ok) {
+                            const data = await actRes.json();
+                            this.healingActions = data.actions || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to load healing data:', e);
+                    }
+                },
+
+                async approveSuggestion(suggestionId) {
+                    try {
+                        const res = await fetch(`/api/v1/healing/suggestions/${suggestionId}/approve`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ reviewed_by: 'human' })
+                        });
+                        if (res.ok) {
+                            this.toast('Suggestion approved', 'success');
+                            await this.loadHealingData();
+                        } else {
+                            const data = await res.json();
+                            this.toast(data.detail || 'Failed to approve', 'error');
+                        }
+                    } catch (e) {
+                        this.toast('Failed to approve suggestion', 'error');
+                    }
+                },
+
+                async rejectSuggestion(suggestionId) {
+                    const reason = prompt('Reason for rejection:');
+                    if (!reason) return;
+                    
+                    try {
+                        const res = await fetch(`/api/v1/healing/suggestions/${suggestionId}/reject`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ reason, reviewed_by: 'human' })
+                        });
+                        if (res.ok) {
+                            this.toast('Suggestion rejected', 'success');
+                            await this.loadHealingData();
+                        } else {
+                            const data = await res.json();
+                            this.toast(data.detail || 'Failed to reject', 'error');
+                        }
+                    } catch (e) {
+                        this.toast('Failed to reject suggestion', 'error');
+                    }
+                },
+
+                async viewSuggestionDetails(suggestionId) {
+                    try {
+                        const res = await fetch(`/api/v1/healing/suggestions/${suggestionId}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            // TODO: Open a modal with details
+                            console.log('Suggestion details:', data);
+                            alert(`Suggestion: ${data.title}\n\nDescription: ${data.description}\n\nSuggested Change:\n${data.suggested_change || 'N/A'}\n\nExpected Impact: ${data.expected_impact || 'N/A'}`);
+                        }
+                    } catch (e) {
+                        this.toast('Failed to load details', 'error');
+                    }
+                },
+
+                async rollbackAction(actionId) {
+                    if (!confirm('Rollback this action? The original content will be restored.')) return;
+                    
+                    try {
+                        const res = await fetch(`/api/v1/healing/actions/${actionId}/rollback`, {
+                            method: 'POST'
+                        });
+                        if (res.ok) {
+                            this.toast('Action rolled back successfully', 'success');
+                            await this.loadHealingData();
+                        } else {
+                            const data = await res.json();
+                            this.toast(data.detail || 'Rollback failed', 'error');
+                        }
+                    } catch (e) {
+                        this.toast('Rollback failed', 'error');
+                    }
+                },
+
+                async triggerHealingReview() {
+                    if (!this.healingJobFilter) {
+                        this.toast('Select a job first', 'warning');
+                        return;
+                    }
+                    
+                    try {
+                        const res = await fetch('/api/v1/healing/trigger', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ job_id: this.healingJobFilter })
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.toast(`Review triggered for ${this.healingJobFilter}`, 'success');
+                            await this.loadHealingData();
+                        } else {
+                            const data = await res.json();
+                            this.toast(data.detail || 'Failed to trigger review', 'error');
+                        }
+                    } catch (e) {
+                        this.toast('Failed to trigger review', 'error');
                     }
                 },
 
