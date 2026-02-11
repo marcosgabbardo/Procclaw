@@ -414,6 +414,66 @@ class Supervisor:
         
         logger.info(f"Adopted orphan process for job '{job_id}' (PID {pid}, run_id={run_id})")
 
+    def _find_orphan_processes_for_job(self, job_id: str) -> list[int]:
+        """Find orphan processes for a job by scanning running processes.
+        
+        Looks for processes that have PROCCLAW_JOB_ID in their environment
+        or the job's command in their cmdline.
+        """
+        orphan_pids = []
+        job = self.jobs.get_job(job_id)
+        if not job:
+            return orphan_pids
+        
+        try:
+            for proc in psutil.process_iter(['pid', 'environ', 'cmdline', 'create_time']):
+                try:
+                    # Check environment variable
+                    env = proc.info.get('environ') or {}
+                    if env.get('PROCCLAW_JOB_ID') == job_id:
+                        orphan_pids.append(proc.info['pid'])
+                        continue
+                    
+                    # Check cmdline for job-specific patterns
+                    cmdline = proc.info.get('cmdline') or []
+                    cmdline_str = ' '.join(cmdline)
+                    
+                    # For jobs with specific scripts, check if script is in cmdline
+                    if job.cwd and job.cwd in cmdline_str:
+                        orphan_pids.append(proc.info['pid'])
+                        continue
+                    
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+        except Exception as e:
+            logger.warning(f"Error scanning for orphan processes: {e}")
+        
+        return orphan_pids
+
+    def _kill_orphan_processes(self, job_id: str) -> int:
+        """Kill any orphan processes for a job before starting a new instance.
+        
+        Returns the number of processes killed.
+        """
+        orphan_pids = self._find_orphan_processes_for_job(job_id)
+        killed = 0
+        
+        for pid in orphan_pids:
+            # Don't kill our own managed processes
+            if job_id in self._processes:
+                if self._processes[job_id].pid == pid:
+                    continue
+            
+            try:
+                proc = psutil.Process(pid)
+                logger.warning(f"Killing orphan process for '{job_id}' (PID {pid})")
+                proc.kill()
+                killed += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        
+        return killed
+
     def start_job(
         self,
         job_id: str,
@@ -457,6 +517,13 @@ class Supervisor:
                 # Adopt the orphan so we can manage it
                 self._adopt_orphan_process(job_id, state.pid)
                 return False
+
+        # For continuous jobs, kill any orphan processes before starting
+        # This handles cases where daemon was killed abruptly (kill -9)
+        if job.type == JobType.CONTINUOUS:
+            killed = self._kill_orphan_processes(job_id)
+            if killed > 0:
+                logger.info(f"Killed {killed} orphan process(es) for continuous job '{job_id}'")
 
         # Check revocation
         if self._revocation_manager.is_revoked(job_id):
