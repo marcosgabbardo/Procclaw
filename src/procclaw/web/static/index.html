@@ -2857,17 +2857,26 @@
                                                 <option value="hourly">Hourly</option>
                                                 <option value="daily">Daily</option>
                                                 <option value="weekly">Weekly</option>
+                                                <option value="monthly">Monthly</option>
                                                 <option value="on_failure">On Failure</option>
                                                 <option value="on_sla_breach">On SLA Breach</option>
                                                 <option value="manual">Manual Only</option>
                                             </select>
                                         </div>
-                                        <div x-show="['daily', 'weekly'].includes(editJob.self_healing.review_schedule?.frequency)">
+                                        <div x-show="['daily', 'weekly', 'monthly'].includes(editJob.self_healing.review_schedule?.frequency)">
                                             <label class="block text-xs text-dark-400 mb-1">Time</label>
                                             <input type="time" x-model="editJob.self_healing.review_schedule.time" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncEditFormToYaml()">
                                         </div>
                                     </div>
                                     <div class="grid grid-cols-2 gap-3">
+                                        <div x-show="editJob.self_healing.review_schedule?.frequency === 'monthly'">
+                                            <label class="block text-xs text-dark-400 mb-1">Day of Month</label>
+                                            <select x-model.number="editJob.self_healing.review_schedule.day_of_month" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncEditFormToYaml()">
+                                                <template x-for="d in Array.from({length: 28}, (_, i) => i + 1)" :key="d">
+                                                    <option :value="d" x-text="d"></option>
+                                                </template>
+                                            </select>
+                                        </div>
                                         <div x-show="editJob.self_healing.review_schedule?.frequency === 'weekly'">
                                             <label class="block text-xs text-dark-400 mb-1">Day of Week</label>
                                             <select x-model.number="editJob.self_healing.review_schedule.day" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncEditFormToYaml()">

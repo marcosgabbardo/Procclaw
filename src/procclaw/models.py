@@ -311,6 +311,7 @@ class ReviewFrequency(str, Enum):
     HOURLY = "hourly"
     DAILY = "daily"
     WEEKLY = "weekly"
+    MONTHLY = "monthly"
     ON_FAILURE = "on_failure"
     ON_SLA_BREACH = "on_sla_breach"
     MANUAL = "manual"
@@ -403,8 +404,9 @@ class ReviewScheduleConfig(BaseModel):
     """Schedule configuration for proactive healing reviews."""
     
     frequency: ReviewFrequency = ReviewFrequency.DAILY
-    time: str = "03:00"  # HH:MM format for daily/weekly
+    time: str = "03:00"  # HH:MM format for daily/weekly/monthly
     day: int = 1  # 0-6 for weekly (0=Sunday)
+    day_of_month: int = 1  # 1-28 for monthly
     min_runs: int = 5  # Minimum runs since last review to trigger
 
 

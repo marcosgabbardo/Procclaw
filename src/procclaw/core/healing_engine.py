@@ -1532,6 +1532,13 @@ class ProactiveScheduler:
             review_time = datetime.strptime(schedule.time, "%H:%M").time()
             if now.time() < review_time:
                 return False
+        elif frequency == ReviewFrequency.MONTHLY:
+            # Check day of month
+            if now.day != schedule.day_of_month:
+                return False
+            review_time = datetime.strptime(schedule.time, "%H:%M").time()
+            if now.time() < review_time:
+                return False
         
         # Verify min_runs
         runs = self.engine.db.get_runs(job_id=job_id, limit=schedule.min_runs + 1)
@@ -1550,6 +1557,8 @@ class ProactiveScheduler:
             interval = timedelta(days=1)
         elif frequency == ReviewFrequency.WEEKLY:
             interval = timedelta(weeks=1)
+        elif frequency == ReviewFrequency.MONTHLY:
+            interval = timedelta(days=30)
         else:
             return False
         
