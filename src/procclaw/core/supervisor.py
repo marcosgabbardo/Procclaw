@@ -1160,6 +1160,47 @@ class Supervisor:
         
         logger.info("Healing queue processor stopped")
 
+    async def _run_healing_cleanup(self) -> None:
+        """Background task to cleanup old healing data.
+        
+        Runs once per day and removes data older than 90 days.
+        """
+        logger.info("Healing data cleanup task started")
+        
+        # Wait 1 hour before first cleanup (let system stabilize)
+        try:
+            await asyncio.wait_for(
+                self._shutdown_event.wait(),
+                timeout=3600.0,
+            )
+            return  # Shutdown requested
+        except asyncio.TimeoutError:
+            pass
+        
+        while not self._shutdown_event.is_set():
+            try:
+                # Cleanup data older than 90 days
+                reviews, suggestions, actions = self.db.cleanup_old_healing_data(days=90)
+                if reviews + suggestions + actions > 0:
+                    logger.info(
+                        f"Healing cleanup: removed {reviews} reviews, "
+                        f"{suggestions} suggestions, {actions} actions"
+                    )
+            except Exception as e:
+                logger.error(f"Error during healing cleanup: {e}")
+            
+            # Wait 24 hours before next cleanup
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=86400.0,  # 24 hours
+                )
+                break  # Shutdown requested
+            except asyncio.TimeoutError:
+                pass
+        
+        logger.info("Healing data cleanup task stopped")
+
     async def _trigger_self_healing(
         self,
         job_id: str,
@@ -2490,6 +2531,7 @@ class Supervisor:
         trigger_task = asyncio.create_task(self._trigger_manager.run())
         concurrency_task = asyncio.create_task(self._concurrency_limiter.run())
         healing_queue_task = asyncio.create_task(self._run_healing_queue())
+        healing_cleanup_task = asyncio.create_task(self._run_healing_cleanup())
 
         try:
             while not self._shutdown_event.is_set():
@@ -2520,7 +2562,7 @@ class Supervisor:
             await self._proactive_scheduler.stop()
             await self._openclaw.stop()
 
-            for task in [api_task, scheduler_task, health_task, retry_task, watchdog_task, log_rotator_task, resource_task, trigger_task, concurrency_task]:
+            for task in [api_task, scheduler_task, health_task, retry_task, watchdog_task, log_rotator_task, resource_task, trigger_task, concurrency_task, healing_queue_task, healing_cleanup_task]:
                 task.cancel()
                 try:
                     await task
