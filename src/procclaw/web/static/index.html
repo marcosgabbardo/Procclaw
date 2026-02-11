@@ -298,7 +298,7 @@
                                             <template x-if="col.id === 'status'">
                                                 <div class="flex items-center gap-2">
                                                     <span class="w-2 h-2 rounded-full"
-                                                        :class="job.status === 'running' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'paused' ? 'bg-dark-400' : job.status === 'queued' ? 'bg-indigo-500' : 'bg-dark-500'">
+                                                        :class="job.status === 'running' ? 'bg-green-500' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'disabled' ? 'bg-dark-400' : job.status === 'queued' ? 'bg-indigo-500' : 'bg-dark-500'">
                                                     </span>
                                                     <span class="text-sm" :class="!job.enabled && 'text-dark-500'">
                                                         <span x-text="job.enabled ? job.status : 'disabled'"></span>
@@ -383,7 +383,7 @@
                                     <!-- Actions -->
                                     <td class="px-4 py-3 text-right" @click.stop>
                                         <div class="flex justify-end gap-0.5">
-                                            <button @click="startJob(job.id)" x-show="job.status !== 'running' && job.status !== 'paused' && job.status !== 'queued'" 
+                                            <button @click="startJob(job.id)" x-show="job.status !== 'running' && job.status !== 'disabled' && job.status !== 'queued'" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Start">▶</button>
                                             <button @click="forceStartJob(job.id)" x-show="job.status === 'queued'" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-orange-400 text-sm" title="Force Start (bypass queue)">⚡</button>
@@ -421,7 +421,7 @@
                                 <div class="text-xs text-dark-400" x-text="job.name"></div>
                             </div>
                             <div class="flex items-center gap-2">
-                                <span class="w-2 h-2 rounded-full" :class="job.status === 'running' ? 'bg-green-500 animate-pulse-slow' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'paused' ? 'bg-dark-400' : job.status === 'queued' ? 'bg-indigo-500 animate-pulse-slow' : 'bg-dark-500'"></span>
+                                <span class="w-2 h-2 rounded-full" :class="job.status === 'running' ? 'bg-green-500 animate-pulse-slow' : job.status === 'failed' ? 'bg-red-500' : job.status === 'planned' ? 'bg-cyan-500' : job.status === 'disabled' ? 'bg-dark-400' : job.status === 'queued' ? 'bg-indigo-500 animate-pulse-slow' : 'bg-dark-500'"></span>
                                 <span class="text-xs px-2 py-1 rounded-full" :class="getTypeClass(job.type)" x-text="job.type"></span>
                             </div>
                         </div>
@@ -444,7 +444,7 @@
                                 <span x-show="job.dependents?.length > 0" class="text-green-400">➡️ <span x-text="job.dependents?.length"></span></span>
                             </div>
                             <div class="flex gap-0.5">
-                                <button @click="startJob(job.id)" x-show="job.status !== 'running' && job.status !== 'paused' && job.status !== 'queued'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Start">▶</button>
+                                <button @click="startJob(job.id)" x-show="job.status !== 'running' && job.status !== 'disabled' && job.status !== 'queued'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Start">▶</button>
                                 <button @click="forceStartJob(job.id)" x-show="job.status === 'queued'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-orange-400 text-sm" title="Force Start (bypass queue)">⚡</button>
                                 <button @click="stopJob(job.id)" x-show="job.status === 'running'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Stop">◼</button>
                                 <button @click="disableJob(job.id)" x-show="!job.paused" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Disable">🚫</button>
@@ -1493,7 +1493,7 @@
                             <div class="bg-dark-700 rounded-lg p-3">
                                 <div class="text-xs text-dark-400 mb-1">Status</div>
                                 <div class="flex items-center gap-2">
-                                    <span class="w-2 h-2 rounded-full" :class="selectedJob.status === 'running' ? 'bg-green-500' : selectedJob.status === 'failed' ? 'bg-red-500' : selectedJob.status === 'planned' ? 'bg-cyan-500' : selectedJob.status === 'paused' ? 'bg-dark-400' : selectedJob.status === 'queued' ? 'bg-indigo-500' : 'bg-dark-500'"></span>
+                                    <span class="w-2 h-2 rounded-full" :class="selectedJob.status === 'running' ? 'bg-green-500' : selectedJob.status === 'failed' ? 'bg-red-500' : selectedJob.status === 'planned' ? 'bg-cyan-500' : selectedJob.status === 'disabled' ? 'bg-dark-400' : selectedJob.status === 'queued' ? 'bg-indigo-500' : 'bg-dark-500'"></span>
                                     <span x-text="selectedJob.status"></span>
                                     <span x-show="selectedJob.status === 'queued' && selectedJob.queue_status" class="text-indigo-300 text-xs" x-text="'(#' + (selectedJob.queue_status?.position + 1) + ' in ' + selectedJob.queue + ')'"></span>
                                 </div>

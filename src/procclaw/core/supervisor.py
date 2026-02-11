@@ -1386,9 +1386,9 @@ class Supervisor:
         # Compute display status
         display_status = state.status.value
         if not job.enabled:
-            display_status = JobStatus.DISABLED.value
+            display_status = "disabled"
         elif is_paused:
-            display_status = "paused"
+            display_status = "disabled"
         elif state.status == JobStatus.QUEUED:
             display_status = JobStatus.QUEUED.value
         elif state.status == JobStatus.RUNNING:
