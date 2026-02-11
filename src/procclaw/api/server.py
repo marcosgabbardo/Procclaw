@@ -2316,6 +2316,63 @@ def create_app() -> FastAPI:
             "runs": metrics.runs[:20],  # Last 20 runs with details
         }
 
+    @app.put("/api/v1/jobs/{job_id}/sla")
+    async def update_job_sla(
+        job_id: str,
+        data: dict,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Update SLA configuration for a job."""
+        import yaml
+        from procclaw.config import DEFAULT_JOBS_FILE
+        
+        supervisor = get_supervisor()
+        job = supervisor.jobs.get_job(job_id)
+        
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        # Load current YAML
+        try:
+            with open(DEFAULT_JOBS_FILE, "r") as f:
+                jobs_yaml = yaml.safe_load(f) or {}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read jobs.yaml: {e}")
+        
+        if job_id not in jobs_yaml:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found in jobs.yaml")
+        
+        # Update SLA config
+        sla_config = data.get("sla", data)
+        jobs_yaml[job_id]["sla"] = {
+            "enabled": sla_config.get("enabled", False),
+            "success_rate": sla_config.get("success_rate", 95.0),
+            "schedule_tolerance": sla_config.get("schedule_tolerance", 300),
+            "max_duration": sla_config.get("max_duration"),
+            "evaluation_period": sla_config.get("evaluation_period", "7d"),
+            "alert_threshold": sla_config.get("alert_threshold", 90.0),
+            "alert_on_breach": sla_config.get("alert_on_breach", True),
+        }
+        
+        # Remove None values
+        jobs_yaml[job_id]["sla"] = {k: v for k, v in jobs_yaml[job_id]["sla"].items() if v is not None}
+        
+        # Write back
+        try:
+            with open(DEFAULT_JOBS_FILE, "w") as f:
+                yaml.dump(jobs_yaml, f, default_flow_style=False, sort_keys=False)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to write jobs.yaml: {e}")
+        
+        # Reload
+        supervisor.reload_jobs()
+        
+        return {
+            "success": True,
+            "job_id": job_id,
+            "sla": jobs_yaml[job_id]["sla"],
+        }
+
     @app.get("/api/v1/jobs/{job_id}/sla/history")
     async def get_job_sla_history(
         job_id: str,
