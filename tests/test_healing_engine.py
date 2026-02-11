@@ -301,6 +301,58 @@ class TestHealingEngine:
         
         suggestions = engine._parse_ai_response(response, job_config.self_healing)
         assert suggestions == []
+
+    def test_parse_ai_response_with_nested_code_blocks(self, engine, mock_supervisor):
+        """Test parsing when proposed_content contains ```bash code blocks."""
+        job_config = MockJobConfig("test-job")
+        
+        response = '''Analysis:
+
+```json
+{
+  "suggestions": [
+    {
+      "category": "prompt",
+      "severity": "medium",
+      "title": "Improve prompt",
+      "description": "Add metrics section",
+      "proposed_content": "# Prompt\\n\\n## Run\\n```bash\\necho hello\\n```\\n\\n## Done",
+      "target_file": "~/.procclaw/prompts/test.md",
+      "auto_apply": false
+    }
+  ]
+}
+```
+'''
+        
+        suggestions = engine._parse_ai_response(response, job_config.self_healing)
+        assert len(suggestions) == 1
+        assert suggestions[0].title == "Improve prompt"
+        assert suggestions[0].proposed_content is not None
+        assert "```bash" in suggestions[0].proposed_content
+
+    def test_parse_ai_response_with_braces_in_strings(self, engine, mock_supervisor):
+        """Test parsing when string values contain unbalanced braces."""
+        job_config = MockJobConfig("test-job")
+        
+        response = '''```json
+{
+  "suggestions": [
+    {
+      "category": "config",
+      "severity": "low",
+      "title": "Fix { in config file",
+      "description": "The config has { unbalanced } braces",
+      "proposed_content": "job:\\n  cmd: echo {test}",
+      "auto_apply": false
+    }
+  ]
+}
+```'''
+        
+        suggestions = engine._parse_ai_response(response, job_config.self_healing)
+        assert len(suggestions) == 1
+        assert suggestions[0].title == "Fix { in config file"
     
     def test_build_analysis_prompt(self, engine):
         """Test building analysis prompt."""

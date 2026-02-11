@@ -71,9 +71,6 @@ class SuggestionData:
 class SkipReviewError(Exception):
     """Raised when a review should be skipped (e.g., not enough runs)."""
     pass
-    expected_impact: str | None = None
-    affected_files: list[str] | None = None
-    auto_apply: bool = False
 
 
 class HealingEngine:
@@ -714,7 +711,58 @@ Set auto_apply=true only for trivial, low-risk config changes.
         
         # Try to find JSON in response
         import re
-        json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+        
+        # Strategy: Find all ```json ... ``` blocks using greedy matching,
+        # then use JSON-aware brace counting (skipping string contents)
+        # to find the valid JSON object boundary.
+        json_match = re.search(r'```json\s*(.*)\s*```', response, re.DOTALL)
+        
+        if json_match:
+            json_str = json_match.group(1).strip()
+            
+            # JSON-aware brace counting: skip characters inside strings
+            brace_count = 0
+            json_end = 0
+            in_string = False
+            escape_next = False
+            
+            for i, char in enumerate(json_str):
+                if escape_next:
+                    escape_next = False
+                    continue
+                if char == '\\' and in_string:
+                    escape_next = True
+                    continue
+                if char == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        json_end = i + 1
+                        break
+            
+            if json_end > 0:
+                json_str = json_str[:json_end]
+                class _FakeMatch:
+                    def group(self, n):
+                        return json_str if n == 1 else json_str
+                json_match = _FakeMatch()
+            else:
+                # Brace counting failed, try json.loads on the whole thing
+                try:
+                    json.loads(json_str)
+                    class _FakeMatch2:
+                        def group(self, n):
+                            return json_str if n == 1 else json_str
+                    json_match = _FakeMatch2()
+                except json.JSONDecodeError:
+                    json_match = None
+        
         if not json_match:
             # Try without code block
             json_match = re.search(r'\{[\s\S]*"suggestions"[\s\S]*\}', response)
@@ -1108,22 +1156,23 @@ Set auto_apply=true only for trivial, low-risk config changes.
         except Exception as e:
             return {"success": False, "error": f"Cannot read file: {e}"}
         
-        # SAFETY: Check for suspicious content reduction
-        if len(new_content.strip()) < len(original_content.strip()) * 0.5:
-            return {
-                "success": False,
-                "error": f"Content reduced by more than 50% ({len(original_content)} -> {len(new_content)}). Blocked for safety."
-            }
-        
-        # SPECIAL HANDLING: For jobs.yaml, merge the section back
+        # SPECIAL HANDLING: For jobs.yaml, merge the section back FIRST
         is_jobs_yaml = file_name == "jobs.yaml"
         final_content = new_content
         
         if is_jobs_yaml:
             try:
                 final_content = self._merge_job_section_to_yaml(original_content, job_id, new_content)
+                logger.info(f"Merged job section: {len(new_content)} chars -> {len(final_content)} chars")
             except Exception as e:
                 return {"success": False, "error": f"Failed to merge job section: {e}"}
+        
+        # SAFETY: Check for suspicious content reduction (AFTER merge for jobs.yaml)
+        if len(final_content.strip()) < len(original_content.strip()) * 0.5:
+            return {
+                "success": False,
+                "error": f"Content reduced by more than 50% ({len(original_content)} -> {len(final_content)}). Blocked for safety."
+            }
         
         # Write the new content
         try:

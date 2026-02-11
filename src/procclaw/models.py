@@ -39,6 +39,7 @@ class JobStatus(str, Enum):
 class HealthCheckType(str, Enum):
     """Type of health check."""
 
+    NONE = "none"  # Disabled - no health check
     PROCESS = "process"
     HTTP = "http"
     FILE = "file"

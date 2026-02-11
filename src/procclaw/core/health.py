@@ -84,7 +84,10 @@ class HealthChecker:
         config = job.health_check
 
         # Run the appropriate check
-        if config.type == HealthCheckType.PROCESS:
+        if config.type == HealthCheckType.NONE:
+            # Health check disabled - always healthy
+            result = HealthCheckResult(True, "Health check disabled")
+        elif config.type == HealthCheckType.PROCESS:
             result = await self._check_process(job_id, pid)
         elif config.type == HealthCheckType.HTTP:
             result = await self._check_http(job_id, config)

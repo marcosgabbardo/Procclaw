@@ -130,6 +130,8 @@ class JobSummary(BaseModel):
     # SLA and self-healing (for edit modal)
     sla: dict | None = None
     self_healing: dict | None = None
+    # Healing status
+    is_healing: bool = False
 
 
 class JobDetail(JobSummary):
@@ -281,6 +283,8 @@ class HealingSuggestionDetail(BaseModel):
     suggested_change: str | None = None
     expected_impact: str | None = None
     affected_files: list[str] = []
+    proposed_content: str | None = None  # Pre-generated file content
+    target_file: str | None = None  # File to modify
     status: str
     reviewed_at: str | None = None
     reviewed_by: str | None = None
@@ -299,6 +303,10 @@ class HealingActionSummary(BaseModel):
     status: str
     can_rollback: bool = False
     created_at: str
+    # From joined suggestion
+    suggestion_title: str | None = None
+    suggestion_category: str | None = None
+    suggestion_severity: str | None = None
 
 
 class HealingActionDetail(BaseModel):
@@ -435,6 +443,7 @@ def create_app() -> FastAPI:
                     thinking=j.get("thinking"),
                     sla=j.get("sla"),
                     self_healing=j.get("self_healing"),
+                    is_healing=j.get("is_healing", False),
                 )
                 for j in jobs
             ],
@@ -900,6 +909,8 @@ def create_app() -> FastAPI:
             suggested_change=suggestion.get("suggested_change"),
             expected_impact=suggestion.get("expected_impact"),
             affected_files=suggestion.get("affected_files", []),
+            proposed_content=suggestion.get("proposed_content"),
+            target_file=suggestion.get("target_file"),
             status=suggestion["status"],
             reviewed_at=suggestion.get("reviewed_at"),
             reviewed_by=suggestion.get("reviewed_by"),
@@ -1028,6 +1039,9 @@ def create_app() -> FastAPI:
                     status=a["status"],
                     can_rollback=bool(a.get("can_rollback")),
                     created_at=a.get("created_at", ""),
+                    suggestion_title=a.get("suggestion_title"),
+                    suggestion_category=a.get("suggestion_category"),
+                    suggestion_severity=a.get("suggestion_severity"),
                 ).model_dump()
                 for a in actions
             ],
@@ -1406,6 +1420,7 @@ def create_app() -> FastAPI:
             thinking=job_status.get("thinking"),
             sla=job_status.get("sla"),
             self_healing=job_status.get("self_healing"),
+            is_healing=job_status.get("is_healing", False),
         )
 
     @app.post("/api/v1/jobs/{job_id}/start", response_model=ActionResponse)
