@@ -866,7 +866,7 @@ class TestScheduleChangeDetection:
         assert last_change is not None
     
     def test_no_schedule_change_returns_none(self, basic_job, tmp_path):
-        """Test that no change returns None."""
+        """Test that no change returns None when all snapshots have same schedule."""
         from procclaw.db import Database
         from procclaw.sla import save_sla_snapshot, get_last_schedule_change
         
@@ -878,8 +878,9 @@ class TestScheduleChangeDetection:
         # Check for change with same schedule
         last_change = get_last_schedule_change(db, "test-job", "0 9 * * *")
         
-        # Should return a datetime (the only snapshot)
-        assert last_change is not None
+        # Should return None because there's no evidence of a schedule CHANGE
+        # (all snapshots have the same schedule)
+        assert last_change is None
     
     def test_no_snapshots_returns_none(self, basic_job, tmp_path):
         """Test that no snapshots returns None."""

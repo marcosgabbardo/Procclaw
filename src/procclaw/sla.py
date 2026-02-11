@@ -563,6 +563,7 @@ def get_last_schedule_change(
     
     Returns:
         datetime of last schedule change, or None if no change detected
+        (None means: either no snapshots exist, or all snapshots have same schedule)
     """
     current_hash = create_schedule_hash(current_schedule)
     
@@ -585,6 +586,7 @@ def get_last_schedule_change(
         # Find when the schedule changed to the current value
         # We iterate from newest to oldest, looking for when schedule became different
         last_change_at = None
+        found_different_schedule = False
         
         for row in rows:
             try:
@@ -599,11 +601,16 @@ def get_last_schedule_change(
                 else:
                     # Found a snapshot with different schedule
                     # The change happened AFTER this snapshot
+                    found_different_schedule = True
                     break
             except (json.JSONDecodeError, ValueError):
                 continue
         
-        return last_change_at
+        # Only return a date if we actually found evidence of a schedule change
+        # If all snapshots have the same schedule, there was no change
+        if found_different_schedule:
+            return last_change_at
+        return None
 
 
 def save_sla_snapshot(
