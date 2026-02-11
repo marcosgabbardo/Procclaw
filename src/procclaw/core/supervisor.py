@@ -1835,7 +1835,9 @@ class Supervisor:
             
             # Trigger proactive review on failure (if configured)
             asyncio.create_task(
-                self._proactive_scheduler.trigger_on_event(job_id, "failure")
+                self._proactive_scheduler.trigger_on_event(
+                    job_id, "failure", run_id=last_run.id if last_run else None
+                )
             )
 
     def _process_queued_jobs(self, job_id: str) -> None:

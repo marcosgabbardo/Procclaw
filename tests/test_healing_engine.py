@@ -38,11 +38,12 @@ class MockJobConfig:
         self.type = MagicMock()
         self.type.value = kwargs.get("type", "manual")
         
-        # Self-healing config
+        # Self-healing config - use min_runs=0 for tests to avoid SkipReviewError
+        default_schedule = ReviewScheduleConfig(min_runs=0)
         self.self_healing = SelfHealingConfig(
             enabled=kwargs.get("healing_enabled", True),
             mode=kwargs.get("healing_mode", HealingMode.PROACTIVE),
-            review_schedule=kwargs.get("review_schedule", ReviewScheduleConfig()),
+            review_schedule=kwargs.get("review_schedule", default_schedule),
             review_scope=kwargs.get("review_scope", ReviewScopeConfig()),
             suggestions=kwargs.get("suggestions", SuggestionBehaviorConfig()),
         )

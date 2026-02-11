@@ -63,6 +63,14 @@ class SuggestionData:
     auto_apply: bool = False
 
 
+class SkipReviewError(Exception):
+    """Raised when a review should be skipped (e.g., not enough runs)."""
+    pass
+    expected_impact: str | None = None
+    affected_files: list[str] | None = None
+    auto_apply: bool = False
+
+
 class HealingEngine:
     """Proactive healing engine for job behavior analysis.
     
@@ -82,12 +90,16 @@ class HealingEngine:
         self,
         job_id: str,
         job_config: JobConfig | None = None,
+        trigger: str = "scheduled",
+        failed_run_id: int | None = None,
     ) -> int:
         """Run a healing review for a job.
         
         Args:
             job_id: Job to analyze
             job_config: Optional job config (fetched if not provided)
+            trigger: What triggered this review ('scheduled', 'failure', 'sla_breach', 'manual')
+            failed_run_id: Specific run ID when triggered by failure (reactive mode)
             
         Returns:
             Review ID
@@ -115,7 +127,9 @@ class HealingEngine:
             scope = healing_config.review_scope
             
             # Collect context
-            context = await self._collect_context(job_id, job_config, scope)
+            context = await self._collect_context(
+                job_id, job_config, scope, trigger=trigger, failed_run_id=failed_run_id
+            )
             
             # Run AI analysis
             suggestions = await self._analyze_with_ai(context, healing_config)
@@ -174,6 +188,17 @@ class HealingEngine:
                 )
             
             return review_id
+        
+        except SkipReviewError as e:
+            # Review skipped (e.g., not enough runs) - not a failure
+            logger.info(f"Review skipped for {job_id}: {e}")
+            self.db.update_healing_review(
+                review_id,
+                status="skipped",
+                finished_at=datetime.now(),
+                error_message=str(e),
+            )
+            return review_id
             
         except Exception as e:
             logger.error(f"Review failed for {job_id}: {e}")
@@ -192,13 +217,62 @@ class HealingEngine:
         job_id: str,
         job_config: JobConfig,
         scope: Any,
+        trigger: str = "scheduled",
+        failed_run_id: int | None = None,
     ) -> AnalysisContext:
-        """Collect all context data for analysis."""
+        """Collect all context data for analysis.
         
-        # Get recent runs
+        Args:
+            job_id: Job to analyze
+            job_config: Job configuration
+            scope: What to analyze (logs, runs, ai_sessions, sla)
+            trigger: What triggered this review ('scheduled', 'failure', 'sla_breach', 'manual')
+            failed_run_id: Specific run ID when triggered by failure (reactive mode)
+        """
+        healing_config = job_config.self_healing
+        
+        # Get runs based on mode
         recent_runs = []
         if scope.analyze_runs:
-            runs = self.db.get_runs(job_id=job_id, limit=20)
+            if healing_config.mode == HealingMode.REACTIVE:
+                # REACTIVE: Only the failed run
+                if failed_run_id:
+                    run = self.db.get_run(failed_run_id)
+                    runs = [run] if run else []
+                else:
+                    # Fallback: last failed run
+                    runs = self.db.get_runs(job_id=job_id, status="failed", limit=1)
+                logger.debug(f"Reactive mode: analyzing {len(runs)} failed run(s)")
+            else:
+                # PROACTIVE: Runs since last completed review
+                last_review = self.db.get_last_completed_review(job_id)
+                
+                if last_review and last_review.get("finished_at"):
+                    # Parse the finished_at timestamp
+                    finished_at = last_review["finished_at"]
+                    if isinstance(finished_at, str):
+                        since = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+                    else:
+                        since = finished_at
+                    logger.debug(f"Proactive mode: analyzing runs since {since}")
+                else:
+                    # No previous review: last 7 days
+                    since = datetime.now() - timedelta(days=7)
+                    logger.debug(f"Proactive mode (no prior review): analyzing runs since {since}")
+                
+                runs = self.db.get_runs(job_id=job_id, since=since, limit=100)
+                
+                # Check min_runs threshold
+                min_runs = healing_config.review_schedule.min_runs
+                if len(runs) < min_runs:
+                    logger.info(
+                        f"Skipping review for {job_id}: only {len(runs)} runs "
+                        f"since last review, need {min_runs}"
+                    )
+                    raise SkipReviewError(
+                        f"Insufficient runs: {len(runs)} < {min_runs} required"
+                    )
+            
             recent_runs = [
                 {
                     "id": r.id,
@@ -870,7 +944,9 @@ class ProactiveScheduler:
             if self._is_due(job_id, job_config, now):
                 logger.info(f"Triggering scheduled review for {job_id}")
                 try:
-                    await self.engine.run_review(job_id, job_config)
+                    await self.engine.run_review(job_id, job_config, trigger="scheduled")
+                except SkipReviewError:
+                    pass  # Already logged in run_review
                 except Exception as e:
                     logger.error(f"Scheduled review failed for {job_id}: {e}")
                 
@@ -921,12 +997,14 @@ class ProactiveScheduler:
         self,
         job_id: str,
         event: str,
+        run_id: int | None = None,
     ):
         """Trigger review based on event.
         
         Args:
             job_id: Job to review
             event: "failure" or "sla_breach"
+            run_id: Run ID that triggered the event (for failure events)
         """
         job_config = self.supervisor.jobs.get_job(job_id)
         if not job_config:
@@ -947,6 +1025,13 @@ class ProactiveScheduler:
         if should_trigger:
             logger.info(f"Triggering {event} review for {job_id}")
             try:
-                await self.engine.run_review(job_id, job_config)
+                await self.engine.run_review(
+                    job_id, 
+                    job_config, 
+                    trigger=event,
+                    failed_run_id=run_id if event == "failure" else None,
+                )
+            except SkipReviewError:
+                pass  # Already logged
             except Exception as e:
                 logger.error(f"Event-triggered review failed for {job_id}: {e}")

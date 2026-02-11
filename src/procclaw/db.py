@@ -810,8 +810,16 @@ class Database:
         job_id: str | None = None,
         limit: int = 100,
         since: datetime | None = None,
+        status: str | None = None,
     ) -> list[JobRun]:
-        """Get job run history."""
+        """Get job run history.
+        
+        Args:
+            job_id: Filter by job ID
+            limit: Maximum runs to return
+            since: Only runs started after this datetime
+            status: Filter by exit status ('success', 'failed', 'running')
+        """
         with self._connect() as conn:
             query = "SELECT * FROM job_runs WHERE 1=1"
             params: list = []
@@ -823,6 +831,14 @@ class Database:
             if since:
                 query += " AND started_at >= ?"
                 params.append(since.isoformat())
+            
+            if status:
+                if status == "failed":
+                    query += " AND exit_code IS NOT NULL AND exit_code != 0"
+                elif status == "success":
+                    query += " AND exit_code = 0"
+                elif status == "running":
+                    query += " AND finished_at IS NULL"
 
             query += " ORDER BY started_at DESC LIMIT ?"
             params.append(limit)
@@ -831,6 +847,16 @@ class Database:
             rows = cursor.fetchall()
 
             return [self._row_to_run(row) for row in rows]
+
+    def get_run(self, run_id: int) -> JobRun | None:
+        """Get a specific run by ID."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM job_runs WHERE id = ?",
+                (run_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_run(row) if row else None
 
     def get_last_run(self, job_id: str) -> JobRun | None:
         """Get the last run of a job."""
@@ -1590,6 +1616,24 @@ class Database:
                 SELECT * FROM healing_reviews 
                 WHERE job_id = ?
                 ORDER BY started_at DESC
+                LIMIT 1
+                """,
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_last_completed_review(self, job_id: str) -> dict | None:
+        """Get the most recent COMPLETED healing review for a job.
+        
+        Used to determine the time window for proactive reviews.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM healing_reviews 
+                WHERE job_id = ? AND status = 'completed'
+                ORDER BY finished_at DESC
                 LIMIT 1
                 """,
                 (job_id,),
