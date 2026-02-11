@@ -25,8 +25,18 @@ uv run pytest tests/ -v && uv run mypy src/procclaw/ && uv run ruff check src/pr
 
 ## Phase 1: Database & Models
 
+### Completed
+- [x] Phase 1: Foundation (4 commits, 61 new tests)
+  - [x] Enums: HealingMode, ReviewFrequency, SuggestionCategory, etc.
+  - [x] Config models: ReviewScheduleConfig, ReviewScopeConfig, SuggestionBehaviorConfig
+  - [x] Data models: HealingReview, HealingSuggestion, HealingActionRecord
+  - [x] DB migration v11: healing_reviews, healing_suggestions, healing_actions
+  - [x] DB CRUD methods for all healing tables
+  - [x] API endpoints (13 total) for reviews, suggestions, actions
+  - [x] Web UI: Self-Healing tab with sub-tabs
+
 ### In Progress
-- [ ] Task 1.2: Create new config models (iteration 2)
+- [ ] Phase 2: Healing Engine (Core AI Analysis)
 
 ### Backlog
 - [ ] Task 1.2: Create new config models (ReviewScheduleConfig, ReviewScopeConfig, SuggestionBehaviorConfig)
