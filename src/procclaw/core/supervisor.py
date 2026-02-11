@@ -119,10 +119,11 @@ class OrphanProcessHandle:
     Uses psutil to manage the process since we don't have the original Popen.
     """
 
-    def __init__(self, job_id: str, pid: int, started_at: datetime | None = None):
+    def __init__(self, job_id: str, pid: int, started_at: datetime | None = None, run_id: int | None = None):
         self.job_id = job_id
         self._pid = pid
         self.started_at = started_at or datetime.now()
+        self.run_id = run_id  # May be None for truly orphaned processes
         self.stdout_file = None
         self.stderr_file = None
         self._process: psutil.Process | None = None
@@ -401,10 +402,17 @@ class Supervisor:
         state = self.db.get_state(job_id)
         started_at = state.started_at if state else None
         
-        handle = OrphanProcessHandle(job_id, pid, started_at)
+        # Try to find the run_id from the last running run
+        run_id = None
+        last_run = self.db.get_last_run(job_id)
+        if last_run and last_run.finished_at is None:
+            # Still running = this is probably the orphaned run
+            run_id = last_run.id
+        
+        handle = OrphanProcessHandle(job_id, pid, started_at, run_id)
         self._processes[job_id] = handle
         
-        logger.info(f"Adopted orphan process for job '{job_id}' (PID {pid})")
+        logger.info(f"Adopted orphan process for job '{job_id}' (PID {pid}, run_id={run_id})")
 
     def start_job(
         self,
