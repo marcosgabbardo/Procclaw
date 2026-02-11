@@ -869,8 +869,8 @@
         </div>
 
         <!-- SLA Modal -->
-        <div x-show="showSLAModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="closeSLAModal()">
-            <div class="bg-dark-800 rounded-xl max-w-4xl w-full max-h-[85vh] overflow-hidden flex flex-col">
+        <div x-show="showSLAModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4" @click.self="closeSLAModal()">
+            <div class="bg-dark-800 rounded-xl max-w-4xl w-full max-h-[90vh] sm:max-h-[85vh] overflow-hidden flex flex-col">
                 <div class="p-4 border-b border-dark-600 flex items-center justify-between">
                     <div>
                         <h2 class="text-lg font-medium">📊 SLA Details</h2>
@@ -894,12 +894,12 @@
                 </div>
                 
                 <!-- Content -->
-                <div x-show="!slaLoading && slaData" class="p-6 overflow-auto flex-1 space-y-6">
+                <div x-show="!slaLoading && slaData" class="p-4 sm:p-6 overflow-auto flex-1 space-y-4 sm:space-y-6">
                     <!-- Overall Score -->
-                    <div class="text-center py-4">
-                        <div class="text-6xl font-bold mb-2" :class="getSLABadgeClass(slaData?.overall_score)">
-                            <span x-text="slaData?.overall_score?.toFixed(1)"></span><span class="text-2xl">%</span>
-                            <span class="text-3xl ml-2" :class="getTrendClass(slaData?.trend)" x-text="getTrendIcon(slaData?.trend)"></span>
+                    <div class="text-center py-2 sm:py-4">
+                        <div class="text-5xl sm:text-6xl font-bold mb-2" :class="getSLABadgeClass(slaData?.overall_score)">
+                            <span x-text="slaData?.overall_score?.toFixed(1)"></span><span class="text-xl sm:text-2xl">%</span>
+                            <span class="text-2xl sm:text-3xl ml-2" :class="getTrendClass(slaData?.trend)" x-text="getTrendIcon(slaData?.trend)"></span>
                         </div>
                         <div class="flex items-center justify-center gap-2">
                             <span class="text-2xl" x-text="getSLAIcon(slaData?.status)"></span>
@@ -911,12 +911,14 @@
                     </div>
                     
                     <!-- Metrics Cards -->
-                    <div class="grid grid-cols-3 gap-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                         <!-- Success Rate -->
-                        <div class="bg-dark-700 rounded-lg p-4">
-                            <div class="text-sm text-dark-400 mb-2">Success Rate</div>
-                            <div class="text-3xl font-bold" :class="getSLAMetricStatus(slaData?.metrics?.success_rate?.actual, slaData?.metrics?.success_rate?.target)">
-                                <span x-text="slaData?.metrics?.success_rate?.actual?.toFixed(1)"></span>%
+                        <div class="bg-dark-700 rounded-lg p-3 sm:p-4">
+                            <div class="flex sm:block items-center justify-between">
+                                <div class="text-sm text-dark-400 sm:mb-2">Success Rate</div>
+                                <div class="text-2xl sm:text-3xl font-bold" :class="getSLAMetricStatus(slaData?.metrics?.success_rate?.actual, slaData?.metrics?.success_rate?.target)">
+                                    <span x-text="slaData?.metrics?.success_rate?.actual?.toFixed(1)"></span>%
+                                </div>
                             </div>
                             <div class="text-xs text-dark-500 mt-1">
                                 Target: <span x-text="slaData?.metrics?.success_rate?.target"></span>%
@@ -932,10 +934,12 @@
                         </div>
                         
                         <!-- Schedule Adherence -->
-                        <div class="bg-dark-700 rounded-lg p-4">
-                            <div class="text-sm text-dark-400 mb-2">On-Time Start</div>
-                            <div class="text-3xl font-bold" :class="getSLAMetricStatus(slaData?.metrics?.schedule_adherence?.actual, 90)">
-                                <span x-text="slaData?.metrics?.schedule_adherence?.actual?.toFixed(1)"></span>%
+                        <div class="bg-dark-700 rounded-lg p-3 sm:p-4">
+                            <div class="flex sm:block items-center justify-between">
+                                <div class="text-sm text-dark-400 sm:mb-2">On-Time Start</div>
+                                <div class="text-2xl sm:text-3xl font-bold" :class="getSLAMetricStatus(slaData?.metrics?.schedule_adherence?.actual, 90)">
+                                    <span x-text="slaData?.metrics?.schedule_adherence?.actual?.toFixed(1)"></span>%
+                                </div>
                             </div>
                             <div class="text-xs text-dark-500 mt-1">
                                 Target: 100%
@@ -951,10 +955,12 @@
                         </div>
                         
                         <!-- Duration Compliance -->
-                        <div class="bg-dark-700 rounded-lg p-4">
-                            <div class="text-sm text-dark-400 mb-2">Duration</div>
-                            <div class="text-3xl font-bold" :class="getSLAMetricStatus(slaData?.metrics?.duration_compliance?.actual, 90)">
-                                <span x-text="slaData?.metrics?.duration_compliance?.actual?.toFixed(1)"></span>%
+                        <div class="bg-dark-700 rounded-lg p-3 sm:p-4">
+                            <div class="flex sm:block items-center justify-between">
+                                <div class="text-sm text-dark-400 sm:mb-2">Duration</div>
+                                <div class="text-2xl sm:text-3xl font-bold" :class="getSLAMetricStatus(slaData?.metrics?.duration_compliance?.actual, 90)">
+                                    <span x-text="slaData?.metrics?.duration_compliance?.actual?.toFixed(1)"></span>%
+                                </div>
                             </div>
                             <div class="text-xs text-dark-500 mt-1">
                                 Max: <span x-text="slaData?.metrics?.duration_compliance?.max_duration_target ? formatDuration(slaData.metrics.duration_compliance.max_duration_target) : 'N/A'"></span>
@@ -966,7 +972,7 @@
                             </div>
                             <div class="text-xs text-dark-500 mt-2">
                                 Avg: <span x-text="formatDuration(slaData?.metrics?.duration_compliance?.avg_duration)"></span>
-                                • P95: <span x-text="formatDuration(slaData?.metrics?.duration_compliance?.p95_duration)"></span>
+                                <span class="hidden sm:inline">•</span> <span class="sm:hidden"><br></span>P95: <span x-text="formatDuration(slaData?.metrics?.duration_compliance?.p95_duration)"></span>
                             </div>
                         </div>
                     </div>
@@ -974,12 +980,12 @@
                     <!-- Recent Runs -->
                     <div>
                         <div class="text-sm font-medium text-dark-300 mb-3">Recent Runs</div>
-                        <div class="bg-dark-700 rounded-lg overflow-hidden">
-                            <table class="w-full text-sm">
+                        <div class="bg-dark-700 rounded-lg overflow-x-auto">
+                            <table class="w-full text-sm min-w-[400px]">
                                 <thead class="bg-dark-600">
                                     <tr>
                                         <th class="text-left p-2 text-dark-400 font-medium">Run</th>
-                                        <th class="text-left p-2 text-dark-400 font-medium">Started</th>
+                                        <th class="text-left p-2 text-dark-400 font-medium hidden sm:table-cell">Started</th>
                                         <th class="text-left p-2 text-dark-400 font-medium">Status</th>
                                         <th class="text-left p-2 text-dark-400 font-medium">On-Time</th>
                                         <th class="text-left p-2 text-dark-400 font-medium">Duration</th>
@@ -989,7 +995,7 @@
                                     <template x-for="run in (slaData?.runs || []).slice(0, 10)" :key="run.run_id">
                                         <tr class="border-t border-dark-600 hover:bg-dark-650">
                                             <td class="p-2 text-dark-300">#<span x-text="run.run_id"></span></td>
-                                            <td class="p-2 text-dark-400" x-text="new Date(run.started_at).toLocaleString()"></td>
+                                            <td class="p-2 text-dark-400 hidden sm:table-cell" x-text="new Date(run.started_at).toLocaleString()"></td>
                                             <td class="p-2">
                                                 <span class="text-xs px-2 py-0.5 rounded-full"
                                                     :class="run.sla_status === 'pass' ? 'bg-green-500/20 text-green-400' : run.sla_status === 'partial' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'"
