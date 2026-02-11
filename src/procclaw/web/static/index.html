@@ -2439,7 +2439,7 @@
                     </div>
                     
                     <!-- SLA Settings -->
-                    <details class="bg-dark-700 rounded-lg">
+                    <details class="bg-dark-700 rounded-lg" :open="editJob.sla?.enabled">
                         <summary class="p-3 cursor-pointer text-sm text-dark-300 hover:text-white flex items-center gap-2">
                             📊 SLA Settings
                             <span x-show="editJob.sla?.enabled" class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">Enabled</span>
@@ -2499,7 +2499,7 @@
                     </details>
                     
                     <!-- Self-Healing Settings -->
-                    <details class="bg-dark-700 rounded-lg">
+                    <details class="bg-dark-700 rounded-lg" :open="editJob.self_healing?.enabled">
                         <summary class="p-3 cursor-pointer text-sm text-dark-300 hover:text-white flex items-center gap-2">
                             🔧 Self-Healing Settings
                             <span x-show="editJob.self_healing?.enabled" class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">Enabled</span>
@@ -2709,6 +2709,86 @@
                                 </div>
                             </div>
                         </div>
+                        <!-- SLA Settings -->
+                        <details class="bg-dark-700 rounded-lg" :open="newJob.sla?.enabled">
+                            <summary class="p-3 cursor-pointer text-sm text-dark-300 hover:text-white flex items-center gap-2">
+                                📊 SLA Settings
+                                <span x-show="newJob.sla?.enabled" class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">Enabled</span>
+                            </summary>
+                            <div class="p-4 pt-0 space-y-4">
+                                <div class="flex items-center gap-2">
+                                    <input type="checkbox" id="new-sla-enabled" x-model="newJob.sla.enabled" class="rounded" @change="syncFormToYaml()">
+                                    <label for="new-sla-enabled" class="text-sm">Enable SLA Monitoring</label>
+                                </div>
+                                <div x-show="newJob.sla?.enabled" class="space-y-4">
+                                    <div class="grid grid-cols-3 gap-4">
+                                        <div>
+                                            <label class="block text-sm text-dark-400 mb-1">Success Rate (%)</label>
+                                            <input type="number" x-model.number="newJob.sla.success_rate" min="0" max="100" class="w-full bg-dark-600 border border-dark-500 rounded-lg px-3 py-2 text-sm" @input="syncFormToYaml()">
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm text-dark-400 mb-1">Schedule Tolerance (s)</label>
+                                            <input type="number" x-model.number="newJob.sla.schedule_tolerance" min="0" class="w-full bg-dark-600 border border-dark-500 rounded-lg px-3 py-2 text-sm" @input="syncFormToYaml()">
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm text-dark-400 mb-1">Max Duration (s)</label>
+                                            <input type="number" x-model.number="newJob.sla.max_duration" min="0" class="w-full bg-dark-600 border border-dark-500 rounded-lg px-3 py-2 text-sm" @input="syncFormToYaml()">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
+                        <!-- Self-Healing Settings -->
+                        <details class="bg-dark-700 rounded-lg" :open="newJob.self_healing?.enabled">
+                            <summary class="p-3 cursor-pointer text-sm text-dark-300 hover:text-white flex items-center gap-2">
+                                🔧 Self-Healing Settings
+                                <span x-show="newJob.self_healing?.enabled" class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">Enabled</span>
+                            </summary>
+                            <div class="p-4 pt-0 space-y-4">
+                                <div class="flex items-center gap-2">
+                                    <input type="checkbox" id="new-healing-enabled" x-model="newJob.self_healing.enabled" class="rounded" @change="syncFormToYaml()">
+                                    <label for="new-healing-enabled" class="text-sm">Enable Self-Healing</label>
+                                </div>
+                                <div x-show="newJob.self_healing?.enabled" class="space-y-4">
+                                    <div>
+                                        <label class="block text-sm text-dark-400 mb-1">Preset</label>
+                                        <select x-model="newJob.self_healing.preset" @change="applyNewHealingPreset()" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm">
+                                            <option value="conservative">Conservative (restart only)</option>
+                                            <option value="moderate">Moderate (restart + edit script)</option>
+                                            <option value="aggressive">Aggressive (all actions)</option>
+                                            <option value="custom">Custom</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm text-dark-400 mb-1">Max Fix Attempts</label>
+                                        <input type="number" x-model.number="newJob.self_healing.remediation.max_attempts" min="1" max="10" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm" @input="newJob.self_healing.preset = 'custom'; syncFormToYaml()">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm text-dark-400 mb-1">Allowed Actions</label>
+                                        <div class="flex flex-wrap gap-2">
+                                            <label class="flex items-center gap-1 text-xs">
+                                                <input type="checkbox" :checked="newJob.self_healing?.remediation?.allowed_actions?.includes('restart_job')" 
+                                                    @change="toggleNewHealingAction('restart_job')" class="rounded"> Restart
+                                            </label>
+                                            <label class="flex items-center gap-1 text-xs">
+                                                <input type="checkbox" :checked="newJob.self_healing?.remediation?.allowed_actions?.includes('edit_script')"
+                                                    @change="toggleNewHealingAction('edit_script')" class="rounded"> Edit Script
+                                            </label>
+                                            <label class="flex items-center gap-1 text-xs">
+                                                <input type="checkbox" :checked="newJob.self_healing?.remediation?.allowed_actions?.includes('edit_config')"
+                                                    @change="toggleNewHealingAction('edit_config')" class="rounded"> Edit Config
+                                            </label>
+                                            <label class="flex items-center gap-1 text-xs">
+                                                <input type="checkbox" :checked="newJob.self_healing?.remediation?.allowed_actions?.includes('run_command')"
+                                                    @change="toggleNewHealingAction('run_command')" class="rounded"> Run Command
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
                         <div>
                             <label class="block text-sm text-dark-400 mb-1">Environment Variables</label>
                             <textarea x-model="newJob.env" rows="3" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500 font-mono text-sm" placeholder="KEY=value&#10;SECRET_TOKEN=abc123" @input="syncFormToYaml()"></textarea>
@@ -2921,7 +3001,17 @@
                 healingStats: null,
                 
                 // Forms
-                newJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '' },
+                newJob: { 
+                    id: '', name: '', description: '', cmd: '', cwd: '', type: 'manual', 
+                    schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '',
+                    sla: { enabled: false, success_rate: 95, schedule_tolerance: 300, max_duration: null, evaluation_period: '7d', alert_threshold: 90, alert_on_breach: true },
+                    self_healing: { 
+                        enabled: false, preset: 'conservative',
+                        analysis: { include_logs: true, log_lines: 200, include_stderr: true, include_history: 5, include_config: true },
+                        remediation: { enabled: true, max_attempts: 3, allowed_actions: ['restart_job'], forbidden_paths: [], require_approval: false },
+                        notify: { on_analysis: false, on_fix_attempt: true, on_success: true, on_give_up: true, session: 'main' }
+                    }
+                },
                 newJobYaml: '',
                 createMode: 'form',
                 fullYamlContent: '',
@@ -3575,6 +3665,41 @@
                     this.syncEditFormToYaml();
                 },
 
+                // New Job Healing Preset/Actions
+                applyNewHealingPreset() {
+                    const preset = this.newJob.self_healing.preset;
+                    switch (preset) {
+                        case 'conservative':
+                            this.newJob.self_healing.remediation.allowed_actions = ['restart_job'];
+                            this.newJob.self_healing.remediation.max_attempts = 2;
+                            break;
+                        case 'moderate':
+                            this.newJob.self_healing.remediation.allowed_actions = ['restart_job', 'edit_script', 'edit_config'];
+                            this.newJob.self_healing.remediation.max_attempts = 3;
+                            break;
+                        case 'aggressive':
+                            this.newJob.self_healing.remediation.allowed_actions = ['restart_job', 'edit_script', 'edit_config', 'run_command', 'edit_openclaw_cron', 'restart_service'];
+                            this.newJob.self_healing.remediation.max_attempts = 5;
+                            break;
+                    }
+                    this.syncFormToYaml();
+                },
+
+                toggleNewHealingAction(action) {
+                    if (!this.newJob.self_healing.remediation.allowed_actions) {
+                        this.newJob.self_healing.remediation.allowed_actions = [];
+                    }
+                    const actions = this.newJob.self_healing.remediation.allowed_actions;
+                    const idx = actions.indexOf(action);
+                    if (idx >= 0) {
+                        actions.splice(idx, 1);
+                    } else {
+                        actions.push(action);
+                    }
+                    this.newJob.self_healing.preset = 'custom';
+                    this.syncFormToYaml();
+                },
+
                 // Prompt Editor Functions
                 async openPromptEditor(jobId) {
                     this.promptEditor = {
@@ -3733,6 +3858,23 @@
                         // OpenClaw-specific
                         model: this.newJob.type === 'openclaw' ? (this.newJob.model || null) : null,
                         thinking: this.newJob.type === 'openclaw' ? (this.newJob.thinking || null) : null,
+                        // SLA
+                        sla: this.newJob.sla?.enabled ? {
+                            enabled: true,
+                            success_rate: this.newJob.sla.success_rate,
+                            schedule_tolerance: this.newJob.sla.schedule_tolerance,
+                            max_duration: this.newJob.sla.max_duration,
+                            evaluation_period: this.newJob.sla.evaluation_period,
+                            alert_threshold: this.newJob.sla.alert_threshold,
+                            alert_on_breach: this.newJob.sla.alert_on_breach
+                        } : null,
+                        // Self-Healing
+                        self_healing: this.newJob.self_healing?.enabled ? {
+                            enabled: true,
+                            analysis: this.newJob.self_healing.analysis,
+                            remediation: this.newJob.self_healing.remediation,
+                            notify: this.newJob.self_healing.notify
+                        } : null,
                     };
                     
                     try {
@@ -3740,7 +3882,17 @@
                         if (res.success) {
                             this.toast(`Job '${this.newJob.id}' created!`, 'success');
                             this.showCreateModal = false;
-                            this.newJob = { id: '', name: '', description: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '' };
+                            this.newJob = { 
+                                id: '', name: '', description: '', cmd: '', cwd: '', type: 'manual', 
+                                schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '',
+                                sla: { enabled: false, success_rate: 95, schedule_tolerance: 300, max_duration: null, evaluation_period: '7d', alert_threshold: 90, alert_on_breach: true },
+                                self_healing: { 
+                                    enabled: false, preset: 'conservative',
+                                    analysis: { include_logs: true, log_lines: 200, include_stderr: true, include_history: 5, include_config: true },
+                                    remediation: { enabled: true, max_attempts: 3, allowed_actions: ['restart_job'], forbidden_paths: [], require_approval: false },
+                                    notify: { on_analysis: false, on_fix_attempt: true, on_success: true, on_give_up: true, session: 'main' }
+                                }
+                            };
                             this.newJobYaml = '';
                             this.createMode = 'form';
                             await this.refresh();
@@ -3784,6 +3936,27 @@
                                 const [k, ...v] = line.split('=');
                                 if (k && v.length) yaml += `    ${k.trim()}: ${v.join('=').trim()}\n`;
                             });
+                        }
+                        // SLA
+                        if (job.sla?.enabled) {
+                            yaml += `  sla:\n`;
+                            yaml += `    enabled: true\n`;
+                            if (job.sla.success_rate != null) yaml += `    success_rate: ${job.sla.success_rate}\n`;
+                            if (job.sla.schedule_tolerance) yaml += `    schedule_tolerance: ${job.sla.schedule_tolerance}\n`;
+                            if (job.sla.max_duration) yaml += `    max_duration: ${job.sla.max_duration}\n`;
+                        }
+                        // Self-Healing
+                        if (job.self_healing?.enabled) {
+                            yaml += `  self_healing:\n`;
+                            yaml += `    enabled: true\n`;
+                            if (job.self_healing.remediation?.max_attempts) {
+                                yaml += `    remediation:\n`;
+                                yaml += `      max_attempts: ${job.self_healing.remediation.max_attempts}\n`;
+                                if (job.self_healing.remediation.allowed_actions?.length) {
+                                    yaml += `      allowed_actions:\n`;
+                                    job.self_healing.remediation.allowed_actions.forEach(a => yaml += `        - ${a}\n`);
+                                }
+                            }
                         }
                     }
                     this.newJobYaml = yaml || '# Enter job details in the form';
