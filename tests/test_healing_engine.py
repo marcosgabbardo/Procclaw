@@ -610,43 +610,47 @@ class TestJobScopeValidation:
         """Engine with a specific job configured."""
         mock_supervisor = MagicMock()
         mock_supervisor.jobs = MagicMock()
-        mock_supervisor.jobs.jobs = {}
-        mock_supervisor.get_job = lambda job_id: mock_supervisor.jobs.jobs.get(job_id, {}).get("_raw_config")
+        
+        # Create a mock job with attributes (like JobConfig)
+        mock_job = MagicMock()
+        mock_job.cmd = "python3 /path/to/my-job-script.py"
+        mock_job.id = "my-job"
+        
+        # get_job returns JobConfig or None
+        def get_job(job_id):
+            if job_id == "my-job":
+                return mock_job
+            return None
+        
+        mock_supervisor.jobs.get_job = get_job
         engine = HealingEngine(temp_db, mock_supervisor)
         
-        # Add a job
-        mock_supervisor.jobs.jobs["my-job"] = {
-            "_raw_config": {
-                "id": "my-job",
-                "cmd": "python3 /path/to/my-job-script.py",
-            }
-        }
-        return engine, mock_supervisor
+        return engine, mock_supervisor, mock_job
 
     def test_validate_jobs_yaml_allowed(self, engine_with_job):
         """jobs.yaml is always allowed (will be isolated)."""
-        engine, _ = engine_with_job
+        engine, _, _ = engine_with_job
         is_valid, error = engine._validate_file_for_job("my-job", "~/.procclaw/jobs.yaml")
         assert is_valid is True
         assert error is None
 
     def test_validate_job_script_allowed(self, engine_with_job, tmp_path):
         """Job's own script is allowed."""
-        engine, mock_supervisor = engine_with_job
+        engine, _, mock_job = engine_with_job
         
         # Create a script file
         script = tmp_path / "my-job-script.py"
         script.write_text("print('hello')")
         
         # Update job config to use this script
-        mock_supervisor.jobs.jobs["my-job"]["_raw_config"]["cmd"] = f"python3 {script}"
+        mock_job.cmd = f"python3 {script}"
         
         is_valid, error = engine._validate_file_for_job("my-job", str(script))
         assert is_valid is True
 
     def test_validate_other_job_script_blocked(self, engine_with_job, tmp_path):
         """Another job's script is blocked."""
-        engine, mock_supervisor = engine_with_job
+        engine, _, _ = engine_with_job
         
         # Script that doesn't belong to my-job
         other_script = tmp_path / "other-job-script.py"
@@ -658,7 +662,7 @@ class TestJobScopeValidation:
 
     def test_validate_file_with_job_reference_allowed(self, engine_with_job, tmp_path):
         """Files that reference the job_id in content are allowed."""
-        engine, _ = engine_with_job
+        engine, _, _ = engine_with_job
         
         # Create a file that mentions the job
         config_file = tmp_path / "some-config.yaml"
@@ -670,14 +674,14 @@ class TestJobScopeValidation:
 
     def test_validate_job_not_found(self, engine_with_job):
         """Validation fails if job doesn't exist."""
-        engine, _ = engine_with_job
+        engine, _, _ = engine_with_job
         is_valid, error = engine._validate_file_for_job("nonexistent-job", "/some/file.yaml")
         assert is_valid is False
         assert "not found" in error
 
     def test_extract_job_section_from_yaml(self, engine_with_job):
         """Extract only the specific job's section from jobs.yaml."""
-        engine, _ = engine_with_job
+        engine, _, _ = engine_with_job
         
         yaml_content = """job-a:
   name: Job A
@@ -703,7 +707,7 @@ job-b:
 
     def test_extract_job_section_not_found(self, engine_with_job):
         """Returns None if job not in YAML."""
-        engine, _ = engine_with_job
+        engine, _, _ = engine_with_job
         
         yaml_content = """other-job:
   name: Other
@@ -714,7 +718,7 @@ job-b:
 
     def test_merge_job_section_back(self, engine_with_job):
         """Merge modified job section back without affecting other jobs."""
-        engine, _ = engine_with_job
+        engine, _, _ = engine_with_job
         
         original = """job-a:
   name: Job A
@@ -750,7 +754,7 @@ job-b:
 
     def test_merge_preserves_all_jobs(self, engine_with_job):
         """Merge doesn't remove any existing jobs."""
-        engine, _ = engine_with_job
+        engine, _, _ = engine_with_job
         
         original = """first:
   cmd: echo 1

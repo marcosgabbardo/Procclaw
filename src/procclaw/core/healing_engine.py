@@ -904,7 +904,7 @@ Set auto_apply=true only for trivial, low-risk config changes.
         file_name = file_path_obj.name
         
         # Get job config to know allowed paths
-        job = self.supervisor.get_job(job_id)
+        job = self.supervisor.jobs.get_job(job_id)
         if not job:
             return False, f"Job {job_id} not found"
         
@@ -913,11 +913,10 @@ Set auto_apply=true only for trivial, low-risk config changes.
             return True, None
         
         # Check if it's the job's script
-        if job.get("cmd"):
-            cmd = job["cmd"]
+        if job.cmd:
             # Extract script path from cmd (e.g., "python3 /path/to/script.py")
             try:
-                parts = shlex.split(cmd)
+                parts = shlex.split(job.cmd)
                 for part in parts:
                     if part.endswith(('.py', '.sh', '.bash', '.js')):
                         if Path(part).expanduser().resolve() == file_path_obj.resolve():
