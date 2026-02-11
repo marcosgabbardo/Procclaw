@@ -940,9 +940,22 @@ Set auto_apply=true only for trivial, low-risk config changes.
         # Check if it's in prompts directory
         prompts_dir = Path("~/.procclaw/prompts").expanduser()
         if file_path_obj.is_relative_to(prompts_dir):
-            # Must be for this job specifically
-            if job_id in str(file_path_obj):
+            file_str = str(file_path_obj)
+            # Check if job_id or variations are in the path
+            # e.g., job_id="oc-twitter-trends" should match "twitter-trends.md"
+            if job_id in file_str:
                 return True, None
+            # Try without common prefixes
+            job_base = job_id.removeprefix("oc-").removeprefix("job-")
+            if job_base in file_str:
+                return True, None
+            # Check if file content references this job
+            try:
+                content = file_path_obj.read_text()
+                if job_id in content:
+                    return True, None
+            except:
+                pass
             return False, f"Prompt file does not belong to job {job_id}"
         
         # Check if file contains job_id reference (loose check for other files)
