@@ -1519,6 +1519,7 @@ class Supervisor:
             "self_healing": {
                 "enabled": job.self_healing.enabled,
                 "mode": job.self_healing.mode.value if job.self_healing.mode else "reactive",
+                "preset": job.self_healing.preset if job.self_healing.preset else "conservative",
                 "review_schedule": {
                     "frequency": job.self_healing.review_schedule.frequency.value if job.self_healing.review_schedule else "daily",
                     "time": job.self_healing.review_schedule.time if job.self_healing.review_schedule else "03:00",

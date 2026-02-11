@@ -444,6 +444,9 @@ class SelfHealingConfig(BaseModel):
     # v2: Mode of operation (reactive=on failure only, proactive=periodic review)
     mode: HealingMode = HealingMode.REACTIVE
     
+    # UI preset for remediation settings (conservative, moderate, aggressive, custom)
+    preset: str = "conservative"
+    
     # v2: Schedule for proactive reviews
     review_schedule: ReviewScheduleConfig = Field(default_factory=ReviewScheduleConfig)
     

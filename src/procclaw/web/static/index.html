@@ -3754,7 +3754,7 @@
                         self_healing: {
                             enabled: job.self_healing?.enabled || false,
                             mode: job.self_healing?.mode || 'reactive',
-                            preset: 'conservative',
+                            preset: job.self_healing?.preset || 'conservative',
                             review_schedule: {
                                 frequency: job.self_healing?.review_schedule?.frequency || 'daily',
                                 time: job.self_healing?.review_schedule?.time || '03:00',
@@ -4033,6 +4033,7 @@
                         self_healing: this.editJob.self_healing.enabled ? {
                             enabled: true,
                             mode: this.editJob.self_healing.mode || 'reactive',
+                            preset: this.editJob.self_healing.preset || 'conservative',
                             review_schedule: this.editJob.self_healing.mode === 'proactive' ? this.editJob.self_healing.review_schedule : undefined,
                             analysis: this.editJob.self_healing.analysis,
                             remediation: this.editJob.self_healing.remediation,
