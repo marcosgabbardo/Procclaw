@@ -426,6 +426,8 @@
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-cyan-400 text-sm" title="View Runs">🔍</button>
                                             <button @click="viewLogs(job.id)" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="Logs">📋</button>
+                                            <button @click="triggerJobHealing(job.id)" x-show="job.self_healing?.enabled"
+                                                class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Trigger Healing">🧬</button>
                                             <button @click="deleteJob(job.id)" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Delete">✕</button>
                                         </div>
@@ -480,6 +482,7 @@
                                 <button @click="enableJob(job.id)" x-show="!job.enabled" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Enable">✅</button>
                                 <button @click="forceRunJob(job.id)" x-show="job.schedule && job.status !== 'running' && job.enabled" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Run Now">⚡</button>
                                 <button @click="viewLogs(job.id)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="Logs">📋</button>
+                                <button @click="triggerJobHealing(job.id)" x-show="job.self_healing?.enabled" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Trigger Healing">🧬</button>
                                 <button @click="deleteJob(job.id)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Delete">✕</button>
                             </div>
                         </div>
