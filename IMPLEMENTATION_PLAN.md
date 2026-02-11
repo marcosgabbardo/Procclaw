@@ -32,11 +32,34 @@ uv run pytest tests/ -v && uv run mypy src/procclaw/ && uv run ruff check src/pr
   - [x] Data models: HealingReview, HealingSuggestion, HealingActionRecord
   - [x] DB migration v11: healing_reviews, healing_suggestions, healing_actions
   - [x] DB CRUD methods for all healing tables
-  - [x] API endpoints (13 total) for reviews, suggestions, actions
+  - [x] API endpoints (14 total) for reviews, suggestions, actions
   - [x] Web UI: Self-Healing tab with sub-tabs
 
+- [x] Phase 2: Healing Engine (4 commits)
+  - [x] HealingEngine class with AI-powered analysis
+  - [x] Context collection (runs, logs, AI sessions, prompts, scripts)
+  - [x] AI prompt building with structured JSON output
+  - [x] Suggestion parsing and validation
+  - [x] ProactiveScheduler for scheduled reviews
+  - [x] Event triggers (on_failure, on_sla_breach)
+  - [x] 24 engine tests
+
+- [x] Phase 3: Supervisor Integration
+  - [x] Initialize HealingEngine and ProactiveScheduler
+  - [x] Start/stop scheduler with supervisor lifecycle
+  - [x] Trigger proactive review on job failure
+  - [x] Trigger proactive review on SLA breach
+
+- [x] Phase 4: API-Engine Connection
+  - [x] Trigger review runs via HealingEngine
+  - [x] Apply approved suggestions with AI
+  - [x] File modification with rollback support
+
+- [x] Phase 5: UI Enhancements
+  - [x] Apply button for approved suggestions
+
 ### In Progress
-- [ ] Phase 2: Healing Engine (Core AI Analysis)
+- [ ] Phase 6: Polish and Testing
 
 ### Backlog
 - [ ] Task 1.2: Create new config models (ReviewScheduleConfig, ReviewScopeConfig, SuggestionBehaviorConfig)
