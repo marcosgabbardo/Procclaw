@@ -809,6 +809,10 @@ class HealingSuggestion(BaseModel):
     suggested_change: str | None = None
     expected_impact: str | None = None
     affected_files: list[str] = Field(default_factory=list)
+    # Pre-generated content: AI generates the proposed changes during analysis
+    # so the user can review EXACTLY what will be applied before approving
+    proposed_content: str | None = None  # The new file content (full or diff)
+    target_file: str | None = None  # Which file will be modified
     status: SuggestionStatus = SuggestionStatus.PENDING
     reviewed_at: datetime | None = None
     reviewed_by: str | None = None  # 'auto' or 'human'

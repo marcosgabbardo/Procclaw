@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -284,6 +284,8 @@ CREATE TABLE IF NOT EXISTS healing_suggestions (
     suggested_change TEXT,
     expected_impact TEXT,
     affected_files TEXT,
+    proposed_content TEXT,
+    target_file TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     reviewed_at TEXT,
     reviewed_by TEXT,
@@ -631,6 +633,22 @@ class Database:
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_healing_actions_job ON healing_actions(job_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_healing_actions_suggestion ON healing_actions(suggestion_id)")
+        
+        if from_version < 12 and to_version >= 12:
+            # Migration to version 12: Add proposed_content and target_file to suggestions
+            logger.info("Migrating to version 12: Adding proposed_content to healing_suggestions")
+            
+            # Add proposed_content column (AI-generated content for preview)
+            try:
+                conn.execute("ALTER TABLE healing_suggestions ADD COLUMN proposed_content TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column might already exist
+            
+            # Add target_file column (which file will be modified)
+            try:
+                conn.execute("ALTER TABLE healing_suggestions ADD COLUMN target_file TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column might already exist
         
         conn.execute("UPDATE schema_version SET version = ?", (to_version,))
 
@@ -1653,6 +1671,8 @@ class Database:
         suggested_change: str | None = None,
         expected_impact: str | None = None,
         affected_files: list[str] | None = None,
+        proposed_content: str | None = None,
+        target_file: str | None = None,
     ) -> int:
         """Create a new healing suggestion.
         
@@ -1668,12 +1688,13 @@ class Database:
                 INSERT INTO healing_suggestions 
                 (review_id, job_id, category, severity, title, description,
                  current_state, suggested_change, expected_impact, affected_files,
-                 status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                 proposed_content, target_file, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
                 """,
                 (
                     review_id, job_id, category, severity, title, description,
                     current_state, suggested_change, expected_impact, affected_files_json,
+                    proposed_content, target_file,
                     datetime.now().isoformat(),
                 ),
             )

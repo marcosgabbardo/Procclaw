@@ -1815,6 +1815,25 @@
                                                 <span class="text-xs font-mono text-dark-400 bg-dark-700 px-1 rounded mr-1" x-text="file"></span>
                                             </template>
                                         </div>
+                                        
+                                        <!-- Target File -->
+                                        <div x-show="suggestion.target_file" class="mt-2">
+                                            <span class="text-xs text-dark-500">Target: </span>
+                                            <span class="text-xs font-mono text-emerald-400 bg-dark-700 px-1 rounded" x-text="suggestion.target_file"></span>
+                                        </div>
+                                        
+                                        <!-- Proposed Content Preview (expandable) -->
+                                        <div x-show="suggestion.proposed_content" class="mt-3" x-data="{ showPreview: false }">
+                                            <button @click="showPreview = !showPreview" 
+                                                class="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 transition">
+                                                <span x-text="showPreview ? '▼' : '▶'"></span>
+                                                <span>👁️ Preview Changes</span>
+                                                <span class="text-dark-500" x-text="'(' + (suggestion.proposed_content?.length || 0) + ' chars)'"></span>
+                                            </button>
+                                            <div x-show="showPreview" x-transition class="mt-2">
+                                                <pre class="text-xs font-mono bg-dark-900 border border-dark-600 rounded p-3 overflow-x-auto max-h-64 overflow-y-auto text-dark-300 whitespace-pre-wrap"><code x-text="suggestion.proposed_content"></code></pre>
+                                            </div>
+                                        </div>
                                     </div>
                                     
                                     <!-- Status & Actions -->

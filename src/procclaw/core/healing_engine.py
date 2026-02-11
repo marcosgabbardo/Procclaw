@@ -63,6 +63,9 @@ class SuggestionData:
     expected_impact: str | None = None
     affected_files: list[str] | None = None
     auto_apply: bool = False
+    # Pre-generated content for review before apply
+    proposed_content: str | None = None  # The new file content
+    target_file: str | None = None  # Which file to modify
 
 
 class SkipReviewError(Exception):
@@ -265,6 +268,8 @@ class HealingEngine:
                     suggested_change=suggestion.suggested_change,
                     expected_impact=suggestion.expected_impact,
                     affected_files=suggestion.affected_files,
+                    proposed_content=suggestion.proposed_content,
+                    target_file=suggestion.target_file,
                 )
                 
                 # Auto-apply if configured
@@ -598,6 +603,10 @@ class HealingEngine:
 You MUST analyze the job and provide at least 1-3 suggestions for improvement.
 Even if the job is working, there's ALWAYS room for improvement.
 
+**CRITICAL**: For each suggestion that involves modifying a file (prompt, script, config), 
+you MUST include the COMPLETE proposed file content. The user needs to see EXACTLY what 
+will change BEFORE approving. This is mandatory for transparency.
+
 Output your analysis in JSON format:
 
 ```json
@@ -612,11 +621,21 @@ Output your analysis in JSON format:
       "suggested_change": "What should be changed",
       "expected_impact": "Expected improvement",
       "affected_files": ["list of files to modify, if any"],
+      "target_file": "/path/to/file.ext",
+      "proposed_content": "The COMPLETE new file content that will replace the current content. Include the ENTIRE file, not just changes.",
       "auto_apply": false
     }
   ]
 }
 ```
+
+### Rules for proposed_content:
+1. **MUST be complete** - the entire file content, not just a snippet
+2. **MUST be ready to apply** - no placeholders, no "..." or "[rest of file]"
+3. For config changes to jobs.yaml, include ONLY the affected job section
+4. For prompts (.md), include the full prompt text
+5. For scripts (.py, .sh), include the full script
+6. If no file change needed (just a config suggestion), set target_file and proposed_content to null
 
 Look for improvements in these areas:
 - **Performance**: Slow runs? High resource usage? Could be faster?
@@ -746,6 +765,8 @@ Set auto_apply=true only for trivial, low-risk config changes.
                     expected_impact=s.get("expected_impact"),
                     affected_files=s.get("affected_files"),
                     auto_apply=auto_apply,
+                    proposed_content=s.get("proposed_content"),
+                    target_file=s.get("target_file"),
                 ))
             
         except json.JSONDecodeError as e:
@@ -795,6 +816,8 @@ Set auto_apply=true only for trivial, low-risk config changes.
         job_id = suggestion["job_id"]
         affected_files = suggestion.get("affected_files") or []
         suggested_change = suggestion.get("suggested_change")
+        proposed_content = suggestion.get("proposed_content")
+        target_file = suggestion.get("target_file")
         
         start_time = datetime.now()
         
@@ -810,10 +833,17 @@ Set auto_apply=true only for trivial, low-risk config changes.
             else:
                 action_type = "manual"
             
-            # For now, we need the AI to actually make the change
-            # This requires calling OpenClaw with the specific change request
-            if not affected_files or not suggested_change:
-                # Mark as applied but no actual change
+            # Check if we have pre-generated content (from analysis phase)
+            if proposed_content and target_file:
+                # Use pre-generated content - no AI call needed!
+                logger.info(f"Using pre-generated content for {target_file} ({len(proposed_content)} chars)")
+                result = await self._apply_pregenerated_content(
+                    job_id=job_id,
+                    file_path=target_file,
+                    new_content=proposed_content,
+                )
+            elif not affected_files and not suggested_change:
+                # No file changes needed
                 self.db.update_healing_suggestion(
                     suggestion_id,
                     status="applied",
@@ -824,13 +854,14 @@ Set auto_apply=true only for trivial, low-risk config changes.
                     "action_id": None,
                     "message": "Suggestion applied (no file changes needed)",
                 }
-            
-            # Apply the change via AI
-            result = await self._apply_change_with_ai(
-                job_id=job_id,
-                file_path=affected_files[0] if affected_files else None,
-                suggested_change=suggested_change,
-            )
+            else:
+                # Fall back to AI-generated changes (old behavior)
+                logger.info("No pre-generated content, calling AI to apply change")
+                result = await self._apply_change_with_ai(
+                    job_id=job_id,
+                    file_path=affected_files[0] if affected_files else None,
+                    suggested_change=suggested_change,
+                )
             
             duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
             
@@ -1044,6 +1075,69 @@ Set auto_apply=true only for trivial, low-risk config changes.
         except Exception as e:
             logger.error(f"Failed to merge job section: {e}")
             raise
+
+    async def _apply_pregenerated_content(
+        self,
+        job_id: str,
+        file_path: str,
+        new_content: str,
+    ) -> dict:
+        """Apply pre-generated content directly (no AI call needed).
+        
+        This is used when the AI already generated the proposed content during
+        the analysis phase. The content was shown to the user for review,
+        and now we just apply it directly.
+        
+        SECURITY: Same file validation as _apply_change_with_ai.
+        """
+        file_path_obj = Path(file_path).expanduser()
+        file_name = file_path_obj.name
+        
+        if not file_path_obj.exists():
+            return {"success": False, "error": f"File not found: {file_path}"}
+        
+        # SECURITY: Validate file belongs to this job
+        is_valid, error = self._validate_file_for_job(job_id, file_path)
+        if not is_valid:
+            logger.warning(f"Security: blocked access to {file_path} for job {job_id}: {error}")
+            return {"success": False, "error": f"Access denied: {error}"}
+        
+        # Read original content for backup/rollback
+        try:
+            original_content = file_path_obj.read_text()
+        except Exception as e:
+            return {"success": False, "error": f"Cannot read file: {e}"}
+        
+        # SAFETY: Check for suspicious content reduction
+        if len(new_content.strip()) < len(original_content.strip()) * 0.5:
+            return {
+                "success": False,
+                "error": f"Content reduced by more than 50% ({len(original_content)} -> {len(new_content)}). Blocked for safety."
+            }
+        
+        # SPECIAL HANDLING: For jobs.yaml, merge the section back
+        is_jobs_yaml = file_name == "jobs.yaml"
+        final_content = new_content
+        
+        if is_jobs_yaml:
+            try:
+                final_content = self._merge_job_section_to_yaml(original_content, job_id, new_content)
+            except Exception as e:
+                return {"success": False, "error": f"Failed to merge job section: {e}"}
+        
+        # Write the new content
+        try:
+            file_path_obj.write_text(final_content)
+            logger.info(f"Applied pre-generated content to {file_path}")
+        except Exception as e:
+            return {"success": False, "error": f"Failed to write file: {e}"}
+        
+        return {
+            "success": True,
+            "file_path": str(file_path_obj),
+            "original_content": original_content,
+            "new_content": final_content,
+        }
 
     async def _apply_change_with_ai(
         self,
