@@ -2503,6 +2503,7 @@
                         <summary class="p-3 cursor-pointer text-sm text-dark-300 hover:text-white flex items-center gap-2">
                             🔧 Self-Healing Settings
                             <span x-show="editJob.self_healing?.enabled" class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">Enabled</span>
+                            <span x-show="editJob.self_healing?.enabled && editJob.self_healing?.mode === 'proactive'" class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">Proactive</span>
                         </summary>
                         <div class="p-4 pt-0 space-y-4">
                             <div class="flex items-center gap-2">
@@ -2511,9 +2512,61 @@
                             </div>
                             
                             <div x-show="editJob.self_healing?.enabled" class="space-y-4">
+                                <!-- Mode -->
+                                <div>
+                                    <label class="block text-sm text-dark-400 mb-1">Mode</label>
+                                    <select x-model="editJob.self_healing.mode" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncEditFormToYaml()">
+                                        <option value="reactive">🔴 Reactive (only on failure)</option>
+                                        <option value="proactive">🟣 Proactive (periodic review)</option>
+                                    </select>
+                                    <p class="text-xs text-dark-500 mt-1" x-show="editJob.self_healing.mode === 'reactive'">Healing only triggers when job fails</p>
+                                    <p class="text-xs text-dark-500 mt-1" x-show="editJob.self_healing.mode === 'proactive'">Periodic review of job behavior, even when succeeding</p>
+                                </div>
+                                
+                                <!-- Review Schedule (only for proactive) -->
+                                <div x-show="editJob.self_healing.mode === 'proactive'" class="bg-dark-800/50 rounded-lg p-3 space-y-3">
+                                    <div class="text-sm font-medium text-purple-400">📅 Review Schedule</div>
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="block text-xs text-dark-400 mb-1">Frequency</label>
+                                            <select x-model="editJob.self_healing.review_schedule.frequency" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncEditFormToYaml()">
+                                                <option value="hourly">Hourly</option>
+                                                <option value="daily">Daily</option>
+                                                <option value="weekly">Weekly</option>
+                                                <option value="on_failure">On Failure</option>
+                                                <option value="on_sla_breach">On SLA Breach</option>
+                                                <option value="manual">Manual Only</option>
+                                            </select>
+                                        </div>
+                                        <div x-show="['daily', 'weekly'].includes(editJob.self_healing.review_schedule?.frequency)">
+                                            <label class="block text-xs text-dark-400 mb-1">Time</label>
+                                            <input type="time" x-model="editJob.self_healing.review_schedule.time" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncEditFormToYaml()">
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div x-show="editJob.self_healing.review_schedule?.frequency === 'weekly'">
+                                            <label class="block text-xs text-dark-400 mb-1">Day of Week</label>
+                                            <select x-model.number="editJob.self_healing.review_schedule.day" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncEditFormToYaml()">
+                                                <option value="0">Sunday</option>
+                                                <option value="1">Monday</option>
+                                                <option value="2">Tuesday</option>
+                                                <option value="3">Wednesday</option>
+                                                <option value="4">Thursday</option>
+                                                <option value="5">Friday</option>
+                                                <option value="6">Saturday</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs text-dark-400 mb-1">Min Runs to Review</label>
+                                            <input type="number" x-model.number="editJob.self_healing.review_schedule.min_runs" min="1" max="100" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncEditFormToYaml()">
+                                            <p class="text-xs text-dark-500 mt-1">Skip review if fewer runs</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
                                 <!-- Preset -->
                                 <div>
-                                    <label class="block text-sm text-dark-400 mb-1">Preset</label>
+                                    <label class="block text-sm text-dark-400 mb-1">Remediation Preset</label>
                                     <select x-model="editJob.self_healing.preset" @change="applyHealingPreset()" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm">
                                         <option value="conservative">Conservative (restart only)</option>
                                         <option value="moderate">Moderate (restart + edit script)</option>
@@ -2524,14 +2577,14 @@
                                 
                                 <!-- Max Attempts -->
                                 <div>
-                                    <label class="block text-sm text-dark-400 mb-1">Max Attempts</label>
+                                    <label class="block text-sm text-dark-400 mb-1">Max Fix Attempts</label>
                                     <input type="number" x-model.number="editJob.self_healing.remediation.max_attempts" min="1" max="10" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm" @input="editJob.self_healing.preset = 'custom'; syncEditFormToYaml()">
                                 </div>
                                 
                                 <!-- Allowed Actions -->
                                 <div>
                                     <label class="block text-sm text-dark-400 mb-2">Allowed Actions</label>
-                                    <div class="space-y-2">
+                                    <div class="grid grid-cols-2 gap-2">
                                         <label class="flex items-center gap-2 text-sm">
                                             <input type="checkbox" :checked="editJob.self_healing?.remediation?.allowed_actions?.includes('restart_job')" 
                                                 @change="toggleHealingAction('restart_job')" class="rounded">
@@ -2568,18 +2621,22 @@
                                 <!-- Notifications -->
                                 <div>
                                     <label class="block text-sm text-dark-400 mb-2">Notifications</label>
-                                    <div class="space-y-2">
+                                    <div class="grid grid-cols-2 gap-2">
                                         <label class="flex items-center gap-2 text-sm">
                                             <input type="checkbox" x-model="editJob.self_healing.notify.on_fix_attempt" class="rounded" @change="syncEditFormToYaml()">
-                                            Notify on Fix Attempt
+                                            On Fix Attempt
                                         </label>
                                         <label class="flex items-center gap-2 text-sm">
                                             <input type="checkbox" x-model="editJob.self_healing.notify.on_success" class="rounded" @change="syncEditFormToYaml()">
-                                            Notify on Success
+                                            On Success
                                         </label>
                                         <label class="flex items-center gap-2 text-sm">
                                             <input type="checkbox" x-model="editJob.self_healing.notify.on_give_up" class="rounded" @change="syncEditFormToYaml()">
-                                            Notify on Give Up
+                                            On Give Up
+                                        </label>
+                                        <label class="flex items-center gap-2 text-sm" x-show="editJob.self_healing.mode === 'proactive'">
+                                            <input type="checkbox" x-model="editJob.self_healing.notify.on_analysis" class="rounded" @change="syncEditFormToYaml()">
+                                            On Analysis Complete
                                         </label>
                                     </div>
                                 </div>
@@ -2744,6 +2801,7 @@
                             <summary class="p-3 cursor-pointer text-sm text-dark-300 hover:text-white flex items-center gap-2">
                                 🔧 Self-Healing Settings
                                 <span x-show="newJob.self_healing?.enabled" class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">Enabled</span>
+                                <span x-show="newJob.self_healing?.enabled && newJob.self_healing?.mode === 'proactive'" class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">Proactive</span>
                             </summary>
                             <div class="p-4 pt-0 space-y-4">
                                 <div class="flex items-center gap-2">
@@ -2751,8 +2809,61 @@
                                     <label for="new-healing-enabled" class="text-sm">Enable Self-Healing</label>
                                 </div>
                                 <div x-show="newJob.self_healing?.enabled" class="space-y-4">
+                                    <!-- Mode -->
                                     <div>
-                                        <label class="block text-sm text-dark-400 mb-1">Preset</label>
+                                        <label class="block text-sm text-dark-400 mb-1">Mode</label>
+                                        <select x-model="newJob.self_healing.mode" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncFormToYaml()">
+                                            <option value="reactive">🔴 Reactive (only on failure)</option>
+                                            <option value="proactive">🟣 Proactive (periodic review)</option>
+                                        </select>
+                                        <p class="text-xs text-dark-500 mt-1" x-show="newJob.self_healing.mode === 'reactive'">Healing only triggers when job fails</p>
+                                        <p class="text-xs text-dark-500 mt-1" x-show="newJob.self_healing.mode === 'proactive'">Periodic review of job behavior, even when succeeding</p>
+                                    </div>
+                                    
+                                    <!-- Review Schedule (only for proactive) -->
+                                    <div x-show="newJob.self_healing.mode === 'proactive'" class="bg-dark-800/50 rounded-lg p-3 space-y-3">
+                                        <div class="text-sm font-medium text-purple-400">📅 Review Schedule</div>
+                                        <div class="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label class="block text-xs text-dark-400 mb-1">Frequency</label>
+                                                <select x-model="newJob.self_healing.review_schedule.frequency" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncFormToYaml()">
+                                                    <option value="hourly">Hourly</option>
+                                                    <option value="daily">Daily</option>
+                                                    <option value="weekly">Weekly</option>
+                                                    <option value="on_failure">On Failure</option>
+                                                    <option value="on_sla_breach">On SLA Breach</option>
+                                                    <option value="manual">Manual Only</option>
+                                                </select>
+                                            </div>
+                                            <div x-show="['daily', 'weekly'].includes(newJob.self_healing.review_schedule?.frequency)">
+                                                <label class="block text-xs text-dark-400 mb-1">Time</label>
+                                                <input type="time" x-model="newJob.self_healing.review_schedule.time" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncFormToYaml()">
+                                            </div>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-3">
+                                            <div x-show="newJob.self_healing.review_schedule?.frequency === 'weekly'">
+                                                <label class="block text-xs text-dark-400 mb-1">Day of Week</label>
+                                                <select x-model.number="newJob.self_healing.review_schedule.day" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncFormToYaml()">
+                                                    <option value="0">Sunday</option>
+                                                    <option value="1">Monday</option>
+                                                    <option value="2">Tuesday</option>
+                                                    <option value="3">Wednesday</option>
+                                                    <option value="4">Thursday</option>
+                                                    <option value="5">Friday</option>
+                                                    <option value="6">Saturday</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs text-dark-400 mb-1">Min Runs to Review</label>
+                                                <input type="number" x-model.number="newJob.self_healing.review_schedule.min_runs" min="1" max="100" class="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm" @change="syncFormToYaml()">
+                                                <p class="text-xs text-dark-500 mt-1">Skip review if fewer runs</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Preset -->
+                                    <div>
+                                        <label class="block text-sm text-dark-400 mb-1">Remediation Preset</label>
                                         <select x-model="newJob.self_healing.preset" @change="applyNewHealingPreset()" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm">
                                             <option value="conservative">Conservative (restart only)</option>
                                             <option value="moderate">Moderate (restart + edit script)</option>
@@ -2760,28 +2871,69 @@
                                             <option value="custom">Custom</option>
                                         </select>
                                     </div>
+                                    
+                                    <!-- Max Attempts -->
                                     <div>
                                         <label class="block text-sm text-dark-400 mb-1">Max Fix Attempts</label>
                                         <input type="number" x-model.number="newJob.self_healing.remediation.max_attempts" min="1" max="10" class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm" @input="newJob.self_healing.preset = 'custom'; syncFormToYaml()">
                                     </div>
+                                    
+                                    <!-- Allowed Actions -->
                                     <div>
-                                        <label class="block text-sm text-dark-400 mb-1">Allowed Actions</label>
-                                        <div class="flex flex-wrap gap-2">
-                                            <label class="flex items-center gap-1 text-xs">
+                                        <label class="block text-sm text-dark-400 mb-2">Allowed Actions</label>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <label class="flex items-center gap-2 text-sm">
                                                 <input type="checkbox" :checked="newJob.self_healing?.remediation?.allowed_actions?.includes('restart_job')" 
-                                                    @change="toggleNewHealingAction('restart_job')" class="rounded"> Restart
+                                                    @change="toggleNewHealingAction('restart_job')" class="rounded">
+                                                Restart Job
                                             </label>
-                                            <label class="flex items-center gap-1 text-xs">
+                                            <label class="flex items-center gap-2 text-sm">
                                                 <input type="checkbox" :checked="newJob.self_healing?.remediation?.allowed_actions?.includes('edit_script')"
-                                                    @change="toggleNewHealingAction('edit_script')" class="rounded"> Edit Script
+                                                    @change="toggleNewHealingAction('edit_script')" class="rounded">
+                                                Edit Script
                                             </label>
-                                            <label class="flex items-center gap-1 text-xs">
+                                            <label class="flex items-center gap-2 text-sm">
                                                 <input type="checkbox" :checked="newJob.self_healing?.remediation?.allowed_actions?.includes('edit_config')"
-                                                    @change="toggleNewHealingAction('edit_config')" class="rounded"> Edit Config
+                                                    @change="toggleNewHealingAction('edit_config')" class="rounded">
+                                                Edit Config
                                             </label>
-                                            <label class="flex items-center gap-1 text-xs">
+                                            <label class="flex items-center gap-2 text-sm">
                                                 <input type="checkbox" :checked="newJob.self_healing?.remediation?.allowed_actions?.includes('run_command')"
-                                                    @change="toggleNewHealingAction('run_command')" class="rounded"> Run Command
+                                                    @change="toggleNewHealingAction('run_command')" class="rounded">
+                                                Run Command
+                                            </label>
+                                            <label class="flex items-center gap-2 text-sm">
+                                                <input type="checkbox" :checked="newJob.self_healing?.remediation?.allowed_actions?.includes('edit_openclaw_cron')"
+                                                    @change="toggleNewHealingAction('edit_openclaw_cron')" class="rounded">
+                                                Edit OpenClaw Cron
+                                            </label>
+                                            <label class="flex items-center gap-2 text-sm">
+                                                <input type="checkbox" :checked="newJob.self_healing?.remediation?.allowed_actions?.includes('restart_service')"
+                                                    @change="toggleNewHealingAction('restart_service')" class="rounded">
+                                                Restart Service
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Notifications -->
+                                    <div>
+                                        <label class="block text-sm text-dark-400 mb-2">Notifications</label>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <label class="flex items-center gap-2 text-sm">
+                                                <input type="checkbox" x-model="newJob.self_healing.notify.on_fix_attempt" class="rounded" @change="syncFormToYaml()">
+                                                On Fix Attempt
+                                            </label>
+                                            <label class="flex items-center gap-2 text-sm">
+                                                <input type="checkbox" x-model="newJob.self_healing.notify.on_success" class="rounded" @change="syncFormToYaml()">
+                                                On Success
+                                            </label>
+                                            <label class="flex items-center gap-2 text-sm">
+                                                <input type="checkbox" x-model="newJob.self_healing.notify.on_give_up" class="rounded" @change="syncFormToYaml()">
+                                                On Give Up
+                                            </label>
+                                            <label class="flex items-center gap-2 text-sm" x-show="newJob.self_healing.mode === 'proactive'">
+                                                <input type="checkbox" x-model="newJob.self_healing.notify.on_analysis" class="rounded" @change="syncFormToYaml()">
+                                                On Analysis Complete
                                             </label>
                                         </div>
                                     </div>
@@ -3006,7 +3158,8 @@
                     schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '',
                     sla: { enabled: false, success_rate: 95, schedule_tolerance: 300, max_duration: null, evaluation_period: '7d', alert_threshold: 90, alert_on_breach: true },
                     self_healing: { 
-                        enabled: false, preset: 'conservative',
+                        enabled: false, mode: 'reactive', preset: 'conservative',
+                        review_schedule: { frequency: 'daily', time: '03:00', day: 1, min_runs: 5 },
                         analysis: { include_logs: true, log_lines: 200, include_stderr: true, include_history: 5, include_config: true },
                         remediation: { enabled: true, max_attempts: 3, allowed_actions: ['restart_job'], forbidden_paths: [], require_approval: false },
                         notify: { on_analysis: false, on_fix_attempt: true, on_success: true, on_give_up: true, session: 'main' }
@@ -3547,7 +3700,14 @@
                         cronDayOfMonth: 1,
                         self_healing: {
                             enabled: job.self_healing?.enabled || false,
+                            mode: job.self_healing?.mode || 'reactive',
                             preset: 'conservative',
+                            review_schedule: {
+                                frequency: job.self_healing?.review_schedule?.frequency || 'daily',
+                                time: job.self_healing?.review_schedule?.time || '03:00',
+                                day: job.self_healing?.review_schedule?.day ?? 1,
+                                min_runs: job.self_healing?.review_schedule?.min_runs ?? 5
+                            },
                             analysis: {
                                 include_logs: job.self_healing?.analysis?.include_logs ?? true,
                                 log_lines: job.self_healing?.analysis?.log_lines ?? 200,
@@ -3814,6 +3974,8 @@
                         // Self-healing
                         self_healing: this.editJob.self_healing.enabled ? {
                             enabled: true,
+                            mode: this.editJob.self_healing.mode || 'reactive',
+                            review_schedule: this.editJob.self_healing.mode === 'proactive' ? this.editJob.self_healing.review_schedule : undefined,
                             analysis: this.editJob.self_healing.analysis,
                             remediation: this.editJob.self_healing.remediation,
                             notify: this.editJob.self_healing.notify
@@ -3871,6 +4033,8 @@
                         // Self-Healing
                         self_healing: this.newJob.self_healing?.enabled ? {
                             enabled: true,
+                            mode: this.newJob.self_healing.mode || 'reactive',
+                            review_schedule: this.newJob.self_healing.mode === 'proactive' ? this.newJob.self_healing.review_schedule : undefined,
                             analysis: this.newJob.self_healing.analysis,
                             remediation: this.newJob.self_healing.remediation,
                             notify: this.newJob.self_healing.notify
@@ -3887,7 +4051,8 @@
                                 schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '',
                                 sla: { enabled: false, success_rate: 95, schedule_tolerance: 300, max_duration: null, evaluation_period: '7d', alert_threshold: 90, alert_on_breach: true },
                                 self_healing: { 
-                                    enabled: false, preset: 'conservative',
+                                    enabled: false, mode: 'reactive', preset: 'conservative',
+                                    review_schedule: { frequency: 'daily', time: '03:00', day: 1, min_runs: 5 },
                                     analysis: { include_logs: true, log_lines: 200, include_stderr: true, include_history: 5, include_config: true },
                                     remediation: { enabled: true, max_attempts: 3, allowed_actions: ['restart_job'], forbidden_paths: [], require_approval: false },
                                     notify: { on_analysis: false, on_fix_attempt: true, on_success: true, on_give_up: true, session: 'main' }
