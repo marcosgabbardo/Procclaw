@@ -799,9 +799,16 @@ init_wrapper_manager(
 
 ## AI Self-Healing
 
-ProcClaw can automatically analyze failed jobs and attempt to fix them using AI (via OpenClaw integration).
+ProcClaw includes a sophisticated AI-powered self-healing system that can both **react to failures** and **proactively optimize jobs** using OpenClaw integration.
 
-### How It Works
+### Two Modes of Operation
+
+| Mode | Trigger | Scope | Purpose |
+|------|---------|-------|---------|
+| **Reactive** | Job failure | Failed run only | Fix immediate problems |
+| **Proactive** | Schedule or manual | All runs since last review | Continuous improvement |
+
+### Reactive Mode (v1)
 
 When a job fails with self-healing enabled:
 
@@ -817,6 +824,24 @@ Job fails → Context collected → AI analyzes → Fix applied → Job re-runs 
                               Not fixable → Human notified
 ```
 
+### Proactive Mode (v2)
+
+Proactive healing **continuously monitors job behavior** and suggests optimizations before problems occur:
+
+1. **Scheduled Reviews**: Daily, weekly, or on-demand analysis of job behavior
+2. **Pattern Detection**: Identifies performance degradation, resource waste, reliability issues
+3. **Suggestions Generated**: Categorized and prioritized improvements
+4. **Human Review**: Approve, reject, or auto-apply changes
+5. **Rollback Support**: Revert any change if it causes problems
+
+```
+Schedule triggers → Collect all runs → AI analyzes patterns → Generate suggestions
+                                                                     ↓
+                                          Human reviews → Approve → Apply → ✅ Improved
+                                                              ↓
+                                                          Reject → No change
+```
+
 ### Configuration
 
 Enable self-healing per job in `jobs.yaml`:
@@ -826,19 +851,39 @@ jobs:
   my-job:
     name: My Job
     cmd: python script.py
+    
     self_healing:
       enabled: true
+      mode: proactive           # 'reactive' or 'proactive'
       
-      # What to include in analysis
+      # === REVIEW SCHEDULE (Proactive mode) ===
+      review_schedule:
+        frequency: daily        # hourly, daily, weekly, on_failure, on_sla_breach, manual
+        time: "03:00"           # HH:MM for daily/weekly reviews
+        day: 1                  # 0-6 for weekly (0=Sunday)
+        min_runs: 5             # Minimum runs before first review
+      
+      # === WHAT TO ANALYZE ===
       analysis:
         include_logs: true
         include_stderr: true
-        include_history: 5       # Last N runs
-        log_lines: 200           # Lines to include
+        include_history: 5      # Last N runs
+        log_lines: 200          # Lines to include
       
-      # What the AI can do
+      review_scope:             # Proactive analysis scope
+        analyze_logs: true
+        analyze_runs: true
+        analyze_ai_sessions: true   # For OpenClaw jobs
+        analyze_sla: true
+        analyze_workflows: true
+        analyze_script: true
+        analyze_prompt: true        # For OpenClaw jobs
+        analyze_config: true
+      
+      # === WHAT THE AI CAN DO ===
       remediation:
         max_attempts: 3
+        require_approval: true      # Require human approval before changes
         allowed_actions:
           - analyze_only        # Just diagnose, don't fix
           - restart_job         # Retry the job
@@ -850,12 +895,43 @@ jobs:
           - ~/secrets/
           - ~/.credentials/
       
-      # Notification settings
+      # === AUTO-APPLY SETTINGS ===
+      suggestions:
+        auto_apply: false           # Auto-apply low-risk changes
+        min_severity_for_approval: medium  # low/medium/high/critical
+        auto_apply_categories: []   # Categories to always auto-apply
+        notify_on_suggestion: true
+        notify_channel: whatsapp
+      
+      # === NOTIFICATIONS ===
       notify:
         on_success: true        # Alert when AI fixes a job
         on_failure: true        # Alert when AI can't fix
         channels: [whatsapp]
 ```
+
+### Suggestion Categories
+
+Proactive reviews generate suggestions in these categories:
+
+| Category | Description | Example |
+|----------|-------------|---------|
+| `performance` | Speed/efficiency improvements | "Add caching to reduce API calls" |
+| `cost` | Resource/money optimization | "Reduce run frequency to save tokens" |
+| `reliability` | Stability improvements | "Add retry logic for network failures" |
+| `security` | Security hardening | "Remove hardcoded credentials" |
+| `config` | Configuration optimization | "Increase timeout for slow operations" |
+| `prompt` | AI prompt improvements | "Clarify instructions to reduce errors" |
+| `script` | Code improvements | "Handle edge case in parsing logic" |
+
+### Suggestion Severities
+
+| Severity | Description | Auto-Apply |
+|----------|-------------|------------|
+| `low` | Minor improvement | ✅ Can auto-apply |
+| `medium` | Moderate improvement | ⚠️ Review recommended |
+| `high` | Significant issue | ❌ Requires approval |
+| `critical` | Urgent problem | ❌ Requires immediate action |
 
 ### Allowed Actions
 
@@ -879,6 +955,40 @@ The AI **cannot** modify these paths (hardcoded, not configurable):
 - System directories (`/etc/`, `/usr/`, `/bin/`, `/sbin/`)
 - OpenClaw config (`~/.openclaw/openclaw.json`)
 
+### Queue Management
+
+Self-healing shares the OpenClaw queue with real jobs to prevent token competition:
+
+- **Semaphore**: Only one healing session runs at a time
+- **Queue Awareness**: Waits for running OpenClaw jobs to finish
+- **Timeout**: 5-minute max wait, then skips review
+- **Polling**: Checks queue every 5 seconds
+
+### Using the Web UI
+
+#### 🧬 Heal Button
+
+Jobs with self-healing enabled show a **Heal** button:
+- **Table view**: 🧬 button in actions column
+- **Cards view**: 🧬 button on job card
+- **Detail panel**: 🧬 Heal button next to View Runs
+
+Click to trigger a manual review immediately.
+
+#### Suggestions Panel
+
+View and manage suggestions in the Healing tab:
+- **Pending**: Suggestions awaiting approval
+- **Approved**: Ready to apply
+- **Applied**: Successfully implemented
+- **Rejected**: Dismissed suggestions
+
+For each suggestion:
+- **Approve** ✅: Mark for application
+- **Reject** ❌: Dismiss suggestion
+- **Apply** 🔧: Execute approved change
+- **Rollback** ↩️: Revert applied change
+
 ### Healing Results
 
 The AI reports its findings:
@@ -898,6 +1008,27 @@ The AI reports its findings:
 }
 ```
 
+### Review Results (Proactive)
+
+```json
+{
+  "status": "completed",
+  "mode": "proactive",
+  "runs_analyzed": 15,
+  "suggestions_count": 3,
+  "suggestions": [
+    {
+      "category": "performance",
+      "severity": "medium",
+      "title": "Add caching for API responses",
+      "description": "API calls account for 60% of run time. Adding caching could reduce this by 80%.",
+      "affected_files": ["script.py"],
+      "estimated_impact": "Reduce average run time from 45s to 15s"
+    }
+  ]
+}
+```
+
 ### Healing Statuses
 
 | Status | Description |
@@ -905,10 +1036,12 @@ The AI reports its findings:
 | `pending` | Waiting for AI analysis |
 | `in_progress` | AI is analyzing/fixing |
 | `fixed` | Problem fixed, job re-running |
+| `completed` | Review finished (proactive) |
 | `manual_required` | AI can't fix, human needed |
 | `gave_up` | Max attempts reached |
+| `skipped` | Insufficient runs for review |
 
-### Example: Auto-fixing a Python Import Error
+### Example: Reactive Fix
 
 ```
 ❌ Job 'data-pipeline' failed (exit 1)
@@ -922,6 +1055,94 @@ The AI reports its findings:
 ✅ Fix applied, re-running job...
 ✅ Job 'data-pipeline' completed successfully
 ```
+
+### Example: Proactive Optimization
+
+```
+📊 Daily review of 'report-generator'
+   Analyzed: 24 runs over 7 days
+
+💡 3 suggestions generated:
+
+1. [MEDIUM] Performance: Add connection pooling
+   → Current: New DB connection per run
+   → Suggested: Reuse connections
+   → Impact: 30% faster runs
+
+2. [LOW] Config: Increase batch size
+   → Current: 100 items per batch
+   → Suggested: 500 items per batch  
+   → Impact: 20% fewer API calls
+
+3. [HIGH] Reliability: Add retry on timeout
+   → Current: 3 timeouts in 24 runs
+   → Suggested: Exponential backoff retry
+   → Impact: Eliminate timeout failures
+```
+
+### API Endpoints
+
+#### Reviews
+```
+GET  /api/v1/healing/reviews              # List reviews
+GET  /api/v1/healing/reviews/{id}         # Get review details
+POST /api/v1/healing/trigger              # Trigger manual review
+```
+
+#### Suggestions
+```
+GET  /api/v1/healing/suggestions          # List suggestions
+GET  /api/v1/healing/suggestions/{id}     # Get suggestion details
+POST /api/v1/healing/suggestions/{id}/approve  # Approve suggestion
+POST /api/v1/healing/suggestions/{id}/reject   # Reject suggestion
+POST /api/v1/healing/suggestions/{id}/apply    # Apply approved suggestion
+```
+
+#### Actions
+```
+GET  /api/v1/healing/actions              # List actions
+GET  /api/v1/healing/actions/{id}         # Get action details
+POST /api/v1/healing/actions/{id}/rollback  # Rollback action
+```
+
+### Best Practices
+
+#### Choosing a Mode
+
+| Scenario | Recommended Mode |
+|----------|------------------|
+| Simple scripts, rare failures | `reactive` |
+| Complex workflows, continuous improvement | `proactive` |
+| Mission-critical jobs | Both (reactive + daily proactive) |
+| Development/testing | `manual` reviews only |
+
+#### Review Frequency
+
+| Job Frequency | Recommended Review |
+|---------------|-------------------|
+| Runs every hour | `daily` reviews |
+| Runs every day | `weekly` reviews |
+| Runs every week | `weekly` reviews |
+| On-demand only | `on_failure` only |
+
+#### Auto-Apply Strategy
+
+Start conservative:
+```yaml
+suggestions:
+  auto_apply: false
+  min_severity_for_approval: low
+```
+
+Once confident:
+```yaml
+suggestions:
+  auto_apply: true
+  auto_apply_categories: [config, prompt]  # Safe categories only
+  min_severity_for_approval: medium
+```
+
+For detailed documentation, see [docs/SELF-HEALING-V2.md](docs/SELF-HEALING-V2.md).
 
 ## Directory Structure
 
