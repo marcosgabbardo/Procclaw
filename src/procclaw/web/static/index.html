@@ -316,6 +316,7 @@
                                                         :title="'Click for SLA details'">
                                                         <span x-text="getSLAIcon(job.sla_status)"></span>
                                                         <span x-text="job.sla_score != null ? job.sla_score.toFixed(0) + '%' : '-'"></span>
+                                                        <span x-show="job.sla_trend" x-text="getTrendIcon(job.sla_trend)" :class="getTrendClass(job.sla_trend)"></span>
                                                     </button>
                                                 </div>
                                             </template>
@@ -891,10 +892,14 @@
                     <div class="text-center py-4">
                         <div class="text-6xl font-bold mb-2" :class="getSLABadgeClass(slaData?.overall_score)">
                             <span x-text="slaData?.overall_score?.toFixed(1)"></span><span class="text-2xl">%</span>
+                            <span class="text-3xl ml-2" :class="getTrendClass(slaData?.trend)" x-text="getTrendIcon(slaData?.trend)"></span>
                         </div>
                         <div class="flex items-center justify-center gap-2">
                             <span class="text-2xl" x-text="getSLAIcon(slaData?.status)"></span>
                             <span class="text-dark-400 uppercase text-sm" x-text="slaData?.status"></span>
+                            <span class="text-dark-500 text-xs" x-show="slaData?.trend && slaData?.trend !== 'stable'">
+                                (<span x-text="slaData?.trend"></span>)
+                            </span>
                         </div>
                     </div>
                     
@@ -2642,6 +2647,24 @@
                     }
                 },
 
+                getTrendIcon(trend) {
+                    switch (trend) {
+                        case 'improving': return '↑';
+                        case 'degrading': return '↓';
+                        case 'stable': return '→';
+                        default: return '';
+                    }
+                },
+
+                getTrendClass(trend) {
+                    switch (trend) {
+                        case 'improving': return 'text-green-400';
+                        case 'degrading': return 'text-red-400';
+                        case 'stable': return 'text-dark-400';
+                        default: return 'text-dark-500';
+                    }
+                },
+
                 async loadSLAOverview() {
                     try {
                         const data = await this.api('/sla');
@@ -2653,6 +2676,7 @@
                             if (job) {
                                 job.sla_score = sla.overall_score;
                                 job.sla_status = sla.status;
+                                job.sla_trend = sla.trend;
                             }
                         }
                     } catch (e) {
