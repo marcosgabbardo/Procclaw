@@ -1179,6 +1179,68 @@ def create_app() -> FastAPI:
             "job_id": request.job_id,
         }
 
+    @app.get("/api/v1/healing/stats")
+    async def get_healing_stats(
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get overall healing statistics."""
+        supervisor = get_supervisor()
+        db = supervisor.db
+        
+        # Get counts
+        all_suggestions = db.get_healing_suggestions(limit=1000)
+        all_reviews = db.get_healing_reviews(limit=100)
+        all_actions = db.get_healing_actions(limit=500)
+        
+        pending = sum(1 for s in all_suggestions if s.get("status") == "pending")
+        approved = sum(1 for s in all_suggestions if s.get("status") == "approved")
+        applied = sum(1 for s in all_suggestions if s.get("status") == "applied")
+        rejected = sum(1 for s in all_suggestions if s.get("status") == "rejected")
+        failed = sum(1 for s in all_suggestions if s.get("status") == "failed")
+        
+        # Reviews stats
+        completed_reviews = sum(1 for r in all_reviews if r.get("status") == "completed")
+        failed_reviews = sum(1 for r in all_reviews if r.get("status") == "failed")
+        
+        # Actions stats
+        successful_actions = sum(1 for a in all_actions if a.get("status") == "success")
+        rolled_back = sum(1 for a in all_actions if a.get("status") == "rolled_back")
+        
+        # Category breakdown
+        categories = {}
+        for s in all_suggestions:
+            cat = s.get("category", "unknown")
+            categories[cat] = categories.get(cat, 0) + 1
+        
+        # Severity breakdown
+        severities = {}
+        for s in all_suggestions:
+            sev = s.get("severity", "unknown")
+            severities[sev] = severities.get(sev, 0) + 1
+        
+        return {
+            "suggestions": {
+                "total": len(all_suggestions),
+                "pending": pending,
+                "approved": approved,
+                "applied": applied,
+                "rejected": rejected,
+                "failed": failed,
+            },
+            "reviews": {
+                "total": len(all_reviews),
+                "completed": completed_reviews,
+                "failed": failed_reviews,
+            },
+            "actions": {
+                "total": len(all_actions),
+                "successful": successful_actions,
+                "rolled_back": rolled_back,
+            },
+            "by_category": categories,
+            "by_severity": severities,
+        }
+
     # =========================================================================
     # End Self-Healing v2 Endpoints
     # =========================================================================

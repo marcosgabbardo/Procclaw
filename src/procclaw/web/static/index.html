@@ -1710,6 +1710,42 @@
                             <p class="mt-1 text-xs text-dark-500" x-show="!healingJobFilter">Select a job to trigger a review</p>
                         </div>
                     </div>
+                    
+                    <!-- Global Stats (when available) -->
+                    <div x-show="healingStats" class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                        <h3 class="font-medium mb-3">📈 All-Time Stats</h3>
+                        
+                        <div class="grid grid-cols-2 gap-2 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-dark-400">Total Reviews</span>
+                                <span x-text="healingStats?.reviews?.total || 0"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-dark-400">Completed</span>
+                                <span class="text-green-400" x-text="healingStats?.reviews?.completed || 0"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-dark-400">Applied</span>
+                                <span class="text-blue-400" x-text="healingStats?.suggestions?.applied || 0"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-dark-400">Rejected</span>
+                                <span class="text-dark-500" x-text="healingStats?.suggestions?.rejected || 0"></span>
+                            </div>
+                        </div>
+                        
+                        <!-- Category breakdown -->
+                        <div x-show="healingStats?.by_category && Object.keys(healingStats.by_category).length > 0" class="mt-3 pt-3 border-t border-dark-700">
+                            <h4 class="text-xs text-dark-500 mb-2">By Category</h4>
+                            <div class="flex flex-wrap gap-1">
+                                <template x-for="(count, cat) in (healingStats?.by_category || {})" :key="cat">
+                                    <span class="px-2 py-0.5 bg-dark-700 rounded text-xs">
+                                        <span x-text="cat"></span>: <span x-text="count"></span>
+                                    </span>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 
                 <!-- Main Content -->
@@ -2882,6 +2918,7 @@
                 healingActions: [],
                 selectedSuggestion: null,
                 showSuggestionModal: false,
+                healingStats: null,
                 
                 // Forms
                 newJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '' },
@@ -4374,6 +4411,12 @@
                         if (actRes.ok) {
                             const data = await actRes.json();
                             this.healingActions = data.actions || [];
+                        }
+                        
+                        // Load global stats (without job filter)
+                        const statsRes = await fetch('/api/v1/healing/stats');
+                        if (statsRes.ok) {
+                            this.healingStats = await statsRes.json();
                         }
                     } catch (e) {
                         console.error('Failed to load healing data:', e);
