@@ -22,6 +22,7 @@ from procclaw.sla import (
     get_expected_start_time,
     parse_period,
     create_config_hash,
+    check_and_alert_sla_breach,
     SLACheckResult,
     SLAMetrics,
     DEFAULT_SLA_BY_TYPE,
@@ -663,6 +664,40 @@ class TestIntegration:
         assert 0 <= metrics.success_rate <= 100
         assert 0 <= metrics.overall_score <= 100
         assert metrics.status in ("healthy", "warning", "critical", "no_data")
+
+
+class TestSLAAlerts:
+    """Tests for SLA breach alerting."""
+    
+    def test_alert_not_sent_when_sla_disabled(self, basic_job, successful_run):
+        """Test no alert when SLA is disabled."""
+        basic_job.sla.enabled = False
+        
+        # Mock db
+        db = MagicMock()
+        
+        result = check_and_alert_sla_breach(db, "test-job", basic_job, successful_run)
+        assert result is False
+    
+    def test_alert_not_sent_when_alert_disabled(self, basic_job, successful_run):
+        """Test no alert when alert_on_breach is False."""
+        basic_job.sla.enabled = True
+        basic_job.sla.alert_on_breach = False
+        
+        db = MagicMock()
+        
+        result = check_and_alert_sla_breach(db, "test-job", basic_job, successful_run)
+        assert result is False
+    
+    def test_alert_not_sent_for_passing_run(self, basic_job, successful_run):
+        """Test no alert when run passes SLA."""
+        basic_job.sla.enabled = True
+        basic_job.sla.alert_on_breach = True
+        
+        db = MagicMock()
+        
+        result = check_and_alert_sla_breach(db, "test-job", basic_job, successful_run)
+        assert result is False
 
 
 class TestTrendCalculation:

@@ -584,3 +584,75 @@ def get_sla_snapshot(db: "Database", snapshot_id: int) -> dict | None:
             "config_json": row["config_json"],
             "sla_json": row["sla_json"],
         }
+
+
+def check_and_alert_sla_breach(
+    db: "Database",
+    job_id: str,
+    job: "JobConfig",
+    run: "JobRun",
+) -> bool:
+    """Check if run breached SLA and generate alert if needed.
+    
+    Args:
+        db: Database instance
+        job_id: Job identifier
+        job: Job configuration
+        run: The completed run to check
+    
+    Returns:
+        True if alert was generated, False otherwise
+    """
+    from procclaw.openclaw import _write_pending_alert
+    
+    # Check if SLA monitoring is enabled
+    if not job.sla.enabled:
+        return False
+    
+    if not job.sla.alert_on_breach:
+        return False
+    
+    # Check this run against SLA
+    result = check_run_sla(run, job)
+    
+    if result.status == "pass":
+        return False
+    
+    # Check if overall SLA score dropped below threshold
+    period = job.sla.evaluation_period or "7d"
+    metrics = calculate_job_sla_score(db, job_id, job, period)
+    
+    alert_threshold = job.sla.alert_threshold or 90.0
+    
+    if metrics.overall_score >= alert_threshold:
+        return False  # Still above threshold
+    
+    # Generate alert
+    breach_details = []
+    if result.success_check is False:
+        breach_details.append(f"Failed (exit={result.exit_code})")
+    if result.on_time_check is False:
+        delay_min = (result.delay_seconds or 0) / 60
+        breach_details.append(f"Late start (+{delay_min:.1f}m)")
+    if result.duration_check is False:
+        dur_min = (result.duration_seconds or 0) / 60
+        max_min = (result.max_duration or 0) / 60
+        breach_details.append(f"Over duration ({dur_min:.1f}m > {max_min:.1f}m)")
+    
+    message = f"""📊 **SLA Breach: {job_id}**
+
+Run #{run.id} breached SLA:
+• {', '.join(breach_details)}
+
+Overall SLA Score: **{metrics.overall_score:.1f}%** (threshold: {alert_threshold}%)
+• Success: {metrics.success_rate:.1f}%
+• Schedule: {metrics.schedule_adherence:.1f}%
+• Duration: {metrics.duration_compliance:.1f}%
+
+Status: {metrics.status.upper()}
+Trend: {metrics.trend}"""
+    
+    _write_pending_alert(message, "whatsapp")
+    logger.info(f"SLA breach alert generated for {job_id}")
+    
+    return True

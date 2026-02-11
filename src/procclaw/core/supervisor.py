@@ -1627,6 +1627,14 @@ class Supervisor:
             # Extract OpenClaw session info for openclaw jobs
             if job and job.type == JobType.OPENCLAW:
                 self._extract_session_info(job_id, last_run)
+            
+            # Check SLA and alert if breached
+            if job and job.sla.enabled:
+                try:
+                    from procclaw.sla import check_and_alert_sla_breach
+                    check_and_alert_sla_breach(self.db, job_id, job, last_run)
+                except Exception as e:
+                    logger.warning(f"Failed to check SLA for job '{job_id}': {e}")
 
         # Remove from active processes
         if job_id in self._processes:
