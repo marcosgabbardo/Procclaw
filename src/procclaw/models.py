@@ -496,6 +496,11 @@ HEALING_FORBIDDEN_PATHS_ALWAYS: list[str] = [
     "/opt/homebrew/lib/node_modules/openclaw/",
     "/usr/local/lib/node_modules/openclaw/",
     
+    # ProcClaw shared scripts - NEVER MODIFY (used by multiple jobs)
+    "~/.procclaw/scripts/oc-runner*.py",
+    "~/.procclaw/scripts/oc-runner.py",
+    "~/.procclaw/scripts/oc-runner-v3.py",
+    
     # System critical
     "~/.ssh/",
     "~/.gnupg/",

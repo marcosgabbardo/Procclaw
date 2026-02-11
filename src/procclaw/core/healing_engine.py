@@ -1170,9 +1170,19 @@ Output your analysis in JSON format:
             except:
                 pass
         
+        # Block shared runner scripts (used by multiple jobs)
+        scripts_dir = Path("~/.procclaw/scripts").expanduser()
+        if file_path_obj.is_relative_to(scripts_dir):
+            if file_name.startswith("oc-runner"):
+                return False, f"Shared runner script {file_name} cannot be modified by self-healing"
+        
         # Check if it's in prompts directory
         prompts_dir = Path("~/.procclaw/prompts").expanduser()
         if file_path_obj.is_relative_to(prompts_dir):
+            # Only openclaw-type jobs can modify prompts
+            if job.type.value != "openclaw":
+                return False, f"Only openclaw-type jobs can modify prompt files (job {job_id} is type={job.type.value})"
+            
             file_str = str(file_path_obj)
             # Check if job_id or variations are in the path
             # e.g., job_id="oc-twitter-trends" should match "twitter-trends.md"
