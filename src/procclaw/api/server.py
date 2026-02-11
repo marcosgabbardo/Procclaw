@@ -2075,6 +2075,105 @@ def create_app() -> FastAPI:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    # Prompt File Endpoints (for OpenClaw jobs)
+
+    def _extract_prompt_path(cmd: str) -> Path | None:
+        """Extract prompt file path from job command.
+        
+        Looks for patterns like:
+        - ~/.procclaw/prompts/idea-hunter.md
+        - /path/to/prompt.md
+        """
+        import re
+        
+        # Match .md file paths in the command
+        patterns = [
+            r'([~\w./\-]+\.md)',  # Any .md file path
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, cmd)
+            if match:
+                path_str = match.group(1)
+                # Expand ~ to home directory
+                path = Path(path_str).expanduser()
+                if path.exists():
+                    return path
+        
+        return None
+
+    @app.get("/api/v1/jobs/{job_id}/prompt")
+    async def get_job_prompt(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get the prompt file content for an OpenClaw job."""
+        supervisor = get_supervisor()
+        
+        job = supervisor.jobs.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        if job.type.value != "openclaw":
+            raise HTTPException(status_code=400, detail=f"Job '{job_id}' is not an OpenClaw job")
+        
+        prompt_path = _extract_prompt_path(job.cmd)
+        if not prompt_path:
+            raise HTTPException(status_code=404, detail=f"No prompt file found in job command")
+        
+        try:
+            content = prompt_path.read_text()
+            return {
+                "success": True,
+                "path": str(prompt_path),
+                "filename": prompt_path.name,
+                "content": content,
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read prompt: {e}")
+
+    class PromptUpdateRequest(BaseModel):
+        """Request model for updating a prompt."""
+        content: str
+
+    @app.put("/api/v1/jobs/{job_id}/prompt")
+    async def update_job_prompt(
+        job_id: str,
+        request: PromptUpdateRequest,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Update the prompt file content for an OpenClaw job."""
+        supervisor = get_supervisor()
+        
+        job = supervisor.jobs.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        if job.type.value != "openclaw":
+            raise HTTPException(status_code=400, detail=f"Job '{job_id}' is not an OpenClaw job")
+        
+        prompt_path = _extract_prompt_path(job.cmd)
+        if not prompt_path:
+            raise HTTPException(status_code=404, detail=f"No prompt file found in job command")
+        
+        try:
+            # Create backup
+            backup_path = prompt_path.with_suffix(".md.bak")
+            if prompt_path.exists():
+                backup_path.write_text(prompt_path.read_text())
+            
+            # Write new content
+            prompt_path.write_text(request.content)
+            
+            return {
+                "success": True,
+                "path": str(prompt_path),
+                "filename": prompt_path.name,
+                "backup": str(backup_path),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to save prompt: {e}")
+
     return app
 
 

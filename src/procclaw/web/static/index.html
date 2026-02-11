@@ -9,6 +9,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/python.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/bash.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/yaml.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/markdown.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/languages/json.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script>
         tailwind.config = {
@@ -73,6 +82,31 @@
         /* Drag handle for column reorder */
         .drag-handle { cursor: grab; opacity: 0.5; }
         .drag-handle:hover { opacity: 1; }
+        /* Markdown preview styles */
+        .markdown-preview { line-height: 1.7; }
+        .markdown-preview h1 { font-size: 1.75rem; font-weight: 600; margin: 1.5rem 0 1rem; color: #f0f6fc; border-bottom: 1px solid #30363d; padding-bottom: 0.5rem; }
+        .markdown-preview h2 { font-size: 1.4rem; font-weight: 600; margin: 1.25rem 0 0.75rem; color: #f0f6fc; }
+        .markdown-preview h3 { font-size: 1.2rem; font-weight: 600; margin: 1rem 0 0.5rem; color: #c9d1d9; }
+        .markdown-preview h4 { font-size: 1rem; font-weight: 600; margin: 0.75rem 0 0.5rem; color: #c9d1d9; }
+        .markdown-preview p { margin: 0.75rem 0; }
+        .markdown-preview ul, .markdown-preview ol { margin: 0.75rem 0; padding-left: 1.5rem; }
+        .markdown-preview li { margin: 0.25rem 0; }
+        .markdown-preview ul { list-style-type: disc; }
+        .markdown-preview ol { list-style-type: decimal; }
+        .markdown-preview code { background: #30363d; padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 0.9em; }
+        .markdown-preview pre { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; margin: 1rem 0; overflow-x: auto; }
+        .markdown-preview pre code { background: transparent; padding: 0; font-size: 0.85rem; }
+        .markdown-preview blockquote { border-left: 3px solid #f97316; padding-left: 1rem; margin: 1rem 0; color: #8b949e; font-style: italic; }
+        .markdown-preview a { color: #58a6ff; text-decoration: underline; }
+        .markdown-preview a:hover { color: #79c0ff; }
+        .markdown-preview table { border-collapse: collapse; margin: 1rem 0; width: 100%; }
+        .markdown-preview th, .markdown-preview td { border: 1px solid #30363d; padding: 0.5rem 0.75rem; }
+        .markdown-preview th { background: #21262d; font-weight: 600; }
+        .markdown-preview hr { border: none; border-top: 1px solid #30363d; margin: 1.5rem 0; }
+        .markdown-preview strong { color: #f0f6fc; }
+        .markdown-preview em { color: #c9d1d9; }
+        /* Prompt editor */
+        .prompt-editor { min-height: 400px; font-family: 'JetBrains Mono', monospace; font-size: 14px; line-height: 1.6; resize: vertical; }
     </style>
 </head>
 <body class="bg-dark-900 text-dark-200 min-h-dvh font-sans" x-data="app()" x-init="init()">
@@ -1447,7 +1481,8 @@
                     <p class="text-sm text-dark-400" x-text="selectedJob?.name"></p>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button @click="openEditModal(selectedJob)" class="p-2 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-dark-200" title="Edit">✏️</button>
+                    <button x-show="selectedJob?.type === 'openclaw'" @click="openPromptEditor(selectedJob.id)" class="p-2 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-orange-400" title="Edit Prompt">📝</button>
+                    <button @click="openEditModal(selectedJob)" class="p-2 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-dark-200" title="Edit Job">✏️</button>
                     <button @click="selectedJob = null" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
                 </div>
             </div>
@@ -1582,6 +1617,108 @@
                         </div>
                     </div>
                 </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prompt Editor Modal -->
+    <div x-show="showPromptEditor" x-cloak class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" @click.self="closePromptEditor()" @keydown.escape.window="closePromptEditor()">
+        <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-6xl h-[90vh] flex flex-col" @click.stop>
+            <!-- Header -->
+            <div class="p-4 border-b border-dark-600 flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-3">
+                    <span class="text-xl">📝</span>
+                    <div>
+                        <h2 class="text-lg font-medium">Prompt Editor</h2>
+                        <p class="text-sm text-dark-400 font-mono" x-text="promptEditor.path"></p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <!-- View Toggle -->
+                    <div class="flex bg-dark-700 rounded-lg p-1">
+                        <button type="button" @click="promptEditor.view = 'edit'" 
+                            :class="promptEditor.view === 'edit' ? 'bg-dark-600 text-white' : 'text-dark-400 hover:text-white'"
+                            class="px-3 py-1 text-sm rounded transition">Edit</button>
+                        <button type="button" @click="promptEditor.view = 'split'" 
+                            :class="promptEditor.view === 'split' ? 'bg-dark-600 text-white' : 'text-dark-400 hover:text-white'"
+                            class="px-3 py-1 text-sm rounded transition">Split</button>
+                        <button type="button" @click="promptEditor.view = 'preview'" 
+                            :class="promptEditor.view === 'preview' ? 'bg-dark-600 text-white' : 'text-dark-400 hover:text-white'"
+                            class="px-3 py-1 text-sm rounded transition">Preview</button>
+                    </div>
+                    <!-- Unsaved indicator -->
+                    <span x-show="promptEditor.content !== promptEditor.originalContent" class="text-xs text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded">
+                        Unsaved changes
+                    </span>
+                    <!-- Close -->
+                    <button @click="closePromptEditor()" class="p-2 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white">✕</button>
+                </div>
+            </div>
+            
+            <!-- Loading State -->
+            <div x-show="promptEditor.loading" class="flex-1 flex items-center justify-center">
+                <div class="text-center">
+                    <div class="animate-spin w-8 h-8 border-2 border-dark-400 border-t-accent-500 rounded-full mx-auto mb-4"></div>
+                    <p class="text-dark-400">Loading prompt...</p>
+                </div>
+            </div>
+            
+            <!-- Error State -->
+            <div x-show="promptEditor.error && !promptEditor.loading" class="flex-1 flex items-center justify-center p-8">
+                <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-6 max-w-md text-center">
+                    <span class="text-3xl mb-4 block">❌</span>
+                    <p class="text-red-400" x-text="promptEditor.error"></p>
+                    <button @click="closePromptEditor()" class="mt-4 px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg">Close</button>
+                </div>
+            </div>
+            
+            <!-- Editor Content -->
+            <div x-show="!promptEditor.loading && !promptEditor.error" class="flex-1 overflow-hidden flex" :class="promptEditor.view === 'split' ? 'gap-0' : ''">
+                <!-- Editor Pane -->
+                <div x-show="promptEditor.view !== 'preview'" :class="promptEditor.view === 'split' ? 'w-1/2' : 'w-full'" class="flex flex-col border-r border-dark-600">
+                    <div class="px-4 py-2 bg-dark-700/50 text-xs text-dark-400 font-medium shrink-0 flex items-center justify-between">
+                        <span>MARKDOWN</span>
+                        <span class="text-dark-500" x-text="promptEditor.content.length + ' chars'"></span>
+                    </div>
+                    <textarea 
+                        x-model="promptEditor.content" 
+                        class="prompt-editor flex-1 w-full bg-dark-900 text-dark-200 p-4 focus:outline-none border-none scrollbar-thin"
+                        placeholder="Enter your prompt here..."
+                        spellcheck="false"
+                    ></textarea>
+                </div>
+                
+                <!-- Preview Pane -->
+                <div x-show="promptEditor.view !== 'edit'" :class="promptEditor.view === 'split' ? 'w-1/2' : 'w-full'" class="flex flex-col">
+                    <div class="px-4 py-2 bg-dark-700/50 text-xs text-dark-400 font-medium shrink-0">PREVIEW</div>
+                    <div class="flex-1 overflow-auto p-6 scrollbar-thin">
+                        <div class="markdown-preview" x-html="renderMarkdown(promptEditor.content)"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Footer -->
+            <div x-show="!promptEditor.loading && !promptEditor.error" class="p-4 border-t border-dark-600 flex items-center justify-between shrink-0 bg-dark-800">
+                <div class="text-sm text-dark-400">
+                    <span x-text="promptEditor.filename"></span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button @click="promptEditor.content = promptEditor.originalContent" 
+                        x-show="promptEditor.content !== promptEditor.originalContent"
+                        class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition">
+                        Revert
+                    </button>
+                    <button @click="closePromptEditor()" class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition">
+                        Cancel
+                    </button>
+                    <button @click="savePrompt()" 
+                        :disabled="promptEditor.saving || promptEditor.content === promptEditor.originalContent"
+                        :class="promptEditor.content !== promptEditor.originalContent ? 'bg-accent-500 hover:bg-accent-600 text-white' : 'bg-dark-600 text-dark-400 cursor-not-allowed'"
+                        class="px-6 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2">
+                        <span x-show="promptEditor.saving" class="animate-spin">⏳</span>
+                        <span x-text="promptEditor.saving ? 'Saving...' : 'Save'"></span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -2139,6 +2276,20 @@
                 editJobYaml: '',
                 editMode: 'form',
                 
+                // Prompt Editor
+                showPromptEditor: false,
+                promptEditor: {
+                    jobId: '',
+                    path: '',
+                    filename: '',
+                    content: '',
+                    originalContent: '',
+                    loading: false,
+                    saving: false,
+                    error: null,
+                    view: 'split', // 'edit', 'preview', 'split'
+                },
+                
                 // Workflows
                 savedWorkflows: [],
                 workflowRuns: [],
@@ -2620,6 +2771,103 @@
                     }
                     this.editJob.self_healing.preset = 'custom';
                     this.syncEditFormToYaml();
+                },
+
+                // Prompt Editor Functions
+                async openPromptEditor(jobId) {
+                    this.promptEditor = {
+                        jobId,
+                        path: '',
+                        filename: '',
+                        content: '',
+                        originalContent: '',
+                        loading: true,
+                        saving: false,
+                        error: null,
+                        view: 'split',
+                    };
+                    this.showPromptEditor = true;
+                    
+                    try {
+                        const res = await this.api(`/jobs/${jobId}/prompt`);
+                        if (res.success) {
+                            this.promptEditor.path = res.path;
+                            this.promptEditor.filename = res.filename;
+                            this.promptEditor.content = res.content;
+                            this.promptEditor.originalContent = res.content;
+                        } else {
+                            this.promptEditor.error = res.detail || 'Failed to load prompt';
+                        }
+                    } catch (e) {
+                        this.promptEditor.error = e.message || 'Failed to load prompt';
+                    } finally {
+                        this.promptEditor.loading = false;
+                    }
+                },
+                
+                closePromptEditor() {
+                    if (this.promptEditor.content !== this.promptEditor.originalContent) {
+                        if (!confirm('You have unsaved changes. Discard them?')) {
+                            return;
+                        }
+                    }
+                    this.showPromptEditor = false;
+                    this.promptEditor = {
+                        jobId: '',
+                        path: '',
+                        filename: '',
+                        content: '',
+                        originalContent: '',
+                        loading: false,
+                        saving: false,
+                        error: null,
+                        view: 'split',
+                    };
+                },
+                
+                async savePrompt() {
+                    if (this.promptEditor.saving) return;
+                    
+                    this.promptEditor.saving = true;
+                    
+                    try {
+                        const res = await this.api(`/jobs/${this.promptEditor.jobId}/prompt`, 'PUT', {
+                            content: this.promptEditor.content
+                        });
+                        
+                        if (res.success) {
+                            this.promptEditor.originalContent = this.promptEditor.content;
+                            this.toast(`Saved ${this.promptEditor.filename}`, 'success');
+                        } else {
+                            this.toast(res.detail || 'Failed to save', 'error');
+                        }
+                    } catch (e) {
+                        this.toast(e.message || 'Failed to save', 'error');
+                    } finally {
+                        this.promptEditor.saving = false;
+                    }
+                },
+                
+                renderMarkdown(content) {
+                    if (!content) return '';
+                    try {
+                        // Configure marked
+                        marked.setOptions({
+                            highlight: function(code, lang) {
+                                if (lang && hljs.getLanguage(lang)) {
+                                    try {
+                                        return hljs.highlight(code, { language: lang }).value;
+                                    } catch (e) {}
+                                }
+                                return code;
+                            },
+                            breaks: true,
+                            gfm: true,
+                        });
+                        return marked.parse(content);
+                    } catch (e) {
+                        return `<pre>${content}</pre>`;
+                    }
                 },
 
                 async saveJob() {
