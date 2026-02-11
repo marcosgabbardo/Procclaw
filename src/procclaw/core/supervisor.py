@@ -1510,6 +1510,13 @@ class Supervisor:
             # Self-healing settings (full config for edit modal)
             "self_healing": {
                 "enabled": job.self_healing.enabled,
+                "mode": job.self_healing.mode.value if job.self_healing.mode else "reactive",
+                "review_schedule": {
+                    "frequency": job.self_healing.review_schedule.frequency.value if job.self_healing.review_schedule else "daily",
+                    "time": job.self_healing.review_schedule.time if job.self_healing.review_schedule else "03:00",
+                    "day": job.self_healing.review_schedule.day if job.self_healing.review_schedule else 1,
+                    "min_runs": job.self_healing.review_schedule.min_runs if job.self_healing.review_schedule else 5,
+                } if job.self_healing.review_schedule else None,
                 "analysis": {
                     "include_logs": job.self_healing.analysis.include_logs if job.self_healing.analysis else True,
                     "log_lines": job.self_healing.analysis.log_lines if job.self_healing.analysis else 200,
@@ -1524,6 +1531,11 @@ class Supervisor:
                     "forbidden_paths": job.self_healing.remediation.forbidden_paths if job.self_healing.remediation else [],
                     "require_approval": job.self_healing.remediation.require_approval if job.self_healing.remediation else False,
                 } if job.self_healing.remediation else None,
+                "suggestions": {
+                    "auto_apply": job.self_healing.suggestions.auto_apply if job.self_healing.suggestions else False,
+                    "min_severity_for_approval": job.self_healing.suggestions.min_severity_for_approval if job.self_healing.suggestions else "medium",
+                    "notify_on_suggestion": job.self_healing.suggestions.notify_on_suggestion if job.self_healing.suggestions else True,
+                } if job.self_healing.suggestions else None,
                 "notify": {
                     "on_analysis": job.self_healing.notify.on_analysis if job.self_healing.notify else False,
                     "on_fix_attempt": job.self_healing.notify.on_fix_attempt if job.self_healing.notify else True,
