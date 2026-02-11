@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Security
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
+from loguru import logger
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -2197,6 +2198,252 @@ def create_app() -> FastAPI:
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to save prompt: {e}")
+
+    # SLA Endpoints
+
+    @app.get("/api/v1/sla")
+    async def get_sla_overview(
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get SLA overview for all jobs."""
+        from procclaw.sla import calculate_job_sla_score
+        
+        supervisor = get_supervisor()
+        jobs = supervisor.jobs.jobs
+        
+        results = []
+        for job_id, job in jobs.items():
+            try:
+                metrics = calculate_job_sla_score(supervisor.db, job_id, job, "7d")
+                results.append({
+                    "job_id": job_id,
+                    "name": job.name,
+                    "sla_enabled": job.sla.enabled,
+                    "overall_score": round(metrics.overall_score, 1),
+                    "status": metrics.status,
+                    "success_rate": round(metrics.success_rate, 1),
+                    "schedule_adherence": round(metrics.schedule_adherence, 1),
+                    "duration_compliance": round(metrics.duration_compliance, 1),
+                    "total_runs": metrics.total_runs,
+                    "trend": metrics.trend,
+                    "last_breach": metrics.last_breach.isoformat() if metrics.last_breach else None,
+                })
+            except Exception as e:
+                logger.warning(f"Failed to calculate SLA for {job_id}: {e}")
+                results.append({
+                    "job_id": job_id,
+                    "name": job.name,
+                    "sla_enabled": job.sla.enabled,
+                    "overall_score": None,
+                    "status": "error",
+                    "error": str(e),
+                })
+        
+        # Sort by score (lowest first to highlight problems)
+        results.sort(key=lambda x: x.get("overall_score") or 0)
+        
+        return {
+            "jobs": results,
+            "total": len(results),
+            "healthy": sum(1 for r in results if r.get("status") == "healthy"),
+            "warning": sum(1 for r in results if r.get("status") == "warning"),
+            "critical": sum(1 for r in results if r.get("status") == "critical"),
+        }
+
+    @app.get("/api/v1/jobs/{job_id}/sla")
+    async def get_job_sla(
+        job_id: str,
+        period: str = Query("7d", description="Evaluation period (e.g., 7d, 24h, 30d)"),
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get SLA details for a specific job."""
+        from procclaw.sla import calculate_job_sla_score, get_effective_sla
+        
+        supervisor = get_supervisor()
+        job = supervisor.jobs.get_job(job_id)
+        
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        metrics = calculate_job_sla_score(supervisor.db, job_id, job, period)
+        sla_config = get_effective_sla(job)
+        
+        return {
+            "job_id": job_id,
+            "name": job.name,
+            "config": {
+                "enabled": sla_config.get("enabled"),
+                "success_rate_target": sla_config.get("success_rate"),
+                "schedule_tolerance": sla_config.get("schedule_tolerance"),
+                "max_duration": sla_config.get("max_duration"),
+            },
+            "period": {
+                "value": period,
+                "start": metrics.period_start.isoformat(),
+                "end": metrics.period_end.isoformat(),
+            },
+            "metrics": {
+                "success_rate": {
+                    "target": sla_config.get("success_rate"),
+                    "actual": round(metrics.success_rate, 1),
+                    "status": "healthy" if metrics.success_rate >= sla_config.get("success_rate", 95) else "warning",
+                    "successful": metrics.successful_runs,
+                    "failed": metrics.failed_runs,
+                    "total": metrics.total_runs,
+                },
+                "schedule_adherence": {
+                    "target": 100.0,
+                    "actual": round(metrics.schedule_adherence, 1),
+                    "status": "healthy" if metrics.schedule_adherence >= 90 else "warning",
+                    "on_time": metrics.total_runs - metrics.late_starts,
+                    "late": metrics.late_starts,
+                },
+                "duration_compliance": {
+                    "target": 100.0,
+                    "actual": round(metrics.duration_compliance, 1),
+                    "status": "healthy" if metrics.duration_compliance >= 90 else "warning",
+                    "within_sla": metrics.total_runs - metrics.over_duration,
+                    "over_sla": metrics.over_duration,
+                    "max_duration_target": sla_config.get("max_duration"),
+                    "avg_duration": round(metrics.avg_duration, 1) if metrics.avg_duration else None,
+                    "p95_duration": round(metrics.p95_duration, 1) if metrics.p95_duration else None,
+                },
+            },
+            "overall_score": round(metrics.overall_score, 1),
+            "status": metrics.status,
+            "trend": metrics.trend,
+            "last_breach": metrics.last_breach.isoformat() if metrics.last_breach else None,
+            "runs": metrics.runs[:20],  # Last 20 runs with details
+        }
+
+    @app.get("/api/v1/jobs/{job_id}/sla/history")
+    async def get_job_sla_history(
+        job_id: str,
+        period: str = Query("30d", description="Total period (e.g., 30d, 90d)"),
+        granularity: str = Query("day", description="Granularity (hour, day, week)"),
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get SLA history for a job over time (for trend graphs)."""
+        from datetime import datetime, timedelta
+        from procclaw.sla import parse_period, calculate_sla_metrics
+        
+        supervisor = get_supervisor()
+        job = supervisor.jobs.get_job(job_id)
+        
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        
+        total_period = parse_period(period)
+        end_time = datetime.now()
+        start_time = end_time - total_period
+        
+        # Determine bucket size
+        if granularity == "hour":
+            bucket_delta = timedelta(hours=1)
+        elif granularity == "week":
+            bucket_delta = timedelta(weeks=1)
+        else:  # day
+            bucket_delta = timedelta(days=1)
+        
+        # Get all runs in the period
+        all_runs = supervisor.db.get_runs(job_id=job_id, limit=10000, since=start_time)
+        all_runs = [r for r in all_runs if r.finished_at is not None]
+        
+        # Bucket runs by period
+        history = []
+        bucket_start = start_time
+        
+        while bucket_start < end_time:
+            bucket_end = min(bucket_start + bucket_delta, end_time)
+            
+            # Filter runs for this bucket
+            bucket_runs = [
+                r for r in all_runs
+                if bucket_start <= r.started_at < bucket_end
+            ]
+            
+            if bucket_runs:
+                metrics = calculate_sla_metrics(job_id, job, bucket_runs, bucket_start, bucket_end)
+                history.append({
+                    "period_start": bucket_start.isoformat(),
+                    "period_end": bucket_end.isoformat(),
+                    "overall_score": round(metrics.overall_score, 1),
+                    "success_rate": round(metrics.success_rate, 1),
+                    "total_runs": metrics.total_runs,
+                    "status": metrics.status,
+                })
+            else:
+                history.append({
+                    "period_start": bucket_start.isoformat(),
+                    "period_end": bucket_end.isoformat(),
+                    "overall_score": None,
+                    "success_rate": None,
+                    "total_runs": 0,
+                    "status": "no_data",
+                })
+            
+            bucket_start = bucket_end
+        
+        return {
+            "job_id": job_id,
+            "period": period,
+            "granularity": granularity,
+            "history": history,
+        }
+
+    @app.get("/api/v1/sla/breaches")
+    async def get_sla_breaches(
+        job_id: str | None = Query(None, description="Filter by job ID"),
+        since: str = Query("7d", description="Period to check (e.g., 7d, 24h)"),
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get recent SLA breaches across jobs."""
+        from procclaw.sla import parse_period, check_run_sla
+        
+        supervisor = get_supervisor()
+        
+        period_delta = parse_period(since)
+        since_time = datetime.now() - period_delta
+        
+        # Get runs
+        if job_id:
+            runs = supervisor.db.get_runs(job_id=job_id, limit=1000, since=since_time)
+        else:
+            runs = supervisor.db.get_runs(limit=5000, since=since_time)
+        
+        breaches = []
+        for run in runs:
+            if run.finished_at is None:
+                continue
+            
+            job = supervisor.jobs.get_job(run.job_id)
+            if not job:
+                continue
+            
+            check = check_run_sla(run, job)
+            if check.status in ("fail", "partial"):
+                breaches.append({
+                    "run_id": run.id,
+                    "job_id": run.job_id,
+                    "job_name": job.name,
+                    "started_at": run.started_at.isoformat(),
+                    "sla_status": check.status,
+                    "success_check": check.success_check,
+                    "on_time_check": check.on_time_check,
+                    "duration_check": check.duration_check,
+                    "exit_code": check.exit_code,
+                    "delay_seconds": check.delay_seconds,
+                    "duration_seconds": check.duration_seconds,
+                })
+        
+        # Sort by time (most recent first)
+        breaches.sort(key=lambda x: x["started_at"], reverse=True)
+        
+        return {
+            "breaches": breaches[:100],  # Limit to 100
+            "total": len(breaches),
+            "period": since,
+        }
 
     # Session Messages Backfill Endpoint
 

@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS job_runs (
     session_key TEXT,
     session_transcript TEXT,
     session_messages TEXT,
+    sla_snapshot_id INTEGER,
+    sla_status TEXT,
+    sla_details TEXT,
     healing_status TEXT,
     healing_attempts INTEGER DEFAULT 0,
     healing_session_key TEXT,
@@ -177,6 +180,41 @@ CREATE TABLE IF NOT EXISTS job_results (
     FOREIGN KEY (workflow_run_id) REFERENCES workflow_runs(id)
 );
 
+-- SLA Snapshots (job config versions for SLA comparison)
+CREATE TABLE IF NOT EXISTS job_sla_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    snapshot_at TEXT NOT NULL,
+    config_hash TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    sla_json TEXT,
+    UNIQUE(job_id, config_hash)
+);
+
+-- SLA Metrics (aggregated metrics by period)
+CREATE TABLE IF NOT EXISTS sla_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    period_type TEXT NOT NULL,
+    total_runs INTEGER DEFAULT 0,
+    successful_runs INTEGER DEFAULT 0,
+    failed_runs INTEGER DEFAULT 0,
+    late_starts INTEGER DEFAULT 0,
+    over_duration INTEGER DEFAULT 0,
+    success_rate REAL,
+    schedule_adherence REAL,
+    duration_compliance REAL,
+    availability REAL,
+    avg_duration REAL,
+    p50_duration REAL,
+    p95_duration REAL,
+    max_duration REAL,
+    details_json TEXT,
+    UNIQUE(job_id, period_start, period_type)
+);
+
 -- Job logs (per-run logs stored in SQLite)
 CREATE TABLE IF NOT EXISTS job_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -209,6 +247,8 @@ CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow_id ON workflow_runs(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_job_results_job_id ON job_results(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_results_workflow_run_id ON job_results(workflow_run_id);
+CREATE INDEX IF NOT EXISTS idx_sla_snapshots_job_id ON job_sla_snapshots(job_id);
+CREATE INDEX IF NOT EXISTS idx_sla_metrics_job_id ON sla_metrics(job_id, period_type);
 """
 
 
@@ -383,6 +423,63 @@ class Database:
             except sqlite3.OperationalError:
                 pass
         
+        if from_version < 10 and to_version >= 10:
+            # Migration to version 10: Add SLA tracking
+            logger.info("Migrating to version 10: Adding SLA tables and columns")
+            
+            # Create SLA snapshots table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS job_sla_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    snapshot_at TEXT NOT NULL,
+                    config_hash TEXT NOT NULL,
+                    config_json TEXT NOT NULL,
+                    sla_json TEXT,
+                    UNIQUE(job_id, config_hash)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_sla_snapshots_job_id ON job_sla_snapshots(job_id)")
+            
+            # Create SLA metrics table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sla_metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    period_start TEXT NOT NULL,
+                    period_end TEXT NOT NULL,
+                    period_type TEXT NOT NULL,
+                    total_runs INTEGER DEFAULT 0,
+                    successful_runs INTEGER DEFAULT 0,
+                    failed_runs INTEGER DEFAULT 0,
+                    late_starts INTEGER DEFAULT 0,
+                    over_duration INTEGER DEFAULT 0,
+                    success_rate REAL,
+                    schedule_adherence REAL,
+                    duration_compliance REAL,
+                    availability REAL,
+                    avg_duration REAL,
+                    p50_duration REAL,
+                    p95_duration REAL,
+                    max_duration REAL,
+                    details_json TEXT,
+                    UNIQUE(job_id, period_start, period_type)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_sla_metrics_job_id ON sla_metrics(job_id, period_type)")
+            
+            # Add SLA columns to job_runs
+            sla_columns = [
+                ("sla_snapshot_id", "INTEGER"),
+                ("sla_status", "TEXT"),
+                ("sla_details", "TEXT"),
+            ]
+            for col_name, col_type in sla_columns:
+                try:
+                    conn.execute(f"ALTER TABLE job_runs ADD COLUMN {col_name} {col_type}")
+                except sqlite3.OperationalError:
+                    pass
+        
         conn.execute("UPDATE schema_version SET version = ?", (to_version,))
 
     @contextmanager
@@ -526,6 +623,9 @@ class Database:
                     session_key = ?,
                     session_transcript = ?,
                     session_messages = ?,
+                    sla_snapshot_id = ?,
+                    sla_status = ?,
+                    sla_details = ?,
                     healing_status = ?,
                     healing_attempts = ?,
                     healing_session_key = ?,
@@ -541,6 +641,9 @@ class Database:
                     run.session_key,
                     run.session_transcript,
                     run.session_messages,
+                    run.sla_snapshot_id,
+                    run.sla_status,
+                    run.sla_details,
                     run.healing_status,
                     run.healing_attempts,
                     run.healing_session_key,
@@ -617,6 +720,9 @@ class Database:
             session_key=row["session_key"] if "session_key" in keys else None,
             session_transcript=row["session_transcript"] if "session_transcript" in keys else None,
             session_messages=row["session_messages"] if "session_messages" in keys else None,
+            sla_snapshot_id=row["sla_snapshot_id"] if "sla_snapshot_id" in keys else None,
+            sla_status=row["sla_status"] if "sla_status" in keys else None,
+            sla_details=row["sla_details"] if "sla_details" in keys else None,
             healing_status=row["healing_status"] if "healing_status" in keys else None,
             healing_attempts=row["healing_attempts"] if "healing_attempts" in keys else 0,
             healing_session_key=row["healing_session_key"] if "healing_session_key" in keys else None,

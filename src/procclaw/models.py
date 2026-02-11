@@ -369,6 +369,52 @@ class JobDependency(BaseModel):
     fail_on_dependency_failure: bool = True
 
 
+class ErrorBudgetPeriod(str, Enum):
+    """Error budget period."""
+    
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+
+
+class ErrorBudgetConfig(BaseModel):
+    """Error budget configuration."""
+    
+    period: ErrorBudgetPeriod = ErrorBudgetPeriod.WEEK
+    max_failures: int = 3
+
+
+class SLAConfig(BaseModel):
+    """Service Level Agreement configuration for a job."""
+    
+    enabled: bool = False
+    
+    # Core metrics thresholds
+    success_rate: float = 95.0  # % minimum success rate
+    schedule_tolerance: int = 300  # seconds tolerance for schedule adherence (5 min)
+    max_duration: int | None = None  # seconds maximum run duration
+    
+    # Advanced metrics
+    max_consecutive_failures: int | None = None
+    error_budget: ErrorBudgetConfig | None = None
+    
+    # Evaluation
+    evaluation_period: str = "7d"  # Period for SLA calculation
+    
+    # Alerting
+    alert_on_breach: bool = True
+    alert_threshold: float = 90.0  # Alert when score drops below this
+
+
+class SLAStatus(str, Enum):
+    """SLA status for a run."""
+    
+    PASS = "pass"
+    FAIL = "fail"
+    PARTIAL = "partial"
+    NO_SLA = "no_sla"
+
+
 class JobConfig(BaseModel):
     """Configuration for a single job."""
 
@@ -431,6 +477,9 @@ class JobConfig(BaseModel):
 
     # Self-healing (AI-powered failure analysis and auto-remediation)
     self_healing: SelfHealingConfig = Field(default_factory=SelfHealingConfig)
+
+    # SLA (Service Level Agreement)
+    sla: SLAConfig = Field(default_factory=SLAConfig)
 
     # Metadata
     tags: list[str] = Field(default_factory=list)
@@ -500,6 +549,11 @@ class JobRun(BaseModel):
     session_key: str | None = None  # OpenClaw session key (for openclaw jobs)
     session_transcript: str | None = None  # Path to OpenClaw session transcript
     session_messages: str | None = None  # JSON with session messages (persisted in DB)
+    
+    # SLA fields
+    sla_snapshot_id: int | None = None  # Reference to job_sla_snapshots
+    sla_status: str | None = None  # pass, fail, partial, no_sla
+    sla_details: str | None = None  # JSON with SLA check details
     
     # Self-healing fields
     healing_status: str | None = None  # in_progress, fixed, gave_up, awaiting_approval
