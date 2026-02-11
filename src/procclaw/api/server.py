@@ -221,6 +221,120 @@ class ChordRequest(BaseModel):
     composite_id: str | None = None
 
 
+# Self-Healing v2 Models
+
+class HealingReviewSummary(BaseModel):
+    """Summary of a healing review."""
+    id: int
+    job_id: str
+    started_at: str
+    finished_at: str | None = None
+    status: str
+    runs_analyzed: int = 0
+    suggestions_count: int = 0
+    auto_applied_count: int = 0
+    analysis_duration_ms: int | None = None
+
+
+class HealingReviewDetail(BaseModel):
+    """Detailed healing review info."""
+    id: int
+    job_id: str
+    started_at: str
+    finished_at: str | None = None
+    status: str
+    runs_analyzed: int = 0
+    logs_lines: int = 0
+    ai_sessions_count: int = 0
+    sla_violations_count: int = 0
+    suggestions_count: int = 0
+    auto_applied_count: int = 0
+    error_message: str | None = None
+    analysis_duration_ms: int | None = None
+    ai_tokens_used: int | None = None
+    created_at: str
+
+
+class HealingSuggestionSummary(BaseModel):
+    """Summary of a healing suggestion."""
+    id: int
+    review_id: int
+    job_id: str
+    category: str
+    severity: str
+    title: str
+    status: str
+    created_at: str
+
+
+class HealingSuggestionDetail(BaseModel):
+    """Detailed healing suggestion info."""
+    id: int
+    review_id: int
+    job_id: str
+    category: str
+    severity: str
+    title: str
+    description: str
+    current_state: str | None = None
+    suggested_change: str | None = None
+    expected_impact: str | None = None
+    affected_files: list[str] = []
+    status: str
+    reviewed_at: str | None = None
+    reviewed_by: str | None = None
+    rejection_reason: str | None = None
+    applied_at: str | None = None
+    action_id: int | None = None
+    created_at: str
+
+
+class HealingActionSummary(BaseModel):
+    """Summary of a healing action."""
+    id: int
+    suggestion_id: int
+    job_id: str
+    action_type: str
+    status: str
+    can_rollback: bool = False
+    created_at: str
+
+
+class HealingActionDetail(BaseModel):
+    """Detailed healing action info."""
+    id: int
+    suggestion_id: int
+    job_id: str
+    action_type: str
+    file_path: str | None = None
+    original_content: str | None = None
+    new_content: str | None = None
+    command_executed: str | None = None
+    status: str
+    error_message: str | None = None
+    can_rollback: bool = False
+    rolled_back_at: str | None = None
+    execution_duration_ms: int | None = None
+    ai_session_key: str | None = None
+    created_at: str
+
+
+class ApproveSuggestionRequest(BaseModel):
+    """Request to approve a suggestion."""
+    reviewed_by: str = "human"
+
+
+class RejectSuggestionRequest(BaseModel):
+    """Request to reject a suggestion."""
+    reason: str
+    reviewed_by: str = "human"
+
+
+class TriggerReviewRequest(BaseModel):
+    """Request to trigger a healing review."""
+    job_id: str
+
+
 # Create FastAPI app
 def create_app() -> FastAPI:
     """Create the FastAPI application."""
@@ -648,6 +762,385 @@ def create_app() -> FastAPI:
             **status,
             "queue": queue_list,
         }
+
+    # =========================================================================
+    # Self-Healing v2 Endpoints
+    # =========================================================================
+
+    @app.get("/api/v1/healing/reviews")
+    async def list_healing_reviews(
+        job_id: str | None = Query(None),
+        status: str | None = Query(None),
+        limit: int = Query(50, ge=1, le=500),
+        offset: int = Query(0, ge=0),
+        _auth: bool = Depends(verify_token),
+    ):
+        """List healing reviews with optional filters."""
+        supervisor = get_supervisor()
+        reviews = supervisor.db.get_healing_reviews(
+            job_id=job_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+        return {
+            "reviews": [
+                HealingReviewSummary(
+                    id=r["id"],
+                    job_id=r["job_id"],
+                    started_at=r["started_at"],
+                    finished_at=r.get("finished_at"),
+                    status=r["status"],
+                    runs_analyzed=r.get("runs_analyzed", 0),
+                    suggestions_count=r.get("suggestions_count", 0),
+                    auto_applied_count=r.get("auto_applied_count", 0),
+                    analysis_duration_ms=r.get("analysis_duration_ms"),
+                ).model_dump()
+                for r in reviews
+            ],
+            "total": len(reviews),
+        }
+
+    @app.get("/api/v1/healing/reviews/{review_id}")
+    async def get_healing_review(
+        review_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get detailed info for a healing review."""
+        supervisor = get_supervisor()
+        review = supervisor.db.get_healing_review(review_id)
+        if not review:
+            raise HTTPException(status_code=404, detail=f"Review {review_id} not found")
+        
+        return HealingReviewDetail(
+            id=review["id"],
+            job_id=review["job_id"],
+            started_at=review["started_at"],
+            finished_at=review.get("finished_at"),
+            status=review["status"],
+            runs_analyzed=review.get("runs_analyzed", 0),
+            logs_lines=review.get("logs_lines", 0),
+            ai_sessions_count=review.get("ai_sessions_count", 0),
+            sla_violations_count=review.get("sla_violations_count", 0),
+            suggestions_count=review.get("suggestions_count", 0),
+            auto_applied_count=review.get("auto_applied_count", 0),
+            error_message=review.get("error_message"),
+            analysis_duration_ms=review.get("analysis_duration_ms"),
+            ai_tokens_used=review.get("ai_tokens_used"),
+            created_at=review.get("created_at", review["started_at"]),
+        ).model_dump()
+
+    @app.get("/api/v1/healing/suggestions")
+    async def list_healing_suggestions(
+        job_id: str | None = Query(None),
+        review_id: int | None = Query(None),
+        status: str | None = Query(None),
+        category: str | None = Query(None),
+        severity: str | None = Query(None),
+        limit: int = Query(50, ge=1, le=500),
+        offset: int = Query(0, ge=0),
+        _auth: bool = Depends(verify_token),
+    ):
+        """List healing suggestions with optional filters."""
+        supervisor = get_supervisor()
+        suggestions = supervisor.db.get_healing_suggestions(
+            job_id=job_id,
+            review_id=review_id,
+            status=status,
+            category=category,
+            severity=severity,
+            limit=limit,
+            offset=offset,
+        )
+        return {
+            "suggestions": [
+                HealingSuggestionSummary(
+                    id=s["id"],
+                    review_id=s["review_id"],
+                    job_id=s["job_id"],
+                    category=s["category"],
+                    severity=s["severity"],
+                    title=s["title"],
+                    status=s["status"],
+                    created_at=s.get("created_at", ""),
+                ).model_dump()
+                for s in suggestions
+            ],
+            "total": len(suggestions),
+            "pending_count": supervisor.db.get_pending_suggestions_count(job_id=job_id),
+        }
+
+    @app.get("/api/v1/healing/suggestions/{suggestion_id}")
+    async def get_healing_suggestion(
+        suggestion_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get detailed info for a healing suggestion."""
+        supervisor = get_supervisor()
+        suggestion = supervisor.db.get_healing_suggestion(suggestion_id)
+        if not suggestion:
+            raise HTTPException(status_code=404, detail=f"Suggestion {suggestion_id} not found")
+        
+        return HealingSuggestionDetail(
+            id=suggestion["id"],
+            review_id=suggestion["review_id"],
+            job_id=suggestion["job_id"],
+            category=suggestion["category"],
+            severity=suggestion["severity"],
+            title=suggestion["title"],
+            description=suggestion["description"],
+            current_state=suggestion.get("current_state"),
+            suggested_change=suggestion.get("suggested_change"),
+            expected_impact=suggestion.get("expected_impact"),
+            affected_files=suggestion.get("affected_files", []),
+            status=suggestion["status"],
+            reviewed_at=suggestion.get("reviewed_at"),
+            reviewed_by=suggestion.get("reviewed_by"),
+            rejection_reason=suggestion.get("rejection_reason"),
+            applied_at=suggestion.get("applied_at"),
+            action_id=suggestion.get("action_id"),
+            created_at=suggestion.get("created_at", ""),
+        ).model_dump()
+
+    @app.post("/api/v1/healing/suggestions/{suggestion_id}/approve")
+    async def approve_healing_suggestion(
+        suggestion_id: int,
+        request: ApproveSuggestionRequest,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Approve a healing suggestion for application."""
+        supervisor = get_supervisor()
+        suggestion = supervisor.db.get_healing_suggestion(suggestion_id)
+        if not suggestion:
+            raise HTTPException(status_code=404, detail=f"Suggestion {suggestion_id} not found")
+        
+        if suggestion["status"] != "pending":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Suggestion is not pending (current status: {suggestion['status']})"
+            )
+        
+        success = supervisor.db.update_healing_suggestion(
+            suggestion_id,
+            status="approved",
+            reviewed_at=datetime.now(),
+            reviewed_by=request.reviewed_by,
+        )
+        
+        return {
+            "success": success,
+            "message": f"Suggestion {suggestion_id} approved",
+            "suggestion_id": suggestion_id,
+        }
+
+    @app.post("/api/v1/healing/suggestions/{suggestion_id}/reject")
+    async def reject_healing_suggestion(
+        suggestion_id: int,
+        request: RejectSuggestionRequest,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Reject a healing suggestion."""
+        supervisor = get_supervisor()
+        suggestion = supervisor.db.get_healing_suggestion(suggestion_id)
+        if not suggestion:
+            raise HTTPException(status_code=404, detail=f"Suggestion {suggestion_id} not found")
+        
+        if suggestion["status"] != "pending":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Suggestion is not pending (current status: {suggestion['status']})"
+            )
+        
+        success = supervisor.db.update_healing_suggestion(
+            suggestion_id,
+            status="rejected",
+            reviewed_at=datetime.now(),
+            reviewed_by=request.reviewed_by,
+            rejection_reason=request.reason,
+        )
+        
+        return {
+            "success": success,
+            "message": f"Suggestion {suggestion_id} rejected",
+            "suggestion_id": suggestion_id,
+        }
+
+    @app.get("/api/v1/healing/actions")
+    async def list_healing_actions(
+        job_id: str | None = Query(None),
+        suggestion_id: int | None = Query(None),
+        status: str | None = Query(None),
+        can_rollback: bool | None = Query(None),
+        limit: int = Query(50, ge=1, le=500),
+        offset: int = Query(0, ge=0),
+        _auth: bool = Depends(verify_token),
+    ):
+        """List healing actions with optional filters."""
+        supervisor = get_supervisor()
+        actions = supervisor.db.get_healing_actions(
+            job_id=job_id,
+            suggestion_id=suggestion_id,
+            status=status,
+            can_rollback=can_rollback,
+            limit=limit,
+            offset=offset,
+        )
+        return {
+            "actions": [
+                HealingActionSummary(
+                    id=a["id"],
+                    suggestion_id=a["suggestion_id"],
+                    job_id=a["job_id"],
+                    action_type=a["action_type"],
+                    status=a["status"],
+                    can_rollback=bool(a.get("can_rollback")),
+                    created_at=a.get("created_at", ""),
+                ).model_dump()
+                for a in actions
+            ],
+            "total": len(actions),
+        }
+
+    @app.get("/api/v1/healing/actions/{action_id}")
+    async def get_healing_action(
+        action_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get detailed info for a healing action."""
+        supervisor = get_supervisor()
+        action = supervisor.db.get_healing_action(action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail=f"Action {action_id} not found")
+        
+        return HealingActionDetail(
+            id=action["id"],
+            suggestion_id=action["suggestion_id"],
+            job_id=action["job_id"],
+            action_type=action["action_type"],
+            file_path=action.get("file_path"),
+            original_content=action.get("original_content"),
+            new_content=action.get("new_content"),
+            command_executed=action.get("command_executed"),
+            status=action["status"],
+            error_message=action.get("error_message"),
+            can_rollback=bool(action.get("can_rollback")),
+            rolled_back_at=action.get("rolled_back_at"),
+            execution_duration_ms=action.get("execution_duration_ms"),
+            ai_session_key=action.get("ai_session_key"),
+            created_at=action.get("created_at", ""),
+        ).model_dump()
+
+    @app.post("/api/v1/healing/actions/{action_id}/rollback")
+    async def rollback_healing_action(
+        action_id: int,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Rollback a healing action (restore original content)."""
+        supervisor = get_supervisor()
+        action = supervisor.db.get_healing_action(action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail=f"Action {action_id} not found")
+        
+        if not action.get("can_rollback"):
+            raise HTTPException(status_code=400, detail="Action cannot be rolled back")
+        
+        if action.get("rolled_back_at"):
+            raise HTTPException(status_code=400, detail="Action already rolled back")
+        
+        if not action.get("original_content") or not action.get("file_path"):
+            raise HTTPException(status_code=400, detail="No original content to restore")
+        
+        # Restore original content
+        file_path = Path(action["file_path"]).expanduser()
+        try:
+            file_path.write_text(action["original_content"])
+        except Exception as e:
+            supervisor.db.update_healing_action(
+                action_id,
+                status="failed",
+                error_message=f"Rollback failed: {e}",
+            )
+            raise HTTPException(status_code=500, detail=f"Rollback failed: {e}")
+        
+        # Update action status
+        supervisor.db.update_healing_action(
+            action_id,
+            status="rolled_back",
+            rolled_back_at=datetime.now(),
+        )
+        
+        # Update suggestion status
+        if action.get("suggestion_id"):
+            supervisor.db.update_healing_suggestion(
+                action["suggestion_id"],
+                status="pending",  # Reset to pending
+            )
+        
+        return {
+            "success": True,
+            "message": f"Action {action_id} rolled back",
+            "action_id": action_id,
+            "file_path": str(file_path),
+        }
+
+    @app.get("/api/v1/jobs/{job_id}/healing/summary")
+    async def get_job_healing_summary(
+        job_id: str,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get healing summary for a job."""
+        supervisor = get_supervisor()
+        
+        last_review = supervisor.db.get_last_healing_review(job_id)
+        pending_suggestions = supervisor.db.get_pending_suggestions_count(job_id=job_id)
+        rollbackable_actions = supervisor.db.get_rollbackable_actions(job_id)
+        
+        return {
+            "job_id": job_id,
+            "last_review": HealingReviewSummary(
+                id=last_review["id"],
+                job_id=last_review["job_id"],
+                started_at=last_review["started_at"],
+                finished_at=last_review.get("finished_at"),
+                status=last_review["status"],
+                runs_analyzed=last_review.get("runs_analyzed", 0),
+                suggestions_count=last_review.get("suggestions_count", 0),
+                auto_applied_count=last_review.get("auto_applied_count", 0),
+                analysis_duration_ms=last_review.get("analysis_duration_ms"),
+            ).model_dump() if last_review else None,
+            "pending_suggestions": pending_suggestions,
+            "rollbackable_actions_count": len(rollbackable_actions),
+        }
+
+    @app.post("/api/v1/healing/trigger")
+    async def trigger_healing_review(
+        request: TriggerReviewRequest,
+        _auth: bool = Depends(verify_token),
+    ):
+        """Manually trigger a healing review for a job."""
+        supervisor = get_supervisor()
+        
+        # Verify job exists
+        job_config = supervisor.jobs.get_job(request.job_id)
+        if not job_config:
+            raise HTTPException(status_code=404, detail=f"Job '{request.job_id}' not found")
+        
+        # Create a new review
+        review_id = supervisor.db.create_healing_review(request.job_id)
+        
+        # TODO: Queue the review for processing by the healing engine
+        # For now, just create the record
+        
+        return {
+            "success": True,
+            "message": f"Healing review triggered for job '{request.job_id}'",
+            "review_id": review_id,
+            "job_id": request.job_id,
+        }
+
+    # =========================================================================
+    # End Self-Healing v2 Endpoints
+    # =========================================================================
 
     @app.delete("/api/v1/runs/{run_id}")
     async def delete_run(
