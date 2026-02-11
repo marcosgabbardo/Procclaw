@@ -967,11 +967,16 @@ Set auto_apply=true only for trivial, low-risk config changes.
             if not isinstance(data, dict):
                 return None, 0, 0
             
-            if job_id not in data:
+            # Handle both formats: {jobs: {id: config}} and {id: config}
+            jobs_dict = data.get("jobs", data)
+            if not isinstance(jobs_dict, dict):
+                return None, 0, 0
+            
+            if job_id not in jobs_dict:
                 return None, 0, 0
             
             # Serialize just this job's config
-            job_section = {job_id: data[job_id]}
+            job_section = {job_id: jobs_dict[job_id]}
             job_yaml = yaml.dump(job_section, default_flow_style=False, sort_keys=False)
             
             # Find line numbers (approximate)
@@ -1012,11 +1017,16 @@ Set auto_apply=true only for trivial, low-risk config changes.
                 # AI might have returned without the key
                 new_config = new_job_data
             
-            # Update only this job
-            original_data[job_id] = new_config
+            # Handle both formats: {jobs: {id: config}} and {id: config}
+            if "jobs" in original_data and isinstance(original_data["jobs"], dict):
+                # Format: jobs: { id: config }
+                original_data["jobs"][job_id] = new_config
+            else:
+                # Format: { id: config }
+                original_data[job_id] = new_config
             
             # Serialize back
-            return yaml.dump(original_data, default_flow_style=False, sort_keys=False)
+            return yaml.dump(original_data, default_flow_style=False, sort_keys=False, allow_unicode=True)
             
         except Exception as e:
             logger.error(f"Failed to merge job section: {e}")

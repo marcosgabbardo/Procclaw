@@ -777,3 +777,63 @@ third:
         assert "second" in parsed
         assert "third" in parsed
         assert parsed["second"]["new_field"] == "value"
+
+    def test_extract_with_jobs_wrapper(self, engine_with_job):
+        """Extract works with jobs.yaml format: jobs: { id: config }."""
+        engine, _, _ = engine_with_job
+        
+        yaml_content = """jobs:
+  job-a:
+    name: Job A
+    cmd: echo a
+  my-job:
+    name: My Job
+    cmd: python3 script.py
+  job-b:
+    name: Job B
+    cmd: echo b
+"""
+        section, _, _ = engine._extract_job_section_from_yaml(yaml_content, "my-job")
+        
+        assert section is not None
+        assert "my-job:" in section
+        assert "My Job" in section
+        assert "job-a" not in section
+        assert "job-b" not in section
+
+    def test_merge_with_jobs_wrapper(self, engine_with_job):
+        """Merge works with jobs.yaml format: jobs: { id: config }."""
+        engine, _, _ = engine_with_job
+        
+        original = """jobs:
+  job-a:
+    name: Job A
+    cmd: echo a
+  my-job:
+    name: My Job
+    cmd: python3 script.py
+  job-b:
+    name: Job B
+    cmd: echo b
+"""
+        modified_section = """my-job:
+  name: My Job (Updated)
+  cmd: python3 script.py
+  timeout: 60
+"""
+        result = engine._merge_job_section_to_yaml(original, "my-job", modified_section)
+        
+        import yaml
+        parsed = yaml.safe_load(result)
+        
+        # Structure should be preserved
+        assert "jobs" in parsed
+        assert len(parsed["jobs"]) == 3
+        
+        # my-job should be updated
+        assert parsed["jobs"]["my-job"]["name"] == "My Job (Updated)"
+        assert parsed["jobs"]["my-job"]["timeout"] == 60
+        
+        # Other jobs should be unchanged
+        assert parsed["jobs"]["job-a"]["name"] == "Job A"
+        assert parsed["jobs"]["job-b"]["name"] == "Job B"
