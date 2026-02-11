@@ -1771,18 +1771,18 @@
                 <!-- Main Content -->
                 <div class="lg:col-span-2 space-y-4">
                     
-                    <!-- Sub-tabs -->
+                    <!-- Sub-tabs (order: Reviews → Suggestions → Actions) -->
                     <div class="flex gap-2 mb-4">
+                        <button @click="healingSubTab = 'reviews'" 
+                            :class="healingSubTab === 'reviews' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                            class="px-4 py-2 rounded-lg text-sm transition">
+                            📋 Reviews
+                        </button>
                         <button @click="healingSubTab = 'suggestions'" 
                             :class="healingSubTab === 'suggestions' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
                             class="px-4 py-2 rounded-lg text-sm transition">
                             💡 Suggestions
                             <span x-show="healingPending > 0" class="ml-1 px-1.5 py-0.5 bg-yellow-500 text-black text-xs rounded-full" x-text="healingPending"></span>
-                        </button>
-                        <button @click="healingSubTab = 'reviews'" 
-                            :class="healingSubTab === 'reviews' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                            class="px-4 py-2 rounded-lg text-sm transition">
-                            📋 Reviews
                         </button>
                         <button @click="healingSubTab = 'actions'" 
                             :class="healingSubTab === 'actions' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
@@ -3384,7 +3384,7 @@
                 authConfig: { enabled: false, token: '', tokenMasked: '', showToken: false },
                 
                 // Self-Healing v2
-                healingSubTab: 'suggestions',
+                healingSubTab: 'reviews',
                 healingJobFilter: '',
                 healingPending: 0,
                 healingReviews: [],
