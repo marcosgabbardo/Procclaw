@@ -1464,12 +1464,34 @@ class ProactiveScheduler:
         schedule = job_config.self_healing.review_schedule
         frequency = schedule.frequency
         
+        # Event-based frequencies are handled by trigger_on_event, not scheduler
+        if frequency in (ReviewFrequency.ON_FAILURE, ReviewFrequency.ON_SLA_BREACH, ReviewFrequency.MANUAL):
+            return False
+        
+        # First verify we're in the correct time window for this frequency
+        # This prevents triggering on wrong day/time even on first check
+        if frequency == ReviewFrequency.DAILY:
+            review_time = datetime.strptime(schedule.time, "%H:%M").time()
+            # Only trigger if we're past the scheduled time
+            if now.time() < review_time:
+                return False
+        elif frequency == ReviewFrequency.WEEKLY:
+            # Check day of week (0=Monday, 6=Sunday)
+            if now.weekday() != schedule.day:
+                return False
+            # Also check time on the correct day
+            review_time = datetime.strptime(schedule.time, "%H:%M").time()
+            if now.time() < review_time:
+                return False
+        
+        # Verify min_runs
+        runs = self.engine.db.get_runs(job_id=job_id, limit=schedule.min_runs + 1)
+        if len(runs) < schedule.min_runs:
+            return False
+        
         last_check = self._last_check.get(job_id)
         if last_check is None:
-            # First check - also verify min_runs
-            runs = self.engine.db.get_runs(job_id=job_id, limit=schedule.min_runs + 1)
-            if len(runs) < schedule.min_runs:
-                return False
+            # First check - we're in the right window and have enough runs
             return True
         
         # Calculate interval based on frequency
@@ -1477,19 +1499,9 @@ class ProactiveScheduler:
             interval = timedelta(hours=1)
         elif frequency == ReviewFrequency.DAILY:
             interval = timedelta(days=1)
-            # Check time of day
-            review_time = datetime.strptime(schedule.time, "%H:%M").time()
-            if now.time() < review_time:
-                return False
         elif frequency == ReviewFrequency.WEEKLY:
             interval = timedelta(weeks=1)
-            # Check day of week
-            if now.weekday() != schedule.day:
-                return False
-        elif frequency == ReviewFrequency.MANUAL:
-            return False
         else:
-            # on_failure, on_sla_breach handled elsewhere
             return False
         
         return now - last_check >= interval
