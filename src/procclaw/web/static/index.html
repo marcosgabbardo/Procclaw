@@ -1939,15 +1939,22 @@
                         <template x-for="action in healingActions" :key="action.id">
                             <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
                                 <div class="flex items-center justify-between">
-                                    <div>
+                                    <div class="flex-1 min-w-0">
                                         <div class="flex items-center gap-2 mb-1">
                                             <span class="px-2 py-0.5 bg-dark-700 rounded text-xs font-mono" x-text="action.action_type"></span>
                                             <span class="text-dark-500" x-text="action.job_id"></span>
+                                            <span class="text-dark-500 text-xs" x-show="action.execution_duration_ms" x-text="(action.execution_duration_ms / 1000).toFixed(1) + 's'"></span>
                                         </div>
-                                        <div class="text-sm text-dark-400" x-show="action.file_path" x-text="action.file_path"></div>
+                                        <div class="text-sm text-dark-400 truncate" x-show="action.file_path" x-text="action.file_path"></div>
                                         <div class="text-xs text-dark-500" x-text="formatDate(action.created_at)"></div>
+                                        <!-- Error preview -->
+                                        <div class="text-xs text-red-400 mt-1 truncate" x-show="action.error_message" x-text="action.error_message"></div>
                                     </div>
-                                    <div class="flex items-center gap-2">
+                                    <div class="flex items-center gap-2 flex-shrink-0">
+                                        <button @click="viewActionDetails(action.id)"
+                                            class="px-2 py-1 bg-dark-700 hover:bg-dark-600 rounded text-xs transition text-dark-300">
+                                            📋 Details
+                                        </button>
                                         <span class="px-2 py-1 rounded text-xs"
                                             :class="{
                                                 'bg-green-500/20 text-green-400': action.status === 'success',
@@ -2082,6 +2089,99 @@
                             </button>
                         </template>
                         <button @click="closeSuggestionModal()" class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition">
+                            Close
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Action Detail Modal -->
+    <div x-show="showActionModal" x-cloak class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" @click.self="closeActionModal()" @keydown.escape.window="showActionModal && closeActionModal()">
+        <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-3xl max-h-[85vh] overflow-hidden" @click.stop>
+            <template x-if="selectedAction">
+                <div>
+                    <!-- Header -->
+                    <div class="p-4 border-b border-dark-600 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <span class="text-2xl">⚡</span>
+                            <div>
+                                <h2 class="text-lg font-medium">Action Details</h2>
+                                <div class="flex items-center gap-2 mt-1">
+                                    <span class="px-2 py-0.5 bg-dark-700 rounded text-xs font-mono" x-text="selectedAction.action_type"></span>
+                                    <span class="px-2 py-0.5 rounded text-xs"
+                                        :class="{
+                                            'bg-green-500/20 text-green-400': selectedAction.status === 'success',
+                                            'bg-red-500/20 text-red-400': selectedAction.status === 'failed',
+                                            'bg-yellow-500/20 text-yellow-400': selectedAction.status === 'rolled_back'
+                                        }" x-text="selectedAction.status"></span>
+                                    <span class="text-dark-500 text-xs" x-text="selectedAction.job_id"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <button @click="closeActionModal()" class="p-2 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white">✕</button>
+                    </div>
+                    
+                    <!-- Content -->
+                    <div class="p-4 space-y-4 overflow-y-auto max-h-[65vh] scrollbar-thin">
+                        <!-- Metadata -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-dark-700/50 rounded-lg p-3">
+                                <div class="text-xs text-dark-400 mb-1">Created</div>
+                                <div class="text-sm" x-text="formatDate(selectedAction.created_at)"></div>
+                            </div>
+                            <div class="bg-dark-700/50 rounded-lg p-3">
+                                <div class="text-xs text-dark-400 mb-1">Duration</div>
+                                <div class="text-sm" x-text="selectedAction.execution_duration_ms ? (selectedAction.execution_duration_ms / 1000).toFixed(2) + 's' : 'N/A'"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- File Path -->
+                        <div x-show="selectedAction.file_path" class="bg-dark-700/50 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">File Path</div>
+                            <div class="text-sm font-mono text-dark-200 break-all" x-text="selectedAction.file_path"></div>
+                        </div>
+                        
+                        <!-- Error Message -->
+                        <div x-show="selectedAction.error_message" class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                            <div class="text-xs text-red-400 mb-1">❌ Error</div>
+                            <div class="text-sm text-red-300 font-mono whitespace-pre-wrap" x-text="selectedAction.error_message"></div>
+                        </div>
+                        
+                        <!-- Original Content -->
+                        <div x-show="selectedAction.original_content">
+                            <div class="text-xs text-dark-400 mb-2">📄 Original Content</div>
+                            <pre class="bg-dark-900 border border-dark-600 rounded-lg p-3 text-xs font-mono overflow-x-auto max-h-48 scrollbar-thin"><code x-text="selectedAction.original_content"></code></pre>
+                        </div>
+                        
+                        <!-- New Content -->
+                        <div x-show="selectedAction.new_content">
+                            <div class="text-xs text-dark-400 mb-2">✨ New Content</div>
+                            <pre class="bg-dark-900 border border-green-500/20 rounded-lg p-3 text-xs font-mono overflow-x-auto max-h-48 scrollbar-thin"><code x-text="selectedAction.new_content"></code></pre>
+                        </div>
+                        
+                        <!-- AI Session -->
+                        <div x-show="selectedAction.ai_session_key" class="bg-dark-700/50 rounded-lg p-3">
+                            <div class="text-xs text-dark-400 mb-1">AI Session</div>
+                            <div class="text-sm font-mono text-dark-300" x-text="selectedAction.ai_session_key"></div>
+                        </div>
+                        
+                        <!-- Rollback Info -->
+                        <div x-show="selectedAction.rolled_back_at" class="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                            <div class="text-xs text-yellow-400 mb-1">↩️ Rolled Back</div>
+                            <div class="text-sm text-yellow-300" x-text="formatDate(selectedAction.rolled_back_at)"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Footer -->
+                    <div class="p-4 border-t border-dark-600 flex justify-end gap-2">
+                        <button x-show="selectedAction.can_rollback && selectedAction.status === 'success'" 
+                            @click="rollbackAction(selectedAction.id); closeActionModal()"
+                            class="px-4 py-2 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded-lg text-sm transition">
+                            ↩️ Rollback
+                        </button>
+                        <button @click="closeActionModal()" class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm transition">
                             Close
                         </button>
                     </div>
@@ -3240,6 +3340,8 @@
                 healingActions: [],
                 selectedSuggestion: null,
                 showSuggestionModal: false,
+                showActionModal: false,
+                selectedAction: null,
                 healingStats: null,
                 applyingSuggestionId: null,  // Track which suggestion is being applied
                 pendingAction: null,  // Show in Actions tab while applying
@@ -5001,6 +5103,27 @@
                 closeSuggestionModal() {
                     this.showSuggestionModal = false;
                     this.selectedSuggestion = null;
+                },
+
+                async viewActionDetails(actionId) {
+                    try {
+                        const res = await fetch(`/api/v1/healing/actions/${actionId}`, {
+                            headers: this.authHeaders
+                        });
+                        if (res.ok) {
+                            this.selectedAction = await res.json();
+                            this.showActionModal = true;
+                        } else {
+                            this.toast('Failed to load action details', 'error');
+                        }
+                    } catch (e) {
+                        this.toast('Failed to load action details', 'error');
+                    }
+                },
+
+                closeActionModal() {
+                    this.showActionModal = false;
+                    this.selectedAction = null;
                 },
 
                 async rollbackAction(actionId) {
