@@ -477,6 +477,46 @@ class TestProactiveScheduler:
         # No runs in DB
         assert scheduler._is_due("test-job", job_config, datetime.now()) is False
     
+    def test_is_due_skips_catchup_when_enabled_today(self, engine, mock_supervisor, temp_db):
+        """Test that first review after restart is skipped if healing was enabled today."""
+        scheduler = ProactiveScheduler(engine, mock_supervisor)
+        
+        now = datetime.now()
+        job_config = MockJobConfig(
+            "test-job",
+            review_schedule=ReviewScheduleConfig(
+                frequency=ReviewFrequency.DAILY,
+                time="03:00",
+                min_runs=0
+            )
+        )
+        # Healing enabled today - should NOT catch-up
+        job_config.self_healing.enabled_at = now.replace(hour=14, minute=0).isoformat()
+        
+        check_time = now.replace(hour=19, minute=0)
+        # First check (no last_check) - should be skipped because enabled today
+        assert scheduler._is_due("test-job", job_config, check_time) is False
+    
+    def test_is_due_allows_review_when_enabled_yesterday(self, engine, mock_supervisor, temp_db):
+        """Test that first review after restart runs if healing was enabled before today."""
+        scheduler = ProactiveScheduler(engine, mock_supervisor)
+        
+        now = datetime.now()
+        job_config = MockJobConfig(
+            "test-job",
+            review_schedule=ReviewScheduleConfig(
+                frequency=ReviewFrequency.DAILY,
+                time="03:00",
+                min_runs=0
+            )
+        )
+        # Healing enabled yesterday - SHOULD run catch-up
+        yesterday = now - timedelta(days=1)
+        job_config.self_healing.enabled_at = yesterday.isoformat()
+        
+        check_time = now.replace(hour=19, minute=0)
+        assert scheduler._is_due("test-job", job_config, check_time) is True
+
     def test_is_due_hourly_interval(self, engine, mock_supervisor, temp_db):
         """Test is_due for hourly frequency."""
         scheduler = ProactiveScheduler(engine, mock_supervisor)

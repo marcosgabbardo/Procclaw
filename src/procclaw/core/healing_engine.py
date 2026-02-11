@@ -1711,7 +1711,19 @@ class ProactiveScheduler:
         
         last_check = self._last_check.get(job_id)
         if last_check is None:
-            # First check - we're in the right window and have enough runs
+            # First check after restart - verify healing was enabled before today's window
+            enabled_at_str = job_config.self_healing.enabled_at
+            if enabled_at_str:
+                try:
+                    enabled_at = datetime.fromisoformat(enabled_at_str)
+                    # Don't run catch-up reviews for the same day healing was enabled
+                    # Only run if enabled_at is before today (i.e., at least one full cycle)
+                    if enabled_at.date() >= now.date():
+                        logger.info(f"Skipping first review for {job_id}: healing enabled today ({enabled_at_str})")
+                        self._last_check[job_id] = now  # Prevent re-check this cycle
+                        return False
+                except (ValueError, TypeError):
+                    pass
             return True
         
         # Calculate interval based on frequency

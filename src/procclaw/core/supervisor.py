@@ -925,6 +925,15 @@ class Supervisor:
                 if key in allowed_fields:
                     config["jobs"][job_id][key] = value
             
+            # Auto-set enabled_at when self_healing is enabled
+            if "self_healing" in updates:
+                sh = updates["self_healing"]
+                if isinstance(sh, dict) and sh.get("enabled"):
+                    # Only set if not already present
+                    existing_sh = config["jobs"][job_id].get("self_healing", {})
+                    if not existing_sh.get("enabled_at"):
+                        config["jobs"][job_id]["self_healing"]["enabled_at"] = datetime.now().isoformat()
+            
             # Track modification time in metadata
             if "_metadata" not in config["jobs"][job_id]:
                 config["jobs"][job_id]["_metadata"] = {}

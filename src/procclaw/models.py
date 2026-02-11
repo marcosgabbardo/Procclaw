@@ -478,6 +478,9 @@ class SelfHealingConfig(BaseModel):
     # Existing: Analysis configuration
     analysis: HealingAnalysisConfig = Field(default_factory=HealingAnalysisConfig)
     
+    # Timestamp when healing was enabled (prevents catch-up reviews after restart)
+    enabled_at: str | None = None
+    
     # Existing: Remediation configuration
     remediation: HealingRemediationConfig = Field(default_factory=HealingRemediationConfig)
     
