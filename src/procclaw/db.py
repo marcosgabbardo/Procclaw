@@ -1452,3 +1452,483 @@ class Database:
             if sql.strip().upper().startswith("INSERT"):
                 return cursor.lastrowid or 0
             return cursor.rowcount
+
+    # =========================================================================
+    # Self-Healing v2 Methods
+    # =========================================================================
+
+    def create_healing_review(
+        self,
+        job_id: str,
+        started_at: datetime | None = None,
+    ) -> int:
+        """Create a new healing review.
+        
+        Returns:
+            ID of the created review
+        """
+        started = started_at or datetime.now()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO healing_reviews (job_id, started_at, status, created_at)
+                VALUES (?, ?, 'running', ?)
+                """,
+                (job_id, started.isoformat(), datetime.now().isoformat()),
+            )
+            return cursor.lastrowid or 0
+
+    def update_healing_review(
+        self,
+        review_id: int,
+        *,
+        status: str | None = None,
+        finished_at: datetime | None = None,
+        runs_analyzed: int | None = None,
+        logs_lines: int | None = None,
+        ai_sessions_count: int | None = None,
+        sla_violations_count: int | None = None,
+        suggestions_count: int | None = None,
+        auto_applied_count: int | None = None,
+        error_message: str | None = None,
+        analysis_duration_ms: int | None = None,
+        ai_tokens_used: int | None = None,
+    ) -> bool:
+        """Update a healing review.
+        
+        Returns:
+            True if review was updated
+        """
+        updates = []
+        params: list = []
+        
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+        if finished_at is not None:
+            updates.append("finished_at = ?")
+            params.append(finished_at.isoformat())
+        if runs_analyzed is not None:
+            updates.append("runs_analyzed = ?")
+            params.append(runs_analyzed)
+        if logs_lines is not None:
+            updates.append("logs_lines = ?")
+            params.append(logs_lines)
+        if ai_sessions_count is not None:
+            updates.append("ai_sessions_count = ?")
+            params.append(ai_sessions_count)
+        if sla_violations_count is not None:
+            updates.append("sla_violations_count = ?")
+            params.append(sla_violations_count)
+        if suggestions_count is not None:
+            updates.append("suggestions_count = ?")
+            params.append(suggestions_count)
+        if auto_applied_count is not None:
+            updates.append("auto_applied_count = ?")
+            params.append(auto_applied_count)
+        if error_message is not None:
+            updates.append("error_message = ?")
+            params.append(error_message)
+        if analysis_duration_ms is not None:
+            updates.append("analysis_duration_ms = ?")
+            params.append(analysis_duration_ms)
+        if ai_tokens_used is not None:
+            updates.append("ai_tokens_used = ?")
+            params.append(ai_tokens_used)
+        
+        if not updates:
+            return False
+        
+        params.append(review_id)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"UPDATE healing_reviews SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+            return cursor.rowcount > 0
+
+    def get_healing_review(self, review_id: int) -> dict | None:
+        """Get a healing review by ID."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM healing_reviews WHERE id = ?",
+                (review_id,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_healing_reviews(
+        self,
+        job_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Get healing reviews with optional filters."""
+        query = "SELECT * FROM healing_reviews WHERE 1=1"
+        params: list = []
+        
+        if job_id:
+            query += " AND job_id = ?"
+            params.append(job_id)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        
+        query += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        with self._connect() as conn:
+            cursor = conn.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_last_healing_review(self, job_id: str) -> dict | None:
+        """Get the most recent healing review for a job."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM healing_reviews 
+                WHERE job_id = ?
+                ORDER BY started_at DESC
+                LIMIT 1
+                """,
+                (job_id,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def create_healing_suggestion(
+        self,
+        review_id: int,
+        job_id: str,
+        category: str,
+        severity: str,
+        title: str,
+        description: str,
+        current_state: str | None = None,
+        suggested_change: str | None = None,
+        expected_impact: str | None = None,
+        affected_files: list[str] | None = None,
+    ) -> int:
+        """Create a new healing suggestion.
+        
+        Returns:
+            ID of the created suggestion
+        """
+        import json
+        affected_files_json = json.dumps(affected_files or [])
+        
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO healing_suggestions 
+                (review_id, job_id, category, severity, title, description,
+                 current_state, suggested_change, expected_impact, affected_files,
+                 status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                (
+                    review_id, job_id, category, severity, title, description,
+                    current_state, suggested_change, expected_impact, affected_files_json,
+                    datetime.now().isoformat(),
+                ),
+            )
+            return cursor.lastrowid or 0
+
+    def update_healing_suggestion(
+        self,
+        suggestion_id: int,
+        *,
+        status: str | None = None,
+        reviewed_at: datetime | None = None,
+        reviewed_by: str | None = None,
+        rejection_reason: str | None = None,
+        applied_at: datetime | None = None,
+        action_id: int | None = None,
+    ) -> bool:
+        """Update a healing suggestion.
+        
+        Returns:
+            True if suggestion was updated
+        """
+        updates = []
+        params: list = []
+        
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+        if reviewed_at is not None:
+            updates.append("reviewed_at = ?")
+            params.append(reviewed_at.isoformat())
+        if reviewed_by is not None:
+            updates.append("reviewed_by = ?")
+            params.append(reviewed_by)
+        if rejection_reason is not None:
+            updates.append("rejection_reason = ?")
+            params.append(rejection_reason)
+        if applied_at is not None:
+            updates.append("applied_at = ?")
+            params.append(applied_at.isoformat())
+        if action_id is not None:
+            updates.append("action_id = ?")
+            params.append(action_id)
+        
+        if not updates:
+            return False
+        
+        params.append(suggestion_id)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"UPDATE healing_suggestions SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+            return cursor.rowcount > 0
+
+    def get_healing_suggestion(self, suggestion_id: int) -> dict | None:
+        """Get a healing suggestion by ID."""
+        import json
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM healing_suggestions WHERE id = ?",
+                (suggestion_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            # Parse affected_files JSON
+            if result.get("affected_files"):
+                result["affected_files"] = json.loads(result["affected_files"])
+            return result
+
+    def get_healing_suggestions(
+        self,
+        job_id: str | None = None,
+        review_id: int | None = None,
+        status: str | None = None,
+        category: str | None = None,
+        severity: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Get healing suggestions with optional filters."""
+        import json
+        query = "SELECT * FROM healing_suggestions WHERE 1=1"
+        params: list = []
+        
+        if job_id:
+            query += " AND job_id = ?"
+            params.append(job_id)
+        if review_id:
+            query += " AND review_id = ?"
+            params.append(review_id)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        if category:
+            query += " AND category = ?"
+            params.append(category)
+        if severity:
+            query += " AND severity = ?"
+            params.append(severity)
+        
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        with self._connect() as conn:
+            cursor = conn.execute(query, params)
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                if result.get("affected_files"):
+                    result["affected_files"] = json.loads(result["affected_files"])
+                results.append(result)
+            return results
+
+    def get_pending_suggestions_count(self, job_id: str | None = None) -> int:
+        """Get count of pending suggestions."""
+        query = "SELECT COUNT(*) FROM healing_suggestions WHERE status = 'pending'"
+        params: list = []
+        
+        if job_id:
+            query += " AND job_id = ?"
+            params.append(job_id)
+        
+        with self._connect() as conn:
+            cursor = conn.execute(query, params)
+            return cursor.fetchone()[0]
+
+    def create_healing_action(
+        self,
+        suggestion_id: int,
+        job_id: str,
+        action_type: str,
+        file_path: str | None = None,
+        original_content: str | None = None,
+        new_content: str | None = None,
+        command_executed: str | None = None,
+        status: str = "success",
+        error_message: str | None = None,
+        execution_duration_ms: int | None = None,
+        ai_session_key: str | None = None,
+    ) -> int:
+        """Create a new healing action.
+        
+        Returns:
+            ID of the created action
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO healing_actions 
+                (suggestion_id, job_id, action_type, file_path, original_content,
+                 new_content, command_executed, status, error_message,
+                 can_rollback, execution_duration_ms, ai_session_key, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    suggestion_id, job_id, action_type, file_path, original_content,
+                    new_content, command_executed, status, error_message,
+                    1 if original_content else 0,  # can_rollback if we have original
+                    execution_duration_ms, ai_session_key, datetime.now().isoformat(),
+                ),
+            )
+            return cursor.lastrowid or 0
+
+    def update_healing_action(
+        self,
+        action_id: int,
+        *,
+        status: str | None = None,
+        error_message: str | None = None,
+        rolled_back_at: datetime | None = None,
+    ) -> bool:
+        """Update a healing action.
+        
+        Returns:
+            True if action was updated
+        """
+        updates = []
+        params: list = []
+        
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+        if error_message is not None:
+            updates.append("error_message = ?")
+            params.append(error_message)
+        if rolled_back_at is not None:
+            updates.append("rolled_back_at = ?")
+            params.append(rolled_back_at.isoformat())
+        
+        if not updates:
+            return False
+        
+        params.append(action_id)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"UPDATE healing_actions SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+            return cursor.rowcount > 0
+
+    def get_healing_action(self, action_id: int) -> dict | None:
+        """Get a healing action by ID."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM healing_actions WHERE id = ?",
+                (action_id,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_healing_actions(
+        self,
+        job_id: str | None = None,
+        suggestion_id: int | None = None,
+        status: str | None = None,
+        can_rollback: bool | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Get healing actions with optional filters."""
+        query = "SELECT * FROM healing_actions WHERE 1=1"
+        params: list = []
+        
+        if job_id:
+            query += " AND job_id = ?"
+            params.append(job_id)
+        if suggestion_id:
+            query += " AND suggestion_id = ?"
+            params.append(suggestion_id)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        if can_rollback is not None:
+            query += " AND can_rollback = ?"
+            params.append(1 if can_rollback else 0)
+        
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        with self._connect() as conn:
+            cursor = conn.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_rollbackable_actions(self, job_id: str) -> list[dict]:
+        """Get actions that can be rolled back for a job."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM healing_actions 
+                WHERE job_id = ? 
+                AND can_rollback = 1 
+                AND rolled_back_at IS NULL
+                AND status = 'success'
+                ORDER BY created_at DESC
+                """,
+                (job_id,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def cleanup_old_healing_data(self, days: int = 90) -> tuple[int, int, int]:
+        """Delete old healing data.
+        
+        Returns:
+            Tuple of (reviews_deleted, suggestions_deleted, actions_deleted)
+        """
+        with self._connect() as conn:
+            # Delete old actions first (FK constraint)
+            cursor = conn.execute(
+                """
+                DELETE FROM healing_actions
+                WHERE suggestion_id IN (
+                    SELECT id FROM healing_suggestions
+                    WHERE created_at < datetime('now', ?)
+                )
+                """,
+                (f"-{days} days",),
+            )
+            actions_deleted = cursor.rowcount
+            
+            # Delete old suggestions
+            cursor = conn.execute(
+                """
+                DELETE FROM healing_suggestions
+                WHERE created_at < datetime('now', ?)
+                """,
+                (f"-{days} days",),
+            )
+            suggestions_deleted = cursor.rowcount
+            
+            # Delete old reviews
+            cursor = conn.execute(
+                """
+                DELETE FROM healing_reviews
+                WHERE created_at < datetime('now', ?)
+                """,
+                (f"-{days} days",),
+            )
+            reviews_deleted = cursor.rowcount
+            
+            return (reviews_deleted, suggestions_deleted, actions_deleted)
