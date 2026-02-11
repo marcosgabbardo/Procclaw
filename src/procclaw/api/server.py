@@ -234,6 +234,7 @@ class HealingReviewSummary(BaseModel):
     suggestions_count: int = 0
     auto_applied_count: int = 0
     analysis_duration_ms: int | None = None
+    error_message: str | None = None
 
 
 class HealingReviewDetail(BaseModel):
@@ -795,6 +796,7 @@ def create_app() -> FastAPI:
                     suggestions_count=r.get("suggestions_count", 0),
                     auto_applied_count=r.get("auto_applied_count", 0),
                     analysis_duration_ms=r.get("analysis_duration_ms"),
+                    error_message=r.get("error_message"),
                 ).model_dump()
                 for r in reviews
             ],

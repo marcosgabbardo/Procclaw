@@ -548,8 +548,9 @@ class HealingEngine:
         
         for run in context.recent_runs[:5]:
             status = "✓" if run.get("exit_code") == 0 else "✗"
+            duration = run.get('duration_seconds') or 0
             prompt += f"- {status} Run {run['id']}: exit={run.get('exit_code')}, "
-            prompt += f"duration={run.get('duration_seconds', 0):.1f}s, "
+            prompt += f"duration={duration:.1f}s, "
             prompt += f"trigger={run.get('trigger')}\n"
         
         if context.log_samples:

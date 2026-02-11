@@ -1875,6 +1875,9 @@
                                             Started: <span x-text="formatDate(review.started_at)"></span>
                                             <span x-show="review.finished_at"> • Finished: <span x-text="formatDate(review.finished_at)"></span></span>
                                         </div>
+                                        <div x-show="review.status === 'failed' && review.error_message" class="text-xs text-red-400 mt-1">
+                                            ⚠️ <span x-text="review.error_message"></span>
+                                        </div>
                                     </div>
                                     <div class="text-right">
                                         <div class="text-sm">
