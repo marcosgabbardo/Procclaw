@@ -2034,6 +2034,66 @@
                         </div>
                     </div>
                     
+                    <!-- SLA Settings -->
+                    <details class="bg-dark-700 rounded-lg">
+                        <summary class="p-3 cursor-pointer text-sm text-dark-300 hover:text-white flex items-center gap-2">
+                            📊 SLA Settings
+                            <span x-show="editJob.sla?.enabled" class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">Enabled</span>
+                        </summary>
+                        <div class="p-4 pt-0 space-y-4">
+                            <div class="flex items-center gap-2">
+                                <input type="checkbox" id="edit-sla-enabled" x-model="editJob.sla.enabled" class="rounded" @change="syncEditFormToYaml()">
+                                <label for="edit-sla-enabled" class="text-sm">Enable SLA Monitoring</label>
+                            </div>
+                            
+                            <div x-show="editJob.sla?.enabled" class="space-y-4">
+                                <div class="grid grid-cols-3 gap-4">
+                                    <div>
+                                        <label class="block text-sm text-dark-400 mb-1">Success Rate Target (%)</label>
+                                        <input type="number" x-model.number="editJob.sla.success_rate" min="0" max="100" step="1" 
+                                            class="w-full bg-dark-600 border border-dark-500 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500" 
+                                            @input="syncEditFormToYaml()">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm text-dark-400 mb-1">Schedule Tolerance (sec)</label>
+                                        <input type="number" x-model.number="editJob.sla.schedule_tolerance" min="0" step="60" 
+                                            class="w-full bg-dark-600 border border-dark-500 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500"
+                                            placeholder="300"
+                                            @input="syncEditFormToYaml()">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm text-dark-400 mb-1">Max Duration (sec)</label>
+                                        <input type="number" x-model.number="editJob.sla.max_duration" min="0" step="60"
+                                            class="w-full bg-dark-600 border border-dark-500 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500"
+                                            placeholder="3600"
+                                            @input="syncEditFormToYaml()">
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm text-dark-400 mb-1">Evaluation Period</label>
+                                        <select x-model="editJob.sla.evaluation_period" class="w-full bg-dark-600 border border-dark-500 rounded-lg px-3 py-2 focus:outline-none" @change="syncEditFormToYaml()">
+                                            <option value="24h">24 hours</option>
+                                            <option value="7d">7 days</option>
+                                            <option value="30d">30 days</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm text-dark-400 mb-1">Alert Threshold (%)</label>
+                                        <input type="number" x-model.number="editJob.sla.alert_threshold" min="0" max="100" step="5"
+                                            class="w-full bg-dark-600 border border-dark-500 rounded-lg px-3 py-2 focus:outline-none focus:border-accent-500"
+                                            placeholder="90"
+                                            @input="syncEditFormToYaml()">
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <input type="checkbox" id="edit-sla-alert" x-model="editJob.sla.alert_on_breach" class="rounded" @change="syncEditFormToYaml()">
+                                    <label for="edit-sla-alert" class="text-sm">Alert on SLA Breach</label>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+                    
                     <!-- Self-Healing Settings -->
                     <details class="bg-dark-700 rounded-lg">
                         <summary class="p-3 cursor-pointer text-sm text-dark-300 hover:text-white flex items-center gap-2">
@@ -2964,6 +3024,15 @@
                                 on_give_up: job.self_healing?.notify?.on_give_up ?? true,
                                 session: job.self_healing?.notify?.session || 'main'
                             }
+                        },
+                        sla: {
+                            enabled: job.sla?.enabled || false,
+                            success_rate: job.sla?.success_rate ?? 95,
+                            schedule_tolerance: job.sla?.schedule_tolerance ?? 300,
+                            max_duration: job.sla?.max_duration ?? null,
+                            evaluation_period: job.sla?.evaluation_period || '7d',
+                            alert_threshold: job.sla?.alert_threshold ?? 90,
+                            alert_on_breach: job.sla?.alert_on_breach ?? true
                         }
                     };
                     this.editMode = 'form';
@@ -3322,6 +3391,17 @@
                         job.tagsStr.split(',').forEach(t => {
                             if (t.trim()) yaml += `    - ${t.trim()}\n`;
                         });
+                    }
+                    // SLA settings
+                    if (job.sla?.enabled) {
+                        yaml += `  sla:\n`;
+                        yaml += `    enabled: true\n`;
+                        if (job.sla.success_rate != null) yaml += `    success_rate: ${job.sla.success_rate}\n`;
+                        if (job.sla.schedule_tolerance != null) yaml += `    schedule_tolerance: ${job.sla.schedule_tolerance}\n`;
+                        if (job.sla.max_duration != null) yaml += `    max_duration: ${job.sla.max_duration}\n`;
+                        if (job.sla.evaluation_period) yaml += `    evaluation_period: "${job.sla.evaluation_period}"\n`;
+                        if (job.sla.alert_threshold != null) yaml += `    alert_threshold: ${job.sla.alert_threshold}\n`;
+                        yaml += `    alert_on_breach: ${job.sla.alert_on_breach ?? true}\n`;
                     }
                     this.editJobYaml = yaml;
                 },
