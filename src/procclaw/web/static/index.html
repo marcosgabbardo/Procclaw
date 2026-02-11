@@ -389,11 +389,11 @@
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-orange-400 text-sm" title="Force Start (bypass queue)">⚡</button>
                                             <button @click="stopJob(job.id)" x-show="job.status === 'running'" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Stop">◼</button>
-                                            <button @click="disableJob(job.id)" x-show="!job.paused" 
+                                            <button @click="disableJob(job.id)" x-show="job.enabled" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Disable">🚫</button>
-                                            <button @click="enableJob(job.id)" x-show="job.paused" 
+                                            <button @click="enableJob(job.id)" x-show="!job.enabled" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Enable">✅</button>
-                                            <button @click="forceRunJob(job.id)" x-show="job.schedule && job.status !== 'running' && !job.paused" 
+                                            <button @click="forceRunJob(job.id)" x-show="job.schedule && job.status !== 'running' && job.enabled" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Run Now">⚡</button>
                                             <button @click="viewLogs(job.id)" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="Logs">📋</button>
@@ -447,9 +447,9 @@
                                 <button @click="startJob(job.id)" x-show="job.status !== 'running' && job.status !== 'disabled' && job.status !== 'queued'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Start">▶</button>
                                 <button @click="forceStartJob(job.id)" x-show="job.status === 'queued'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-orange-400 text-sm" title="Force Start (bypass queue)">⚡</button>
                                 <button @click="stopJob(job.id)" x-show="job.status === 'running'" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Stop">◼</button>
-                                <button @click="disableJob(job.id)" x-show="!job.paused" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Disable">🚫</button>
-                                <button @click="enableJob(job.id)" x-show="job.paused" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Enable">✅</button>
-                                <button @click="forceRunJob(job.id)" x-show="job.schedule && job.status !== 'running' && !job.paused" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Run Now">⚡</button>
+                                <button @click="disableJob(job.id)" x-show="job.enabled" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Disable">🚫</button>
+                                <button @click="enableJob(job.id)" x-show="!job.enabled" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Enable">✅</button>
+                                <button @click="forceRunJob(job.id)" x-show="job.schedule && job.status !== 'running' && job.enabled" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Run Now">⚡</button>
                                 <button @click="viewLogs(job.id)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="Logs">📋</button>
                                 <button @click="deleteJob(job.id)" class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-red-400 text-sm" title="Delete">✕</button>
                             </div>
@@ -2609,13 +2609,13 @@
                 },
 
                 async disableJob(id) {
-                    const res = await this.api(`/jobs/${id}/pause`, 'POST');
+                    const res = await this.api(`/jobs/${id}/disable`, 'POST');
                     this.toast(res.success ? `🚫 Disabled ${id}` : `Failed: ${res.message}`, res.success ? 'success' : 'error');
                     await this.refresh();
                 },
 
                 async enableJob(id) {
-                    const res = await this.api(`/jobs/${id}/resume`, 'POST');
+                    const res = await this.api(`/jobs/${id}/enable`, 'POST');
                     this.toast(res.success ? `✅ Enabled ${id}` : `Failed: ${res.message}`, res.success ? 'success' : 'error');
                     await this.refresh();
                 },
