@@ -1090,30 +1090,54 @@ Set auto_apply=true only for trivial, low-risk config changes.
             else:
                 return {"success": False, "error": f"Job {job_id} not found in jobs.yaml"}
         
+        # Determine file type for appropriate prompt
+        file_ext = file_path_obj.suffix.lower()
+        is_yaml_file = file_ext in ('.yaml', '.yml')
+        is_markdown_file = file_ext in ('.md', '.markdown')
+        
+        # Use larger limit for content (10KB should cover most files)
+        content_limit = 10000
+        truncated = len(content_for_ai) > content_limit
+        content_to_send = content_for_ai[:content_limit]
+        
+        if is_yaml_file:
+            file_type_instruction = "YAML configuration"
+            code_block_type = "yaml"
+        elif is_markdown_file:
+            file_type_instruction = "Markdown document"
+            code_block_type = "markdown"
+        else:
+            file_type_instruction = "file"
+            code_block_type = ""
+        
         # Build prompt for AI to make the change - with STRICT scope restrictions
-        prompt = f"""Apply this change to the configuration.
+        prompt = f"""Apply this change to the {file_type_instruction}.
 
-## CRITICAL SECURITY CONSTRAINT
-You are modifying settings for job `{job_id}` ONLY.
-DO NOT add, remove, or modify any other job or configuration.
-Your output must contain ONLY the configuration for this single job.
+## CRITICAL CONSTRAINTS
+- This file belongs to job `{job_id}`
+- Output the COMPLETE modified file content
+- DO NOT truncate or omit any sections
+- Keep ALL existing content that is not being changed
+- Only modify what is specifically requested
 
-## Job: {job_id}
+## File: {file_path}
+## Type: {file_type_instruction}
 
-### Current Configuration
-```yaml
-{content_for_ai[:3000]}
+### Current Content
+```{code_block_type}
+{content_to_send}
 ```
+{"[TRUNCATED - file continues beyond this point, preserve any content after this]" if truncated else ""}
 
 ### Requested Change
 {suggested_change}
 
 ### Instructions
-1. Apply the requested change to the job `{job_id}` configuration
-2. Output ONLY the modified YAML for this job, no explanations
-3. DO NOT include other jobs - only `{job_id}`
-4. Keep all existing settings that are not being changed
-5. Start your response with ```yaml
+1. Apply ONLY the requested change
+2. Output the COMPLETE file content (not just the changed parts)
+3. DO NOT remove or omit any existing sections
+4. Start your response with ```{code_block_type}
+5. End with ```
 """
         
         try:
@@ -1142,10 +1166,12 @@ Your output must contain ONLY the configuration for this single job.
             
             # Extract new content from response
             import re
-            code_match = re.search(r'```(?:yaml|json|python|sh|bash|markdown|md)?\s*(.*?)\s*```', response, re.DOTALL)
-            if code_match:
-                new_content = code_match.group(1)
-                logger.info("Extracted content from code block")
+            # Find ALL code blocks and use the LARGEST one (most likely to be complete file)
+            code_blocks = re.findall(r'```(?:yaml|json|python|sh|bash|markdown|md|text)?\s*(.*?)\s*```', response, re.DOTALL)
+            if code_blocks:
+                # Use the largest code block (most complete content)
+                new_content = max(code_blocks, key=len)
+                logger.info(f"Extracted content from code block ({len(code_blocks)} blocks found, using largest: {len(new_content)} chars)")
             else:
                 # Try to use the whole response if it looks like file content
                 new_content = response.strip()
@@ -1154,6 +1180,18 @@ Your output must contain ONLY the configuration for this single job.
             if not new_content:
                 logger.warning(f"AI returned empty content. Response: {response[:500]}")
                 return {"success": False, "error": f"AI returned empty content. Response preview: {response[:200]}"}
+            
+            # SAFETY CHECK: Prevent significant content loss (truncation)
+            # Allow up to 20% reduction for cleanup, but flag anything more
+            original_len = len(content_for_ai)
+            new_len = len(new_content)
+            if new_len < original_len * 0.5:  # More than 50% reduction
+                reduction_pct = round((1 - new_len / original_len) * 100)
+                logger.error(f"Content reduction too large: {original_len} -> {new_len} ({reduction_pct}% loss)")
+                return {
+                    "success": False, 
+                    "error": f"Content reduced by {reduction_pct}% ({original_len} -> {new_len} chars). This looks like truncation. Aborting to prevent data loss."
+                }
             
             # For jobs.yaml, merge the job section back into the full file
             final_content = new_content
