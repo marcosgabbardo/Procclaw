@@ -665,5 +665,125 @@ class TestIntegration:
         assert metrics.status in ("healthy", "warning", "critical", "no_data")
 
 
+class TestTrendCalculation:
+    """Tests for trend calculation."""
+    
+    def test_trend_improving(self, basic_job):
+        """Test trend is improving when second half is better."""
+        base = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
+        runs = []
+        
+        # First half: 50% success (2 fail, 2 pass)
+        for i in range(4):
+            runs.append(JobRun(
+                id=i,
+                job_id="test",
+                started_at=base - timedelta(days=6-i),
+                finished_at=base - timedelta(days=6-i) + timedelta(minutes=5),
+                exit_code=1 if i < 2 else 0,
+                duration_seconds=300,
+            ))
+        
+        # Second half: 100% success (4 pass)
+        for i in range(4):
+            runs.append(JobRun(
+                id=i+4,
+                job_id="test",
+                started_at=base - timedelta(days=2-i),
+                finished_at=base - timedelta(days=2-i) + timedelta(minutes=5),
+                exit_code=0,
+                duration_seconds=300,
+            ))
+        
+        metrics = calculate_sla_metrics(
+            "test", basic_job, runs,
+            base - timedelta(days=7),
+            base,
+        )
+        
+        assert metrics.trend == "improving"
+    
+    def test_trend_degrading(self, basic_job):
+        """Test trend is degrading when second half is worse."""
+        base = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
+        runs = []
+        
+        # First half: 100% success
+        for i in range(4):
+            runs.append(JobRun(
+                id=i,
+                job_id="test",
+                started_at=base - timedelta(days=6-i),
+                finished_at=base - timedelta(days=6-i) + timedelta(minutes=5),
+                exit_code=0,
+                duration_seconds=300,
+            ))
+        
+        # Second half: 50% success
+        for i in range(4):
+            runs.append(JobRun(
+                id=i+4,
+                job_id="test",
+                started_at=base - timedelta(days=2-i),
+                finished_at=base - timedelta(days=2-i) + timedelta(minutes=5),
+                exit_code=1 if i < 2 else 0,
+                duration_seconds=300,
+            ))
+        
+        metrics = calculate_sla_metrics(
+            "test", basic_job, runs,
+            base - timedelta(days=7),
+            base,
+        )
+        
+        assert metrics.trend == "degrading"
+    
+    def test_trend_stable(self, basic_job):
+        """Test trend is stable when both halves similar."""
+        base = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
+        runs = []
+        
+        # Both halves: 100% success
+        for i in range(8):
+            runs.append(JobRun(
+                id=i,
+                job_id="test",
+                started_at=base - timedelta(days=7-i),
+                finished_at=base - timedelta(days=7-i) + timedelta(minutes=5),
+                exit_code=0,
+                duration_seconds=300,
+            ))
+        
+        metrics = calculate_sla_metrics(
+            "test", basic_job, runs,
+            base - timedelta(days=7),
+            base,
+        )
+        
+        assert metrics.trend == "stable"
+    
+    def test_trend_few_runs(self, basic_job):
+        """Test trend is stable with few runs."""
+        base = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
+        runs = [
+            JobRun(
+                id=0,
+                job_id="test",
+                started_at=base - timedelta(days=1),
+                finished_at=base - timedelta(days=1) + timedelta(minutes=5),
+                exit_code=0,
+                duration_seconds=300,
+            )
+        ]
+        
+        metrics = calculate_sla_metrics(
+            "test", basic_job, runs,
+            base - timedelta(days=7),
+            base,
+        )
+        
+        assert metrics.trend == "stable"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

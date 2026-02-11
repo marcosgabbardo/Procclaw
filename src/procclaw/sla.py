@@ -427,9 +427,51 @@ def calculate_sla_metrics(
     else:
         metrics.status = "critical"
     
+    # Calculate trend by comparing first half vs second half
+    metrics.trend = _calculate_trend(runs, period_start, period_end)
+    
     metrics.runs = run_details
     
     return metrics
+
+
+def _calculate_trend(
+    runs: list["JobRun"],
+    period_start: datetime,
+    period_end: datetime,
+) -> str:
+    """Calculate trend by comparing first half vs second half of period.
+    
+    Returns:
+        "improving" if second half better than first
+        "degrading" if second half worse than first
+        "stable" if similar or not enough data
+    """
+    if len(runs) < 4:
+        return "stable"  # Need at least 2 runs per half
+    
+    # Split period in half
+    mid_point = period_start + (period_end - period_start) / 2
+    
+    first_half = [r for r in runs if r.started_at < mid_point]
+    second_half = [r for r in runs if r.started_at >= mid_point]
+    
+    if len(first_half) < 2 or len(second_half) < 2:
+        return "stable"  # Not enough data in each half
+    
+    # Calculate success rate for each half
+    first_success = sum(1 for r in first_half if r.exit_code == 0) / len(first_half) * 100
+    second_success = sum(1 for r in second_half if r.exit_code == 0) / len(second_half) * 100
+    
+    # Threshold for significant change: 10%
+    diff = second_success - first_success
+    
+    if diff > 10:
+        return "improving"
+    elif diff < -10:
+        return "degrading"
+    else:
+        return "stable"
 
 
 def calculate_job_sla_score(
