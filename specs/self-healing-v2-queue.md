@@ -164,18 +164,18 @@ E modificar o dequeue para chamar healing engine quando é `healing:*`
 
 Depois podemos evoluir para Opção C se precisar.
 
-## TODO (MVP - Opção A)
+## TODO (MVP - Opção A) ✅ DONE
 
 - [x] Verificar ConcurrencyLimiter API atual (já tem priority!)
-- [ ] Adicionar `asyncio.Semaphore(1)` no HealingEngine
-- [ ] Adicionar método `_has_openclaw_jobs_running()` no HealingEngine
-- [ ] Modificar `run_review()` para:
+- [x] Adicionar `asyncio.Semaphore(1)` no HealingEngine
+- [x] Adicionar método `_get_running_openclaw_jobs()` no HealingEngine
+- [x] Modificar `run_review()` para:
   - Adquirir semáforo
-  - Esperar jobs openclaw terminarem
-  - Rodar review
-  - Liberar semáforo
-- [ ] Passar referência ao supervisor para HealingEngine checar jobs
-- [ ] Testes
+  - Esperar jobs openclaw terminarem (`_wait_for_openclaw_slot`)
+  - Rodar review (`_run_review_internal`)
+  - Liberar semáforo (automático com `async with`)
+- [x] Usar referência ao supervisor para checar jobs
+- [x] Testes (6 novos em TestHealingQueue)
 
 ## Riscos
 

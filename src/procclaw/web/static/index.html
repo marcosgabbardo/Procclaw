@@ -2186,6 +2186,8 @@
                                 class="flex-1 min-w-[80px] py-2 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded-lg transition">🔄 Restart</button>
                             <button @click="viewLogs(selectedJob.id); selectedJob = null"
                                 class="flex-1 min-w-[80px] py-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition">📜 Logs</button>
+                            <button @click="triggerJobHealing(selectedJob.id)" x-show="selectedJob.self_healing?.enabled"
+                                class="flex-1 min-w-[80px] py-2 bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 rounded-lg transition" title="Trigger Self-Healing Review">🧬 Heal</button>
                             <button @click="deleteJob(selectedJob.id)"
                                 class="flex-1 min-w-[80px] py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">🗑️ Delete</button>
                         </div>
@@ -4263,6 +4265,27 @@
                     this.toast(res.success ? `Deleted ${id}` : `Failed: ${res.error}`, res.success ? 'success' : 'error');
                     this.selectedJob = null;
                     await this.refresh();
+                },
+
+                async triggerJobHealing(jobId) {
+                    try {
+                        const res = await fetch('/api/v1/healing/trigger', {
+                            method: 'POST',
+                            headers: { 
+                                'Content-Type': 'application/json',
+                                ...this.authHeaders
+                            },
+                            body: JSON.stringify({ job_id: jobId })
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.success) {
+                            this.toast(`🧬 Healing review triggered for ${jobId}`, 'success');
+                        } else {
+                            this.toast(data.detail || data.message || 'Failed to trigger review', 'error');
+                        }
+                    } catch (e) {
+                        this.toast('Failed to trigger healing review', 'error');
+                    }
                 },
 
                 async toggleJob(id, currentEnabled) {
