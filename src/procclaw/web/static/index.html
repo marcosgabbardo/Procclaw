@@ -1849,6 +1849,18 @@
                                         <h4 class="font-medium text-dark-100" x-text="suggestion.title"></h4>
                                         <p class="text-sm text-dark-400 mt-1" x-text="suggestion.description || ''"></p>
                                         
+                                        <!-- Current State → Suggested Change -->
+                                        <div x-show="suggestion.current_state || suggestion.suggested_change" class="mt-2 text-xs space-y-1">
+                                            <div x-show="suggestion.current_state" class="flex items-start gap-2">
+                                                <span class="text-red-400 font-medium shrink-0">Current:</span>
+                                                <span class="text-dark-400 font-mono" x-text="suggestion.current_state"></span>
+                                            </div>
+                                            <div x-show="suggestion.suggested_change" class="flex items-start gap-2">
+                                                <span class="text-green-400 font-medium shrink-0">Change:</span>
+                                                <span class="text-dark-300 font-mono" x-text="suggestion.suggested_change"></span>
+                                            </div>
+                                        </div>
+                                        
                                         <!-- Affected Files -->
                                         <div x-show="suggestion.affected_files?.length > 0" class="mt-2">
                                             <span class="text-xs text-dark-500">Affected: </span>

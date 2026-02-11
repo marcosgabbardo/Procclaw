@@ -266,6 +266,13 @@ class HealingSuggestionSummary(BaseModel):
     category: str
     severity: str
     title: str
+    description: str = ""
+    current_state: str | None = None
+    suggested_change: str | None = None
+    expected_impact: str | None = None
+    affected_files: list[str] = []
+    proposed_content: str | None = None
+    target_file: str | None = None
     status: str
     created_at: str
 
@@ -877,6 +884,13 @@ def create_app() -> FastAPI:
                     category=s["category"],
                     severity=s["severity"],
                     title=s["title"],
+                    description=s.get("description", ""),
+                    current_state=s.get("current_state"),
+                    suggested_change=s.get("suggested_change"),
+                    expected_impact=s.get("expected_impact"),
+                    affected_files=s.get("affected_files", []),
+                    proposed_content=s.get("proposed_content"),
+                    target_file=s.get("target_file"),
                     status=s["status"],
                     created_at=s.get("created_at", ""),
                 ).model_dump()
