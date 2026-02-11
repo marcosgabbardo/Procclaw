@@ -1792,16 +1792,46 @@
                     </div>
                     
                     <!-- Suggestions Sub-tab -->
-                    <div x-show="healingSubTab === 'suggestions'" class="space-y-3">
-                        <template x-if="healingSuggestions.length === 0">
+                    <div x-show="healingSubTab === 'suggestions'" class="space-y-3"
+                         x-data="{ sugFilter: 'all', sugLimit: 10 }">
+                        
+                        <!-- Filter chips + count -->
+                        <div class="flex items-center justify-between flex-wrap gap-2">
+                            <div class="flex gap-1 flex-wrap">
+                                <button @click="sugFilter = 'all'; sugLimit = 10" 
+                                    :class="sugFilter === 'all' ? 'bg-dark-600 text-white' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                    class="px-2.5 py-1 rounded-full text-xs transition">
+                                    All <span class="ml-1 opacity-60" x-text="healingSuggestions.length"></span>
+                                </button>
+                                <button @click="sugFilter = 'pending'; sugLimit = 10" 
+                                    :class="sugFilter === 'pending' ? 'bg-yellow-500/30 text-yellow-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                    class="px-2.5 py-1 rounded-full text-xs transition">
+                                    ⏳ Pending <span class="ml-1 opacity-60" x-text="healingSuggestions.filter(s => s.status === 'pending').length"></span>
+                                </button>
+                                <button @click="sugFilter = 'applied'; sugLimit = 10" 
+                                    :class="sugFilter === 'applied' ? 'bg-blue-500/30 text-blue-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                    class="px-2.5 py-1 rounded-full text-xs transition">
+                                    ✅ Applied <span class="ml-1 opacity-60" x-text="healingSuggestions.filter(s => s.status === 'applied').length"></span>
+                                </button>
+                                <button @click="sugFilter = 'rejected'; sugLimit = 10" 
+                                    :class="sugFilter === 'rejected' ? 'bg-red-500/30 text-red-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                    class="px-2.5 py-1 rounded-full text-xs transition">
+                                    ✕ Rejected <span class="ml-1 opacity-60" x-text="healingSuggestions.filter(s => s.status === 'rejected').length"></span>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <template x-if="healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).length === 0">
                             <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
                                 <p class="text-4xl mb-3">✨</p>
-                                <p>No suggestions at the moment</p>
+                                <p x-text="sugFilter === 'all' ? 'No suggestions at the moment' : 'No ' + sugFilter + ' suggestions'"></p>
                                 <p class="text-sm mt-1">Everything looks healthy!</p>
                             </div>
                         </template>
                         
-                        <template x-for="suggestion in healingSuggestions" :key="suggestion.id">
+                        <!-- Scrollable container -->
+                        <div class="max-h-[600px] overflow-y-auto space-y-3 pr-1" style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
+                        <template x-for="suggestion in healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).slice(0, sugLimit)" :key="suggestion.id">
                             <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
                                 <div class="flex items-start justify-between gap-4">
                                     <div class="flex-1">
@@ -1887,11 +1917,47 @@
                                 </div>
                             </div>
                         </template>
+                        </div><!-- /scrollable container -->
+                        
+                        <!-- Show more button -->
+                        <div x-show="healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).length > sugLimit" 
+                             class="text-center pt-2">
+                            <button @click="sugLimit += 10" 
+                                class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-dark-200 rounded-lg text-sm transition">
+                                Show more (<span x-text="healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).length - sugLimit"></span> remaining)
+                            </button>
+                        </div>
                     </div>
                     
                     <!-- Reviews Sub-tab -->
-                    <div x-show="healingSubTab === 'reviews'" class="space-y-3">
-                        <template x-if="healingReviews.length === 0">
+                    <div x-show="healingSubTab === 'reviews'" class="space-y-3"
+                         x-data="{ revFilter: 'all', revLimit: 10 }">
+                        
+                        <!-- Filter chips + count -->
+                        <div class="flex items-center gap-1 flex-wrap">
+                            <button @click="revFilter = 'all'; revLimit = 10" 
+                                :class="revFilter === 'all' ? 'bg-dark-600 text-white' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                class="px-2.5 py-1 rounded-full text-xs transition">
+                                All <span class="ml-1 opacity-60" x-text="healingReviews.length"></span>
+                            </button>
+                            <button @click="revFilter = 'completed'; revLimit = 10" 
+                                :class="revFilter === 'completed' ? 'bg-green-500/30 text-green-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                class="px-2.5 py-1 rounded-full text-xs transition">
+                                ✅ Completed <span class="ml-1 opacity-60" x-text="healingReviews.filter(r => r.status === 'completed').length"></span>
+                            </button>
+                            <button @click="revFilter = 'skipped'; revLimit = 10" 
+                                :class="revFilter === 'skipped' ? 'bg-dark-500/30 text-dark-300' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                class="px-2.5 py-1 rounded-full text-xs transition">
+                                ⏭️ Skipped <span class="ml-1 opacity-60" x-text="healingReviews.filter(r => r.status === 'skipped').length"></span>
+                            </button>
+                            <button @click="revFilter = 'failed'; revLimit = 10" 
+                                :class="revFilter === 'failed' ? 'bg-red-500/30 text-red-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                class="px-2.5 py-1 rounded-full text-xs transition">
+                                ❌ Failed <span class="ml-1 opacity-60" x-text="healingReviews.filter(r => r.status === 'failed').length"></span>
+                            </button>
+                        </div>
+                        
+                        <template x-if="healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).length === 0">
                             <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
                                 <p class="text-4xl mb-3">📋</p>
                                 <p>No reviews yet</p>
@@ -1899,7 +1965,8 @@
                             </div>
                         </template>
                         
-                        <template x-for="review in healingReviews" :key="review.id">
+                        <div class="max-h-[600px] overflow-y-auto space-y-3 pr-1" style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
+                        <template x-for="review in healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).slice(0, revLimit)" :key="review.id">
                             <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
                                 <div class="flex items-center justify-between">
                                     <div>
@@ -1932,10 +1999,46 @@
                                 </div>
                             </div>
                         </template>
+                        </div><!-- /scrollable container -->
+                        
+                        <!-- Show more button -->
+                        <div x-show="healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).length > revLimit" 
+                             class="text-center pt-2">
+                            <button @click="revLimit += 10" 
+                                class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-dark-200 rounded-lg text-sm transition">
+                                Show more (<span x-text="healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).length - revLimit"></span> remaining)
+                            </button>
+                        </div>
                     </div>
                     
                     <!-- Actions Sub-tab -->
-                    <div x-show="healingSubTab === 'actions'" class="space-y-3">
+                    <div x-show="healingSubTab === 'actions'" class="space-y-3"
+                         x-data="{ actFilter: 'all', actLimit: 10 }">
+                        
+                        <!-- Filter chips -->
+                        <div class="flex items-center gap-1 flex-wrap">
+                            <button @click="actFilter = 'all'; actLimit = 10" 
+                                :class="actFilter === 'all' ? 'bg-dark-600 text-white' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                class="px-2.5 py-1 rounded-full text-xs transition">
+                                All <span class="ml-1 opacity-60" x-text="healingActions.length"></span>
+                            </button>
+                            <button @click="actFilter = 'success'; actLimit = 10" 
+                                :class="actFilter === 'success' ? 'bg-green-500/30 text-green-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                class="px-2.5 py-1 rounded-full text-xs transition">
+                                ✅ Success <span class="ml-1 opacity-60" x-text="healingActions.filter(a => a.status === 'success').length"></span>
+                            </button>
+                            <button @click="actFilter = 'failed'; actLimit = 10" 
+                                :class="actFilter === 'failed' ? 'bg-red-500/30 text-red-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                class="px-2.5 py-1 rounded-full text-xs transition">
+                                ❌ Failed <span class="ml-1 opacity-60" x-text="healingActions.filter(a => a.status === 'failed').length"></span>
+                            </button>
+                            <button @click="actFilter = 'rolled_back'; actLimit = 10" 
+                                :class="actFilter === 'rolled_back' ? 'bg-orange-500/30 text-orange-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                                class="px-2.5 py-1 rounded-full text-xs transition">
+                                ↩️ Rolled back <span class="ml-1 opacity-60" x-text="healingActions.filter(a => a.status === 'rolled_back').length"></span>
+                            </button>
+                        </div>
+                        
                         <!-- Pending action (currently applying) -->
                         <template x-if="pendingAction">
                             <div class="bg-dark-800 border border-accent-500/50 rounded-xl p-4 animate-pulse-slow">
@@ -1958,15 +2061,16 @@
                             </div>
                         </template>
                         
-                        <template x-if="healingActions.length === 0 && !pendingAction">
+                        <template x-if="healingActions.filter(a => actFilter === 'all' || a.status === actFilter).length === 0 && !pendingAction">
                             <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
                                 <p class="text-4xl mb-3">⚡</p>
-                                <p>No actions taken yet</p>
+                                <p x-text="actFilter === 'all' ? 'No actions taken yet' : 'No ' + actFilter + ' actions'"></p>
                                 <p class="text-sm mt-1">Actions will appear here after suggestions are applied</p>
                             </div>
                         </template>
                         
-                        <template x-for="action in healingActions" :key="action.id">
+                        <div class="max-h-[600px] overflow-y-auto space-y-3 pr-1" style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
+                        <template x-for="action in healingActions.filter(a => actFilter === 'all' || a.status === actFilter).slice(0, actLimit)" :key="action.id">
                             <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
                                 <div class="flex items-center justify-between">
                                     <div class="flex-1 min-w-0">
@@ -2012,6 +2116,16 @@
                                 </div>
                             </div>
                         </template>
+                        </div><!-- /scrollable container -->
+                        
+                        <!-- Show more button -->
+                        <div x-show="healingActions.filter(a => actFilter === 'all' || a.status === actFilter).length > actLimit" 
+                             class="text-center pt-2">
+                            <button @click="actLimit += 10" 
+                                class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-dark-200 rounded-lg text-sm transition">
+                                Show more (<span x-text="healingActions.filter(a => actFilter === 'all' || a.status === actFilter).length - actLimit"></span> remaining)
+                            </button>
+                        </div>
                     </div>
                     
                 </div>
