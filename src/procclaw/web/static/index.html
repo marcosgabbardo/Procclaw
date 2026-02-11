@@ -306,6 +306,19 @@
                                                     </span>
                                                 </div>
                                             </template>
+                                            <!-- SLA -->
+                                            <template x-if="col.id === 'sla'">
+                                                <div class="flex items-center gap-1">
+                                                    <button 
+                                                        @click.stop="openSLAModal(job.id)"
+                                                        class="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium cursor-pointer hover:opacity-80"
+                                                        :class="getSLABadgeClass(job.sla_score)"
+                                                        :title="'Click for SLA details'">
+                                                        <span x-text="getSLAIcon(job.sla_status)"></span>
+                                                        <span x-text="job.sla_score != null ? job.sla_score.toFixed(0) + '%' : '-'"></span>
+                                                    </button>
+                                                </div>
+                                            </template>
                                             <!-- Queue -->
                                             <template x-if="col.id === 'queue'">
                                                 <div class="flex items-center gap-1">
@@ -843,6 +856,158 @@
                 
                 <div class="p-4 border-t border-dark-600 flex justify-end">
                     <button @click="showSessionModal = false" class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- SLA Modal -->
+        <div x-show="showSLAModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="closeSLAModal()">
+            <div class="bg-dark-800 rounded-xl max-w-4xl w-full max-h-[85vh] overflow-hidden flex flex-col">
+                <div class="p-4 border-b border-dark-600 flex items-center justify-between">
+                    <div>
+                        <h2 class="text-lg font-medium">📊 SLA Details</h2>
+                        <div class="text-sm text-dark-400" x-text="slaJobId"></div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <!-- Period selector -->
+                        <div class="flex bg-dark-700 rounded-lg p-1">
+                            <button @click="changeSLAPeriod('24h')" :class="slaPeriod === '24h' ? 'bg-dark-600 text-white' : 'text-dark-400'" class="px-3 py-1 text-sm rounded">24h</button>
+                            <button @click="changeSLAPeriod('7d')" :class="slaPeriod === '7d' ? 'bg-dark-600 text-white' : 'text-dark-400'" class="px-3 py-1 text-sm rounded">7d</button>
+                            <button @click="changeSLAPeriod('30d')" :class="slaPeriod === '30d' ? 'bg-dark-600 text-white' : 'text-dark-400'" class="px-3 py-1 text-sm rounded">30d</button>
+                        </div>
+                        <button @click="closeSLAModal()" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
+                    </div>
+                </div>
+                
+                <!-- Loading state -->
+                <div x-show="slaLoading" class="p-12 text-center">
+                    <div class="animate-spin w-8 h-8 border-2 border-dark-400 border-t-accent-500 rounded-full mx-auto mb-4"></div>
+                    <p class="text-dark-400">Loading SLA data...</p>
+                </div>
+                
+                <!-- Content -->
+                <div x-show="!slaLoading && slaData" class="p-6 overflow-auto flex-1 space-y-6">
+                    <!-- Overall Score -->
+                    <div class="text-center py-4">
+                        <div class="text-6xl font-bold mb-2" :class="getSLABadgeClass(slaData?.overall_score)">
+                            <span x-text="slaData?.overall_score?.toFixed(1)"></span><span class="text-2xl">%</span>
+                        </div>
+                        <div class="flex items-center justify-center gap-2">
+                            <span class="text-2xl" x-text="getSLAIcon(slaData?.status)"></span>
+                            <span class="text-dark-400 uppercase text-sm" x-text="slaData?.status"></span>
+                        </div>
+                    </div>
+                    
+                    <!-- Metrics Cards -->
+                    <div class="grid grid-cols-3 gap-4">
+                        <!-- Success Rate -->
+                        <div class="bg-dark-700 rounded-lg p-4">
+                            <div class="text-sm text-dark-400 mb-2">Success Rate</div>
+                            <div class="text-3xl font-bold" :class="getSLAMetricStatus(slaData?.metrics?.success_rate?.actual, slaData?.metrics?.success_rate?.target)">
+                                <span x-text="slaData?.metrics?.success_rate?.actual?.toFixed(1)"></span>%
+                            </div>
+                            <div class="text-xs text-dark-500 mt-1">
+                                Target: <span x-text="slaData?.metrics?.success_rate?.target"></span>%
+                            </div>
+                            <div class="mt-2 h-2 bg-dark-600 rounded-full overflow-hidden">
+                                <div class="h-full rounded-full" 
+                                    :class="slaData?.metrics?.success_rate?.actual >= slaData?.metrics?.success_rate?.target ? 'bg-green-500' : 'bg-red-500'"
+                                    :style="`width: ${Math.min(slaData?.metrics?.success_rate?.actual || 0, 100)}%`"></div>
+                            </div>
+                            <div class="text-xs text-dark-500 mt-2">
+                                <span x-text="slaData?.metrics?.success_rate?.successful"></span> / <span x-text="slaData?.metrics?.success_rate?.total"></span> runs
+                            </div>
+                        </div>
+                        
+                        <!-- Schedule Adherence -->
+                        <div class="bg-dark-700 rounded-lg p-4">
+                            <div class="text-sm text-dark-400 mb-2">On-Time Start</div>
+                            <div class="text-3xl font-bold" :class="getSLAMetricStatus(slaData?.metrics?.schedule_adherence?.actual, 90)">
+                                <span x-text="slaData?.metrics?.schedule_adherence?.actual?.toFixed(1)"></span>%
+                            </div>
+                            <div class="text-xs text-dark-500 mt-1">
+                                Target: 100%
+                            </div>
+                            <div class="mt-2 h-2 bg-dark-600 rounded-full overflow-hidden">
+                                <div class="h-full rounded-full"
+                                    :class="slaData?.metrics?.schedule_adherence?.actual >= 90 ? 'bg-green-500' : 'bg-yellow-500'"
+                                    :style="`width: ${Math.min(slaData?.metrics?.schedule_adherence?.actual || 0, 100)}%`"></div>
+                            </div>
+                            <div class="text-xs text-dark-500 mt-2">
+                                <span x-text="slaData?.metrics?.schedule_adherence?.on_time"></span> on-time, <span x-text="slaData?.metrics?.schedule_adherence?.late"></span> late
+                            </div>
+                        </div>
+                        
+                        <!-- Duration Compliance -->
+                        <div class="bg-dark-700 rounded-lg p-4">
+                            <div class="text-sm text-dark-400 mb-2">Duration</div>
+                            <div class="text-3xl font-bold" :class="getSLAMetricStatus(slaData?.metrics?.duration_compliance?.actual, 90)">
+                                <span x-text="slaData?.metrics?.duration_compliance?.actual?.toFixed(1)"></span>%
+                            </div>
+                            <div class="text-xs text-dark-500 mt-1">
+                                Max: <span x-text="slaData?.metrics?.duration_compliance?.max_duration_target ? formatDuration(slaData.metrics.duration_compliance.max_duration_target) : 'N/A'"></span>
+                            </div>
+                            <div class="mt-2 h-2 bg-dark-600 rounded-full overflow-hidden">
+                                <div class="h-full rounded-full"
+                                    :class="slaData?.metrics?.duration_compliance?.actual >= 90 ? 'bg-green-500' : 'bg-yellow-500'"
+                                    :style="`width: ${Math.min(slaData?.metrics?.duration_compliance?.actual || 0, 100)}%`"></div>
+                            </div>
+                            <div class="text-xs text-dark-500 mt-2">
+                                Avg: <span x-text="formatDuration(slaData?.metrics?.duration_compliance?.avg_duration)"></span>
+                                • P95: <span x-text="formatDuration(slaData?.metrics?.duration_compliance?.p95_duration)"></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Recent Runs -->
+                    <div>
+                        <div class="text-sm font-medium text-dark-300 mb-3">Recent Runs</div>
+                        <div class="bg-dark-700 rounded-lg overflow-hidden">
+                            <table class="w-full text-sm">
+                                <thead class="bg-dark-600">
+                                    <tr>
+                                        <th class="text-left p-2 text-dark-400 font-medium">Run</th>
+                                        <th class="text-left p-2 text-dark-400 font-medium">Started</th>
+                                        <th class="text-left p-2 text-dark-400 font-medium">Status</th>
+                                        <th class="text-left p-2 text-dark-400 font-medium">On-Time</th>
+                                        <th class="text-left p-2 text-dark-400 font-medium">Duration</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="run in (slaData?.runs || []).slice(0, 10)" :key="run.run_id">
+                                        <tr class="border-t border-dark-600 hover:bg-dark-650">
+                                            <td class="p-2 text-dark-300">#<span x-text="run.run_id"></span></td>
+                                            <td class="p-2 text-dark-400" x-text="new Date(run.started_at).toLocaleString()"></td>
+                                            <td class="p-2">
+                                                <span class="text-xs px-2 py-0.5 rounded-full"
+                                                    :class="run.sla_status === 'pass' ? 'bg-green-500/20 text-green-400' : run.sla_status === 'partial' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'"
+                                                    x-text="run.sla_status"></span>
+                                            </td>
+                                            <td class="p-2">
+                                                <span x-show="run.on_time === true" class="text-green-400">✓</span>
+                                                <span x-show="run.on_time === false" class="text-red-400">✗ +<span x-text="run.delay_seconds ? (run.delay_seconds / 60).toFixed(0) + 'm' : ''"></span></span>
+                                                <span x-show="run.on_time === null" class="text-dark-500">-</span>
+                                            </td>
+                                            <td class="p-2 text-dark-400" x-text="formatDuration(run.duration)"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- Last Breach -->
+                    <div x-show="slaData?.last_breach" class="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+                        <div class="flex items-center gap-2 text-red-400">
+                            <span>⚠️</span>
+                            <span class="font-medium">Last Breach:</span>
+                            <span x-text="slaData?.last_breach ? new Date(slaData.last_breach).toLocaleString() : ''"></span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="p-4 border-t border-dark-600 flex justify-end">
+                    <button @click="closeSLAModal()" class="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm">Close</button>
                 </div>
             </div>
         </div>
@@ -2192,6 +2357,7 @@
                 { id: 'id', label: 'Job', visible: true, sortKey: 'id' },
                 { id: 'type', label: 'Type', visible: true, sortKey: 'type' },
                 { id: 'status', label: 'Status', visible: true, sortKey: 'status' },
+                { id: 'sla', label: 'SLA', visible: true, sortKey: 'sla_score' },
                 { id: 'queue', label: 'Queue', visible: true, sortKey: 'queue' },
                 { id: 'last_run', label: 'Last Run', visible: true, sortKey: 'started_at' },
                 { id: 'next_run', label: 'Next Run', visible: true, sortKey: 'next_run' },
@@ -2236,6 +2402,14 @@
                 healingRun: null,
                 healingDetails: null,
                 healingQueue: null,
+                
+                // SLA
+                showSLAModal: false,
+                slaJobId: null,
+                slaData: null,
+                slaLoading: false,
+                slaPeriod: '7d',
+                slaOverview: null,
                 runLogRun: null,
                 logContent: [],
                 logSource: 'file',
@@ -2450,6 +2624,83 @@
                     }
                 },
 
+                // SLA Functions
+                getSLABadgeClass(score) {
+                    if (score == null) return 'bg-dark-600 text-dark-400';
+                    if (score >= 95) return 'bg-green-500/20 text-green-400';
+                    if (score >= 80) return 'bg-yellow-500/20 text-yellow-400';
+                    return 'bg-red-500/20 text-red-400';
+                },
+
+                getSLAIcon(status) {
+                    switch (status) {
+                        case 'healthy': return '🟢';
+                        case 'warning': return '🟡';
+                        case 'critical': return '🔴';
+                        case 'no_data': return '⚪';
+                        default: return '⚫';
+                    }
+                },
+
+                async loadSLAOverview() {
+                    try {
+                        const data = await this.api('/sla');
+                        this.slaOverview = data;
+                        
+                        // Merge SLA scores into jobs
+                        for (const sla of data.jobs) {
+                            const job = this.jobs.find(j => j.id === sla.job_id);
+                            if (job) {
+                                job.sla_score = sla.overall_score;
+                                job.sla_status = sla.status;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Failed to load SLA overview:', e);
+                    }
+                },
+
+                async openSLAModal(jobId) {
+                    this.slaJobId = jobId;
+                    this.slaData = null;
+                    this.slaLoading = true;
+                    this.showSLAModal = true;
+                    
+                    try {
+                        this.slaData = await this.api(`/jobs/${jobId}/sla?period=${this.slaPeriod}`);
+                    } catch (e) {
+                        this.toast(`Failed to load SLA: ${e.message}`, 'error');
+                    } finally {
+                        this.slaLoading = false;
+                    }
+                },
+
+                async changeSLAPeriod(period) {
+                    this.slaPeriod = period;
+                    if (this.slaJobId) {
+                        await this.openSLAModal(this.slaJobId);
+                    }
+                },
+
+                closeSLAModal() {
+                    this.showSLAModal = false;
+                    this.slaJobId = null;
+                    this.slaData = null;
+                },
+
+                getSLAMetricStatus(actual, target) {
+                    if (actual >= target) return 'text-green-400';
+                    if (actual >= target * 0.9) return 'text-yellow-400';
+                    return 'text-red-400';
+                },
+
+                formatDuration(seconds) {
+                    if (seconds == null) return '-';
+                    if (seconds < 60) return `${seconds.toFixed(0)}s`;
+                    if (seconds < 3600) return `${(seconds / 60).toFixed(1)}m`;
+                    return `${(seconds / 3600).toFixed(1)}h`;
+                },
+
                 buildChain(jobId, visited) {
                     const chain = [];
                     let current = this.jobs.find(j => j.id === jobId);
@@ -2553,6 +2804,9 @@
                             running: this.jobs.filter(j => j.status === 'running').length,
                             failed: this.jobs.filter(j => j.status === 'failed').length,
                         };
+                        
+                        // Load SLA scores for all jobs
+                        await this.loadSLAOverview();
                         
                         if (this.currentTab === 'dlq') await this.loadDlq();
                         if (this.currentTab === 'config') await this.loadAuthConfig();
