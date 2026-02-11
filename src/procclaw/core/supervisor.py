@@ -810,7 +810,10 @@ class Supervisor:
         allowed_fields = {
             "name", "description", "tags", "cmd", "cwd", "env", "enabled",
             "schedule", "run_at", "timezone", "type", "priority", "self_healing",
-            "queue"  # Execution queue for sequential job execution
+            "queue",  # Execution queue for sequential job execution
+            "sla",  # SLA monitoring settings
+            "model",  # OpenClaw model override
+            "thinking",  # OpenClaw thinking level
         }
         
         try:
@@ -1439,6 +1442,44 @@ class Supervisor:
             # Metadata
             "created_at": created_at,
             "updated_at": updated_at,
+            # OpenClaw-specific
+            "model": job.model,
+            "thinking": job.thinking,
+            # SLA settings
+            "sla": {
+                "enabled": job.sla.enabled if job.sla else False,
+                "success_rate": job.sla.success_rate if job.sla else None,
+                "schedule_tolerance": job.sla.schedule_tolerance if job.sla else None,
+                "max_duration": job.sla.max_duration if job.sla else None,
+                "evaluation_period": job.sla.evaluation_period if job.sla else None,
+                "alert_threshold": job.sla.alert_threshold if job.sla else None,
+                "alert_on_breach": job.sla.alert_on_breach if job.sla else None,
+            } if job.sla else None,
+            # Self-healing settings (full config for edit modal)
+            "self_healing": {
+                "enabled": job.self_healing.enabled,
+                "analysis": {
+                    "include_logs": job.self_healing.analysis.include_logs if job.self_healing.analysis else True,
+                    "log_lines": job.self_healing.analysis.log_lines if job.self_healing.analysis else 200,
+                    "include_stderr": job.self_healing.analysis.include_stderr if job.self_healing.analysis else True,
+                    "include_history": job.self_healing.analysis.include_history if job.self_healing.analysis else 5,
+                    "include_config": job.self_healing.analysis.include_config if job.self_healing.analysis else True,
+                } if job.self_healing.analysis else None,
+                "remediation": {
+                    "enabled": job.self_healing.remediation.enabled if job.self_healing.remediation else True,
+                    "max_attempts": job.self_healing.remediation.max_attempts if job.self_healing.remediation else 3,
+                    "allowed_actions": job.self_healing.remediation.allowed_actions if job.self_healing.remediation else ["restart_job"],
+                    "forbidden_paths": job.self_healing.remediation.forbidden_paths if job.self_healing.remediation else [],
+                    "require_approval": job.self_healing.remediation.require_approval if job.self_healing.remediation else False,
+                } if job.self_healing.remediation else None,
+                "notify": {
+                    "on_analysis": job.self_healing.notify.on_analysis if job.self_healing.notify else False,
+                    "on_fix_attempt": job.self_healing.notify.on_fix_attempt if job.self_healing.notify else True,
+                    "on_success": job.self_healing.notify.on_success if job.self_healing.notify else True,
+                    "on_give_up": job.self_healing.notify.on_give_up if job.self_healing.notify else True,
+                    "session": job.self_healing.notify.session if job.self_healing.notify else "main",
+                } if job.self_healing.notify else None,
+            } if job.self_healing else None,
         }
 
     def list_jobs(self) -> list[dict]:

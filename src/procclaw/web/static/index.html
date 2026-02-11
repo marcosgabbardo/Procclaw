@@ -319,7 +319,7 @@
                                                     <button 
                                                         @click.stop="openSLAModal(job.id)"
                                                         class="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium cursor-pointer hover:opacity-80"
-                                                        :class="getSLABadgeClass(job.sla_score)"
+                                                        :class="getSLABadgeClass(job.sla_score, job.sla_status)"
                                                         :title="'Click for SLA details'">
                                                         <span x-text="getSLAIcon(job.sla_status)"></span>
                                                         <span x-text="job.sla_score != null ? job.sla_score.toFixed(0) + '%' : '-'"></span>
@@ -416,6 +416,8 @@
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-green-400 text-sm" title="Enable">✅</button>
                                             <button @click="forceRunJob(job.id)" x-show="job.schedule && job.status !== 'running' && job.enabled" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-purple-400 text-sm" title="Run Now">⚡</button>
+                                            <button @click="viewJobRuns(job.id)" 
+                                                class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-cyan-400 text-sm" title="View Runs">🔍</button>
                                             <button @click="viewLogs(job.id)" 
                                                 class="w-7 h-7 flex items-center justify-center hover:bg-dark-600 rounded text-dark-400 hover:text-blue-400 text-sm" title="Logs">📋</button>
                                             <button @click="deleteJob(job.id)" 
@@ -2519,7 +2521,7 @@
                 authConfig: { enabled: false, token: '', tokenMasked: '', showToken: false },
                 
                 // Forms
-                newJob: { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '' },
+                newJob: { id: '', name: '', description: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '' },
                 newJobYaml: '',
                 createMode: 'form',
                 fullYamlContent: '',
@@ -2703,7 +2705,20 @@
                 },
 
                 // SLA Functions
-                getSLABadgeClass(score) {
+                getSLABadgeClass(scoreOrStatus, status = null) {
+                    // If status is provided, use it (more accurate - based on configured target)
+                    // Otherwise fall back to score-based thresholds
+                    const effectiveStatus = status || (typeof scoreOrStatus === 'string' ? scoreOrStatus : null);
+                    if (effectiveStatus) {
+                        switch (effectiveStatus) {
+                            case 'healthy': return 'bg-green-500/20 text-green-400';
+                            case 'warning': return 'bg-yellow-500/20 text-yellow-400';
+                            case 'critical': return 'bg-red-500/20 text-red-400';
+                            case 'no_data': return 'bg-dark-600 text-dark-400';
+                        }
+                    }
+                    // Fallback to score-based (for backwards compatibility)
+                    const score = typeof scoreOrStatus === 'number' ? scoreOrStatus : null;
                     if (score == null) return 'bg-dark-600 text-dark-400';
                     if (score >= 95) return 'bg-green-500/20 text-green-400';
                     if (score >= 80) return 'bg-yellow-500/20 text-yellow-400';
@@ -2885,6 +2900,18 @@
                 async refresh() {
                     this.loading = true;
                     try {
+                        // Preserve SLA scores during refresh to prevent flicker
+                        const oldScores = {};
+                        for (const job of this.jobs) {
+                            if (job.sla_score != null) {
+                                oldScores[job.id] = { 
+                                    sla_score: job.sla_score, 
+                                    sla_status: job.sla_status, 
+                                    sla_trend: job.sla_trend 
+                                };
+                            }
+                        }
+                        
                         const [healthRes, jobsRes, dlqRes] = await Promise.all([
                             fetch('/health').then(r => r.json()),
                             this.api('/jobs'),
@@ -2896,6 +2923,15 @@
                         this.jobs = jobsRes.jobs || [];
                         this.dlqStats = dlqRes;
                         
+                        // Restore old SLA scores immediately (will be updated by loadSLAOverview)
+                        for (const job of this.jobs) {
+                            if (oldScores[job.id]) {
+                                job.sla_score = oldScores[job.id].sla_score;
+                                job.sla_status = oldScores[job.id].sla_status;
+                                job.sla_trend = oldScores[job.id].sla_trend;
+                            }
+                        }
+                        
                         this.stats = {
                             total: this.jobs.length,
                             running: this.jobs.filter(j => j.status === 'running').length,
@@ -2904,6 +2940,12 @@
                         
                         // Load SLA scores for all jobs
                         await this.loadSLAOverview();
+                        
+                        // Update selectedJob if it exists (keep it in sync after edits)
+                        if (this.selectedJob) {
+                            const updated = this.jobs.find(j => j.id === this.selectedJob.id);
+                            if (updated) this.selectedJob = updated;
+                        }
                         
                         if (this.currentTab === 'dlq') await this.loadDlq();
                         if (this.currentTab === 'config') await this.loadAuthConfig();
@@ -3241,18 +3283,32 @@
                         run_at: this.editJob.type === 'oneshot' ? (this.editJob.run_at || null) : null,
                         tags: this.editJob.tagsStr.split(',').map(t => t.trim()).filter(t => t),
                         queue: this.editJob.queue || null,
+                        // OpenClaw-specific settings
+                        model: this.editJob.type === 'openclaw' ? (this.editJob.model || null) : null,
+                        thinking: this.editJob.type === 'openclaw' ? (this.editJob.thinking || null) : null,
+                        // Self-healing
                         self_healing: this.editJob.self_healing.enabled ? {
                             enabled: true,
                             analysis: this.editJob.self_healing.analysis,
                             remediation: this.editJob.self_healing.remediation,
                             notify: this.editJob.self_healing.notify
+                        } : { enabled: false },
+                        // SLA
+                        sla: this.editJob.sla?.enabled ? {
+                            enabled: true,
+                            success_rate: this.editJob.sla.success_rate,
+                            schedule_tolerance: this.editJob.sla.schedule_tolerance,
+                            max_duration: this.editJob.sla.max_duration,
+                            evaluation_period: this.editJob.sla.evaluation_period,
+                            alert_threshold: this.editJob.sla.alert_threshold,
+                            alert_on_breach: this.editJob.sla.alert_on_breach
                         } : { enabled: false }
                     };
                     
                     const res = await this.api(`/jobs/${this.editJob.id}`, 'PATCH', updates);
                     this.toast(res.success ? `Updated ${this.editJob.id}` : `Failed: ${res.error}`, res.success ? 'success' : 'error');
-                    this.showEditModal = false;
-                    await this.refresh();
+                    await this.refresh();  // Refresh first to get updated data
+                    this.showEditModal = false;  // Then close modal
                 },
 
                 async createJob() {
@@ -3264,6 +3320,7 @@
                     const jobData = {
                         id: this.newJob.id,
                         name: this.newJob.name || this.newJob.id,
+                        description: this.newJob.description || '',
                         cmd: this.newJob.cmd,
                         cwd: this.newJob.cwd || null,
                         type: this.newJob.type,
@@ -3273,6 +3330,9 @@
                         env: this.newJob.env || null,
                         queue: this.newJob.queue || null,
                         enabled: true,
+                        // OpenClaw-specific
+                        model: this.newJob.type === 'openclaw' ? (this.newJob.model || null) : null,
+                        thinking: this.newJob.type === 'openclaw' ? (this.newJob.thinking || null) : null,
                     };
                     
                     try {
@@ -3280,7 +3340,7 @@
                         if (res.success) {
                             this.toast(`Job '${this.newJob.id}' created!`, 'success');
                             this.showCreateModal = false;
-                            this.newJob = { id: '', name: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '' };
+                            this.newJob = { id: '', name: '', description: '', cmd: '', cwd: '', type: 'manual', schedule: '', run_at: '', tags: '', env: '', queue: '', model: '', thinking: '' };
                             this.newJobYaml = '';
                             this.createMode = 'form';
                             await this.refresh();
@@ -3516,6 +3576,13 @@
                     this.selectedLogJob = jobId;
                     this.currentTab = 'logs';
                     this.loadLogs();
+                },
+
+                viewJobRuns(jobId) {
+                    this.runsFilter.job_id = jobId;
+                    this.runsPage = 1;
+                    this.currentTab = 'runs';
+                    this.loadRuns();
                 },
 
                 downloadLogs() {

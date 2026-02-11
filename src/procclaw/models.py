@@ -293,6 +293,75 @@ class HealingStatus(str, Enum):
     AWAITING_APPROVAL = "awaiting_approval"
 
 
+# ============================================================================
+# Self-Healing v2 - New Enums
+# ============================================================================
+
+class HealingMode(str, Enum):
+    """Mode of self-healing operation."""
+    
+    REACTIVE = "reactive"      # Only triggered on job failure
+    PROACTIVE = "proactive"    # Periodic behavior review
+
+
+class ReviewFrequency(str, Enum):
+    """Frequency of proactive healing reviews."""
+    
+    HOURLY = "hourly"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    ON_FAILURE = "on_failure"
+    ON_SLA_BREACH = "on_sla_breach"
+    MANUAL = "manual"
+
+
+class SuggestionCategory(str, Enum):
+    """Category of a healing suggestion."""
+    
+    PERFORMANCE = "performance"
+    COST = "cost"
+    RELIABILITY = "reliability"
+    SECURITY = "security"
+    CONFIG = "config"
+    PROMPT = "prompt"
+    SCRIPT = "script"
+
+
+class SuggestionSeverity(str, Enum):
+    """Severity level of a healing suggestion."""
+    
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class SuggestionStatus(str, Enum):
+    """Status of a healing suggestion."""
+    
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    APPLIED = "applied"
+    FAILED = "failed"
+
+
+class ActionStatus(str, Enum):
+    """Status of a healing action execution."""
+    
+    SUCCESS = "success"
+    FAILED = "failed"
+    ROLLED_BACK = "rolled_back"
+
+
+class ReviewStatus(str, Enum):
+    """Status of a healing review."""
+    
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class HealingAnalysisConfig(BaseModel):
     """Configuration for failure analysis in self-healing."""
     
@@ -325,16 +394,72 @@ class HealingNotifyConfig(BaseModel):
     session: str = "main"
 
 
+# ============================================================================
+# Self-Healing v2 - New Config Models
+# ============================================================================
+
+class ReviewScheduleConfig(BaseModel):
+    """Schedule configuration for proactive healing reviews."""
+    
+    frequency: ReviewFrequency = ReviewFrequency.DAILY
+    time: str = "03:00"  # HH:MM format for daily/weekly
+    day: int = 1  # 0-6 for weekly (0=Sunday)
+    min_runs: int = 5  # Minimum runs since last review to trigger
+
+
+class ReviewScopeConfig(BaseModel):
+    """Scope configuration for what to analyze during healing reviews."""
+    
+    analyze_logs: bool = True
+    analyze_runs: bool = True
+    analyze_ai_sessions: bool = True
+    analyze_sla: bool = True
+    analyze_workflows: bool = True
+    analyze_script: bool = True
+    analyze_prompt: bool = True
+    analyze_config: bool = True
+
+
+class SuggestionBehaviorConfig(BaseModel):
+    """Configuration for how suggestions are handled."""
+    
+    auto_apply: bool = False  # If True, apply suggestions automatically
+    auto_apply_categories: list[str] = Field(default_factory=list)  # Categories to auto-apply even if auto_apply=False
+    min_severity_for_approval: str = "medium"  # Suggestions below this severity auto-apply
+    notify_on_suggestion: bool = True
+    notify_channel: str = "whatsapp"
+
+
 class SelfHealingConfig(BaseModel):
     """Self-healing configuration for a job.
     
     When enabled, failed jobs are automatically analyzed and 
     remediation is attempted based on the configuration.
+    
+    v2 adds proactive mode for periodic behavior reviews.
     """
     
     enabled: bool = False
+    
+    # v2: Mode of operation (reactive=on failure only, proactive=periodic review)
+    mode: HealingMode = HealingMode.REACTIVE
+    
+    # v2: Schedule for proactive reviews
+    review_schedule: ReviewScheduleConfig = Field(default_factory=ReviewScheduleConfig)
+    
+    # v2: What to analyze during reviews
+    review_scope: ReviewScopeConfig = Field(default_factory=ReviewScopeConfig)
+    
+    # v2: How to handle suggestions
+    suggestions: SuggestionBehaviorConfig = Field(default_factory=SuggestionBehaviorConfig)
+    
+    # Existing: Analysis configuration
     analysis: HealingAnalysisConfig = Field(default_factory=HealingAnalysisConfig)
+    
+    # Existing: Remediation configuration
     remediation: HealingRemediationConfig = Field(default_factory=HealingRemediationConfig)
+    
+    # Existing: Notification configuration
     notify: HealingNotifyConfig = Field(default_factory=HealingNotifyConfig)
 
 
@@ -641,3 +766,70 @@ class JobsConfig(BaseModel):
     def get_jobs_by_tag(self, tag: str) -> dict[str, JobConfig]:
         """Get jobs by tag."""
         return {k: v for k, v in self.jobs.items() if tag in v.tags and v.enabled}
+
+
+# ============================================================================
+# Self-Healing v2 - Data Models (for DB rows)
+# ============================================================================
+
+class HealingReview(BaseModel):
+    """Data model for a healing review record."""
+    
+    id: int
+    job_id: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    status: ReviewStatus = ReviewStatus.RUNNING
+    runs_analyzed: int = 0
+    logs_lines: int = 0
+    ai_sessions_count: int = 0
+    sla_violations_count: int = 0
+    suggestions_count: int = 0
+    auto_applied_count: int = 0
+    error_message: str | None = None
+    analysis_duration_ms: int | None = None
+    ai_tokens_used: int | None = None
+    created_at: datetime
+
+
+class HealingSuggestion(BaseModel):
+    """Data model for a healing suggestion record."""
+    
+    id: int
+    review_id: int
+    job_id: str
+    category: SuggestionCategory
+    severity: SuggestionSeverity
+    title: str
+    description: str
+    current_state: str | None = None
+    suggested_change: str | None = None
+    expected_impact: str | None = None
+    affected_files: list[str] = Field(default_factory=list)
+    status: SuggestionStatus = SuggestionStatus.PENDING
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None  # 'auto' or 'human'
+    rejection_reason: str | None = None
+    applied_at: datetime | None = None
+    action_id: int | None = None
+    created_at: datetime
+
+
+class HealingActionRecord(BaseModel):
+    """Data model for a healing action record."""
+    
+    id: int
+    suggestion_id: int
+    job_id: str
+    action_type: str  # 'edit_script', 'edit_prompt', 'edit_config', 'run_command', 'restart_job'
+    file_path: str | None = None
+    original_content: str | None = None
+    new_content: str | None = None
+    command_executed: str | None = None
+    status: ActionStatus = ActionStatus.SUCCESS
+    error_message: str | None = None
+    can_rollback: bool = True
+    rolled_back_at: datetime | None = None
+    execution_duration_ms: int | None = None
+    ai_session_key: str | None = None
+    created_at: datetime

@@ -14,7 +14,7 @@ from procclaw.config import DEFAULT_DB_FILE
 from procclaw.models import JobRun, JobState, JobStatus
 
 # Schema version for migrations
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA_SQL = """
 -- Schema version tracking
@@ -249,6 +249,79 @@ CREATE INDEX IF NOT EXISTS idx_job_results_job_id ON job_results(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_results_workflow_run_id ON job_results(workflow_run_id);
 CREATE INDEX IF NOT EXISTS idx_sla_snapshots_job_id ON job_sla_snapshots(job_id);
 CREATE INDEX IF NOT EXISTS idx_sla_metrics_job_id ON sla_metrics(job_id, period_type);
+
+-- Self-Healing v2 tables
+
+-- Healing reviews (periodic analysis runs)
+CREATE TABLE IF NOT EXISTS healing_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    runs_analyzed INTEGER DEFAULT 0,
+    logs_lines INTEGER DEFAULT 0,
+    ai_sessions_count INTEGER DEFAULT 0,
+    sla_violations_count INTEGER DEFAULT 0,
+    suggestions_count INTEGER DEFAULT 0,
+    auto_applied_count INTEGER DEFAULT 0,
+    error_message TEXT,
+    analysis_duration_ms INTEGER,
+    ai_tokens_used INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Healing suggestions
+CREATE TABLE IF NOT EXISTS healing_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL,
+    job_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    current_state TEXT,
+    suggested_change TEXT,
+    expected_impact TEXT,
+    affected_files TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    reviewed_at TEXT,
+    reviewed_by TEXT,
+    rejection_reason TEXT,
+    applied_at TEXT,
+    action_id INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (review_id) REFERENCES healing_reviews(id)
+);
+
+-- Healing actions (executed changes)
+CREATE TABLE IF NOT EXISTS healing_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    suggestion_id INTEGER NOT NULL,
+    job_id TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    file_path TEXT,
+    original_content TEXT,
+    new_content TEXT,
+    command_executed TEXT,
+    status TEXT NOT NULL DEFAULT 'success',
+    error_message TEXT,
+    can_rollback INTEGER DEFAULT 1,
+    rolled_back_at TEXT,
+    execution_duration_ms INTEGER,
+    ai_session_key TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (suggestion_id) REFERENCES healing_suggestions(id)
+);
+
+-- Healing indexes
+CREATE INDEX IF NOT EXISTS idx_healing_reviews_job ON healing_reviews(job_id);
+CREATE INDEX IF NOT EXISTS idx_healing_reviews_started ON healing_reviews(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_healing_suggestions_job ON healing_suggestions(job_id);
+CREATE INDEX IF NOT EXISTS idx_healing_suggestions_status ON healing_suggestions(status);
+CREATE INDEX IF NOT EXISTS idx_healing_suggestions_created ON healing_suggestions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_healing_actions_job ON healing_actions(job_id);
+CREATE INDEX IF NOT EXISTS idx_healing_actions_suggestion ON healing_actions(suggestion_id);
 """
 
 
@@ -479,6 +552,85 @@ class Database:
                     conn.execute(f"ALTER TABLE job_runs ADD COLUMN {col_name} {col_type}")
                 except sqlite3.OperationalError:
                     pass
+        
+        if from_version < 11 and to_version >= 11:
+            # Migration to version 11: Add Self-Healing v2 tables
+            logger.info("Migrating to version 11: Adding Self-Healing v2 tables")
+            
+            # Table for healing reviews (periodic analysis runs)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS healing_reviews (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    runs_analyzed INTEGER DEFAULT 0,
+                    logs_lines INTEGER DEFAULT 0,
+                    ai_sessions_count INTEGER DEFAULT 0,
+                    sla_violations_count INTEGER DEFAULT 0,
+                    suggestions_count INTEGER DEFAULT 0,
+                    auto_applied_count INTEGER DEFAULT 0,
+                    error_message TEXT,
+                    analysis_duration_ms INTEGER,
+                    ai_tokens_used INTEGER,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_healing_reviews_job ON healing_reviews(job_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_healing_reviews_started ON healing_reviews(started_at DESC)")
+            
+            # Table for healing suggestions
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS healing_suggestions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    review_id INTEGER NOT NULL,
+                    job_id TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    current_state TEXT,
+                    suggested_change TEXT,
+                    expected_impact TEXT,
+                    affected_files TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    reviewed_at TEXT,
+                    reviewed_by TEXT,
+                    rejection_reason TEXT,
+                    applied_at TEXT,
+                    action_id INTEGER,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (review_id) REFERENCES healing_reviews(id)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_healing_suggestions_job ON healing_suggestions(job_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_healing_suggestions_status ON healing_suggestions(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_healing_suggestions_created ON healing_suggestions(created_at DESC)")
+            
+            # Table for healing actions (executed changes)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS healing_actions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    suggestion_id INTEGER NOT NULL,
+                    job_id TEXT NOT NULL,
+                    action_type TEXT NOT NULL,
+                    file_path TEXT,
+                    original_content TEXT,
+                    new_content TEXT,
+                    command_executed TEXT,
+                    status TEXT NOT NULL DEFAULT 'success',
+                    error_message TEXT,
+                    can_rollback INTEGER DEFAULT 1,
+                    rolled_back_at TEXT,
+                    execution_duration_ms INTEGER,
+                    ai_session_key TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (suggestion_id) REFERENCES healing_suggestions(id)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_healing_actions_job ON healing_actions(job_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_healing_actions_suggestion ON healing_actions(suggestion_id)")
         
         conn.execute("UPDATE schema_version SET version = ?", (to_version,))
 

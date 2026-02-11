@@ -124,6 +124,12 @@ class JobSummary(BaseModel):
     # Execution queue
     queue: str | None = None
     queue_status: dict | None = None
+    # OpenClaw-specific
+    model: str | None = None
+    thinking: str | None = None
+    # SLA and self-healing (for edit modal)
+    sla: dict | None = None
+    self_healing: dict | None = None
 
 
 class JobDetail(JobSummary):
@@ -305,6 +311,10 @@ def create_app() -> FastAPI:
                     run_at=j.get("run_at"),
                     queue=j.get("queue"),
                     queue_status=j.get("queue_status"),
+                    model=j.get("model"),
+                    thinking=j.get("thinking"),
+                    sla=j.get("sla"),
+                    self_healing=j.get("self_healing"),
                 )
                 for j in jobs
             ],
@@ -370,6 +380,14 @@ def create_app() -> FastAPI:
                 job_config["env"] = job_data["env"]
         if job_data.get("queue"):
             job_config["queue"] = job_data["queue"]
+        if job_data.get("model"):
+            job_config["model"] = job_data["model"]
+        if job_data.get("thinking"):
+            job_config["thinking"] = job_data["thinking"]
+        if job_data.get("sla"):
+            job_config["sla"] = job_data["sla"]
+        if job_data.get("self_healing"):
+            job_config["self_healing"] = job_data["self_healing"]
         
         # Add metadata
         job_config["_metadata"] = {
@@ -766,6 +784,10 @@ def create_app() -> FastAPI:
             timeout_seconds=job_status.get("timeout_seconds"),
             queue=job_status.get("queue"),
             queue_status=job_status.get("queue_status"),
+            model=job_status.get("model"),
+            thinking=job_status.get("thinking"),
+            sla=job_status.get("sla"),
+            self_healing=job_status.get("self_healing"),
         )
 
     @app.post("/api/v1/jobs/{job_id}/start", response_model=ActionResponse)
