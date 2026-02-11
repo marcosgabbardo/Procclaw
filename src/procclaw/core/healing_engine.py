@@ -532,11 +532,23 @@ class HealingEngine:
         
         # Build analysis prompt
         prompt = self._build_analysis_prompt(context)
+        logger.info(f"Built analysis prompt: {len(prompt)} chars")
         
         # Call OpenClaw for analysis
         try:
             result = await self._call_openclaw_analysis(prompt)
+            logger.info(f"OpenClaw returned: {len(result)} chars")
+            
+            # Save raw response for debugging
+            try:
+                debug_path = Path.home() / ".procclaw" / "logs" / "last_healing_response.txt"
+                debug_path.write_text(result)
+                logger.debug(f"Saved AI response to {debug_path}")
+            except Exception:
+                pass
+            
             suggestions = self._parse_ai_response(result, config)
+            logger.info(f"Parsed {len(suggestions)} suggestions from AI response")
             return suggestions
         except Exception as e:
             logger.error(f"AI analysis failed: {e}")
@@ -630,10 +642,15 @@ Set auto_apply=true only for trivial, low-risk config changes.
         """Call OpenClaw CLI for analysis."""
         
         try:
-            # Use openclaw one-shot for analysis
+            # Use openclaw agent --local for one-shot analysis
+            # Generate unique session id to avoid conflicts
+            import uuid
+            session_id = f"procclaw-healing-{uuid.uuid4().hex[:8]}"
+            
             proc = await asyncio.create_subprocess_exec(
-                "openclaw", "run",
-                "--model", "sonnet",
+                "openclaw", "agent",
+                "--local",
+                "--session-id", session_id,
                 "--message", prompt,
                 "--timeout", "120",
                 stdout=asyncio.subprocess.PIPE,
@@ -647,9 +664,12 @@ Set auto_apply=true only for trivial, low-risk config changes.
             
             if proc.returncode != 0:
                 logger.warning(f"OpenClaw analysis returned {proc.returncode}")
-                logger.debug(f"stderr: {stderr.decode()[:500]}")
+                logger.warning(f"stderr: {stderr.decode()[:500]}")
             
-            return stdout.decode()
+            result = stdout.decode()
+            logger.info(f"OpenClaw stdout: {len(result)} chars, stderr: {len(stderr)} chars")
+            
+            return result
             
         except asyncio.TimeoutError:
             logger.error("OpenClaw analysis timed out")
