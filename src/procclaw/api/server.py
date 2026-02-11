@@ -2198,6 +2198,66 @@ def create_app() -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to save prompt: {e}")
 
+    # Session Messages Backfill Endpoint
+
+    @app.post("/api/v1/admin/backfill-sessions")
+    async def backfill_session_messages(
+        _auth: bool = Depends(verify_token),
+    ):
+        """Backfill session_messages from transcript files for runs that don't have it.
+        
+        This migrates existing runs to use the new SQLite-persisted session data.
+        """
+        import json
+        from pathlib import Path
+        
+        supervisor = get_supervisor()
+        
+        # Get all runs
+        runs = supervisor.db.get_runs(limit=10000)
+        
+        backfilled = 0
+        failed = 0
+        skipped = 0
+        
+        for run in runs:
+            # Skip if already has session_messages
+            if run.session_messages:
+                skipped += 1
+                continue
+            
+            # Skip if no transcript path
+            if not run.session_transcript:
+                continue
+            
+            transcript_path = Path(run.session_transcript)
+            if not transcript_path.exists():
+                continue
+            
+            try:
+                messages = []
+                with open(transcript_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            msg = json.loads(line)
+                            messages.append(msg)
+                
+                if messages:
+                    run.session_messages = json.dumps(messages)
+                    supervisor.db.update_run(run)
+                    backfilled += 1
+            except Exception as e:
+                failed += 1
+        
+        return {
+            "success": True,
+            "backfilled": backfilled,
+            "failed": failed,
+            "skipped": skipped,
+            "message": f"Backfilled {backfilled} runs with session messages"
+        }
+
     return app
 
 
