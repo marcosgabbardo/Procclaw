@@ -887,12 +887,25 @@ Set auto_apply=true only for trivial, low-risk config changes.
         except Exception as e:
             logger.error(f"Failed to apply suggestion {suggestion_id}: {e}")
             
+            # Record failed action even for exceptions
+            duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            action_id = self.db.create_healing_action(
+                suggestion_id=suggestion_id,
+                job_id=job_id,
+                action_type=action_type,
+                file_path=affected_files[0] if affected_files else None,
+                status="failed",
+                error_message=str(e),
+                execution_duration_ms=duration_ms,
+            )
+            
             self.db.update_healing_suggestion(
                 suggestion_id,
                 status="failed",
+                action_id=action_id,
             )
             
-            return {"success": False, "error": str(e)}
+            return {"success": False, "action_id": action_id, "error": str(e)}
     
     def _validate_file_for_job(self, job_id: str, file_path: str) -> tuple[bool, str | None]:
         """Validate that a file belongs to a specific job.
