@@ -133,6 +133,13 @@
                         <span class="text-dark-300 tabular-nums" x-text="stats.total"></span>
                         <span class="text-dark-400">total</span>
                     </div>
+                    <!-- SLA Summary -->
+                    <div class="flex items-center gap-2" x-show="slaOverview">
+                        <span class="text-xs px-2 py-0.5 rounded-full" 
+                            :class="slaOverview?.critical > 0 ? 'bg-red-500/20 text-red-400' : slaOverview?.warning > 0 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-green-500/20 text-green-400'"
+                            x-text="slaOverview?.critical > 0 ? '🔴 ' + slaOverview.critical + ' critical' : slaOverview?.warning > 0 ? '🟡 ' + slaOverview.warning + ' warning' : '🟢 SLA OK'">
+                        </span>
+                    </div>
                 </div>
                 <div class="h-4 w-px bg-dark-600 hidden md:block"></div>
                 <div class="flex items-center gap-2" x-show="health.status === 'healthy'">
