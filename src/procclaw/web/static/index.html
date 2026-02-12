@@ -160,7 +160,7 @@
     </header>
 
     <!-- Navigation Tabs -->
-    <nav class="bg-dark-800 border-b border-dark-600">
+    <nav x-show="!selectedJob" class="bg-dark-800 border-b border-dark-600">
         <div class="max-w-[95vw] mx-auto px-4">
             <div class="flex gap-1">
                 <button @click="currentTab = 'jobs'" 
@@ -210,7 +210,7 @@
     </nav>
 
     <!-- Main Content -->
-    <main class="max-w-[95vw] mx-auto px-4 py-6 pb-16">
+    <main x-show="!selectedJob" class="max-w-[95vw] mx-auto px-4 py-6 pb-16">
         
         <!-- Jobs Tab -->
         <div x-show="currentTab === 'jobs'" x-cloak>
@@ -1751,429 +1751,365 @@
 
         <!-- Self-Healing Tab -->
         <div x-show="currentTab === 'healing'" x-cloak>
-            <div class="grid lg:grid-cols-3 gap-6">
-                
-                <!-- Overview Panel -->
-                <div class="lg:col-span-1 space-y-4">
-                    <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
-                        <h3 class="font-medium mb-4">🧬 Healing Overview</h3>
-                        
-                        <!-- Stats -->
-                        <div class="space-y-3">
-                            <div class="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
-                                <span class="text-dark-400">Pending Suggestions</span>
-                                <span class="text-xl font-semibold" :class="healingPending > 0 ? 'text-yellow-400' : 'text-dark-300'" x-text="healingPending"></span>
-                            </div>
-                            <div class="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
-                                <span class="text-dark-400">Recent Reviews</span>
-                                <span class="text-xl font-semibold text-dark-300" x-text="healingReviews.length"></span>
-                            </div>
-                            <div class="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
-                                <span class="text-dark-400">Rollbackable Actions</span>
-                                <span class="text-xl font-semibold text-dark-300" x-text="healingActions.filter(a => a.can_rollback && !a.rolled_back_at).length"></span>
-                            </div>
-                        </div>
-                        
-                        <!-- Filter by Job -->
-                        <div class="mt-4">
-                            <label class="text-sm text-dark-400">Filter by Job</label>
-                            <select x-model="healingJobFilter" @change="loadHealingData()"
-                                class="w-full mt-1 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm">
-                                <option value="">All Jobs</option>
-                                <template x-for="job in jobs" :key="job.id">
-                                    <option :value="job.id" x-text="job.name || job.id"></option>
-                                </template>
-                            </select>
-                        </div>
-                        
-                        <!-- Trigger Review -->
-                        <div class="mt-4">
-                            <button @click="triggerHealingReview()" 
-                                :disabled="!healingJobFilter"
-                                :class="healingJobFilter ? 'bg-accent-500 hover:bg-accent-600' : 'bg-dark-600 cursor-not-allowed'"
-                                class="w-full py-2 text-white rounded-lg text-sm transition">
-                                ⚡ Trigger Review
-                            </button>
-                            <p class="mt-1 text-xs text-dark-500" x-show="!healingJobFilter">Select a job to trigger a review</p>
-                        </div>
+            
+            <!-- Stats Bar (horizontal) -->
+            <div class="flex items-center gap-3 mb-4 flex-wrap">
+                <!-- Stats chips -->
+                <div class="flex items-center gap-1.5 px-3 py-1.5 bg-dark-800 border border-dark-600 rounded-lg text-sm">
+                    <span class="text-dark-400">Pending</span>
+                    <span class="font-semibold" :class="healingPending > 0 ? 'text-yellow-400' : 'text-dark-300'" x-text="healingPending"></span>
+                </div>
+                <div class="flex items-center gap-1.5 px-3 py-1.5 bg-dark-800 border border-dark-600 rounded-lg text-sm">
+                    <span class="text-dark-400">Reviews</span>
+                    <span class="font-semibold text-dark-200" x-text="healingReviews.length"></span>
+                </div>
+                <div class="flex items-center gap-1.5 px-3 py-1.5 bg-dark-800 border border-dark-600 rounded-lg text-sm">
+                    <span class="text-dark-400">Rollbackable</span>
+                    <span class="font-semibold text-dark-200" x-text="healingActions.filter(a => a.can_rollback && !a.rolled_back_at).length"></span>
+                </div>
+                <div x-show="healingStats" class="flex items-center gap-1.5 px-3 py-1.5 bg-dark-800 border border-dark-600 rounded-lg text-sm">
+                    <span class="text-dark-400">Total</span>
+                    <span class="font-semibold text-dark-200" x-text="healingStats?.reviews?.total || 0"></span>
+                    <span class="text-dark-500 mx-0.5">|</span>
+                    <span class="text-green-400 text-xs" x-text="'✅' + (healingStats?.reviews?.completed || 0)"></span>
+                    <span class="text-blue-400 text-xs" x-text="'📦' + (healingStats?.suggestions?.applied || 0)"></span>
+                    <span class="text-dark-500 text-xs" x-text="'✕' + (healingStats?.suggestions?.rejected || 0)"></span>
+                </div>
+                <!-- Category breakdown inline -->
+                <template x-if="healingStats?.by_category && Object.keys(healingStats.by_category).length > 0">
+                    <div class="flex items-center gap-1">
+                        <template x-for="(count, cat) in (healingStats?.by_category || {})" :key="cat">
+                            <span class="px-2 py-0.5 bg-dark-700 rounded text-xs text-dark-300">
+                                <span x-text="cat"></span>: <span x-text="count"></span>
+                            </span>
+                        </template>
                     </div>
-                    
-                    <!-- Global Stats (when available) -->
-                    <div x-show="healingStats" class="bg-dark-800 border border-dark-600 rounded-xl p-4">
-                        <h3 class="font-medium mb-3">📈 All-Time Stats</h3>
-                        
-                        <div class="grid grid-cols-2 gap-2 text-sm">
-                            <div class="flex justify-between">
-                                <span class="text-dark-400">Total Reviews</span>
-                                <span x-text="healingStats?.reviews?.total || 0"></span>
-                            </div>
-                            <div class="flex justify-between">
-                                <span class="text-dark-400">Completed</span>
-                                <span class="text-green-400" x-text="healingStats?.reviews?.completed || 0"></span>
-                            </div>
-                            <div class="flex justify-between">
-                                <span class="text-dark-400">Applied</span>
-                                <span class="text-blue-400" x-text="healingStats?.suggestions?.applied || 0"></span>
-                            </div>
-                            <div class="flex justify-between">
-                                <span class="text-dark-400">Rejected</span>
-                                <span class="text-dark-500" x-text="healingStats?.suggestions?.rejected || 0"></span>
-                            </div>
-                        </div>
-                        
-                        <!-- Category breakdown -->
-                        <div x-show="healingStats?.by_category && Object.keys(healingStats.by_category).length > 0" class="mt-3 pt-3 border-t border-dark-700">
-                            <h4 class="text-xs text-dark-500 mb-2">By Category</h4>
-                            <div class="flex flex-wrap gap-1">
-                                <template x-for="(count, cat) in (healingStats?.by_category || {})" :key="cat">
-                                    <span class="px-2 py-0.5 bg-dark-700 rounded text-xs">
-                                        <span x-text="cat"></span>: <span x-text="count"></span>
-                                    </span>
+                </template>
+                
+                <!-- Spacer -->
+                <div class="flex-1"></div>
+                
+                <!-- Filter + Trigger -->
+                <select x-model="healingJobFilter" @change="loadHealingData()"
+                    class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-1.5 text-sm min-w-[180px]">
+                    <option value="">All Jobs</option>
+                    <template x-for="job in jobs" :key="job.id">
+                        <option :value="job.id" x-text="job.name || job.id"></option>
+                    </template>
+                </select>
+                <button @click="triggerHealingReview()" 
+                    :disabled="!healingJobFilter"
+                    :class="healingJobFilter ? 'bg-accent-500 hover:bg-accent-600 text-white' : 'bg-dark-600 text-dark-400 cursor-not-allowed'"
+                    class="px-4 py-1.5 rounded-lg text-sm transition font-medium">
+                    ⚡ Trigger Review
+                </button>
+            </div>
+            
+            <!-- Sub-tabs -->
+            <div class="flex gap-2 mb-4">
+                <button @click="healingSubTab = 'reviews'" 
+                    :class="healingSubTab === 'reviews' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                    class="px-4 py-2 rounded-lg text-sm transition">
+                    📋 Reviews
+                </button>
+                <button @click="healingSubTab = 'suggestions'" 
+                    :class="healingSubTab === 'suggestions' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                    class="px-4 py-2 rounded-lg text-sm transition">
+                    💡 Suggestions
+                    <span x-show="healingPending > 0" class="ml-1 px-1.5 py-0.5 bg-yellow-500 text-black text-xs rounded-full" x-text="healingPending"></span>
+                </button>
+                <button @click="healingSubTab = 'actions'" 
+                    :class="healingSubTab === 'actions' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                    class="px-4 py-2 rounded-lg text-sm transition">
+                    ⚡ Actions
+                </button>
+            </div>
+            
+            <!-- Reviews Sub-tab (full width table) -->
+            <div x-show="healingSubTab === 'reviews'" class="space-y-3"
+                 x-data="{ revFilter: 'all', revLimit: 20 }">
+                
+                <!-- Filter chips -->
+                <div class="flex items-center gap-1 flex-wrap">
+                    <button @click="revFilter = 'all'; revLimit = 20" 
+                        :class="revFilter === 'all' ? 'bg-dark-600 text-white' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                        class="px-2.5 py-1 rounded-full text-xs transition">
+                        All <span class="ml-1 opacity-60" x-text="healingReviews.length"></span>
+                    </button>
+                    <button @click="revFilter = 'completed'; revLimit = 20" 
+                        :class="revFilter === 'completed' ? 'bg-green-500/30 text-green-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                        class="px-2.5 py-1 rounded-full text-xs transition">
+                        ✅ Completed <span class="ml-1 opacity-60" x-text="healingReviews.filter(r => r.status === 'completed').length"></span>
+                    </button>
+                    <button @click="revFilter = 'skipped'; revLimit = 20" 
+                        :class="revFilter === 'skipped' ? 'bg-dark-500/30 text-dark-300' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                        class="px-2.5 py-1 rounded-full text-xs transition">
+                        ⏭️ Skipped <span class="ml-1 opacity-60" x-text="healingReviews.filter(r => r.status === 'skipped').length"></span>
+                    </button>
+                    <button @click="revFilter = 'failed'; revLimit = 20" 
+                        :class="revFilter === 'failed' ? 'bg-red-500/30 text-red-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                        class="px-2.5 py-1 rounded-full text-xs transition">
+                        ❌ Failed <span class="ml-1 opacity-60" x-text="healingReviews.filter(r => r.status === 'failed').length"></span>
+                    </button>
+                </div>
+                
+                <template x-if="healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).length === 0">
+                    <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
+                        <p class="text-4xl mb-3">📋</p>
+                        <p>No reviews yet</p>
+                        <p class="text-sm mt-1">Trigger a review to analyze job behavior</p>
+                    </div>
+                </template>
+                
+                <!-- Table view -->
+                <div x-show="healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).length > 0" class="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="border-b border-dark-600 text-dark-400 text-xs uppercase tracking-wide">
+                                    <th class="text-left px-4 py-3 font-medium">ID</th>
+                                    <th class="text-left px-4 py-3 font-medium">Job</th>
+                                    <th class="text-left px-4 py-3 font-medium">Status</th>
+                                    <th class="text-left px-4 py-3 font-medium">Trigger</th>
+                                    <th class="text-right px-4 py-3 font-medium">Runs</th>
+                                    <th class="text-right px-4 py-3 font-medium">Suggestions</th>
+                                    <th class="text-left px-4 py-3 font-medium">Started</th>
+                                    <th class="text-left px-4 py-3 font-medium">Finished</th>
+                                    <th class="text-left px-4 py-3 font-medium">Duration</th>
+                                    <th class="text-left px-4 py-3 font-medium">Error</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="review in healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).slice(0, revLimit)" :key="review.id">
+                                    <tr class="border-b border-dark-700 hover:bg-dark-700/50 transition">
+                                        <td class="px-4 py-2.5 font-mono text-xs text-dark-400" x-text="'#' + review.id"></td>
+                                        <td class="px-4 py-2.5 font-medium text-dark-200" x-text="review.job_id"></td>
+                                        <td class="px-4 py-2.5">
+                                            <span class="px-2 py-0.5 rounded text-xs"
+                                                :class="{
+                                                    'bg-blue-500/20 text-blue-400': review.status === 'running',
+                                                    'bg-green-500/20 text-green-400': review.status === 'completed',
+                                                    'bg-red-500/20 text-red-400': review.status === 'failed',
+                                                    'bg-dark-600 text-dark-400': review.status === 'skipped'
+                                                }" x-text="review.status"></span>
+                                        </td>
+                                        <td class="px-4 py-2.5 text-xs text-dark-400" x-text="review.trigger || '-'"></td>
+                                        <td class="px-4 py-2.5 text-right font-mono text-xs" x-text="review.runs_analyzed ?? '-'"></td>
+                                        <td class="px-4 py-2.5 text-right">
+                                            <span class="font-mono text-xs" :class="review.suggestions_count > 0 ? 'text-yellow-400' : 'text-dark-400'" x-text="review.suggestions_count ?? 0"></span>
+                                        </td>
+                                        <td class="px-4 py-2.5 text-xs text-dark-400 font-mono whitespace-nowrap" x-text="review.started_at ? formatDate(review.started_at) : '-'"></td>
+                                        <td class="px-4 py-2.5 text-xs text-dark-400 font-mono whitespace-nowrap" x-text="review.finished_at ? formatDate(review.finished_at) : '-'"></td>
+                                        <td class="px-4 py-2.5 text-xs text-dark-400" x-text="review.started_at && review.finished_at ? ((new Date(review.finished_at) - new Date(review.started_at)) / 1000).toFixed(1) + 's' : '-'"></td>
+                                        <td class="px-4 py-2.5 text-xs text-red-400 max-w-[200px] truncate" x-text="review.error_message || ''"></td>
+                                    </tr>
                                 </template>
-                            </div>
-                        </div>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
                 
-                <!-- Main Content -->
-                <div class="lg:col-span-2 space-y-4">
-                    
-                    <!-- Sub-tabs (order: Reviews → Suggestions → Actions) -->
-                    <div class="flex gap-2 mb-4">
-                        <button @click="healingSubTab = 'reviews'" 
-                            :class="healingSubTab === 'reviews' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                            class="px-4 py-2 rounded-lg text-sm transition">
-                            📋 Reviews
+                <!-- Show more -->
+                <div x-show="healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).length > revLimit" class="text-center pt-2">
+                    <button @click="revLimit += 20" class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-dark-200 rounded-lg text-sm transition">
+                        Show more (<span x-text="healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).length - revLimit"></span> remaining)
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Suggestions Sub-tab (full width) -->
+            <div x-show="healingSubTab === 'suggestions'" class="space-y-3"
+                 x-data="{ sugFilter: 'all', sugLimit: 20 }">
+                
+                <!-- Filter chips -->
+                <div class="flex items-center justify-between flex-wrap gap-2">
+                    <div class="flex gap-1 flex-wrap">
+                        <button @click="sugFilter = 'all'; sugLimit = 20" 
+                            :class="sugFilter === 'all' ? 'bg-dark-600 text-white' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                            class="px-2.5 py-1 rounded-full text-xs transition">
+                            All <span class="ml-1 opacity-60" x-text="healingSuggestions.length"></span>
                         </button>
-                        <button @click="healingSubTab = 'suggestions'" 
-                            :class="healingSubTab === 'suggestions' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                            class="px-4 py-2 rounded-lg text-sm transition">
-                            💡 Suggestions
-                            <span x-show="healingPending > 0" class="ml-1 px-1.5 py-0.5 bg-yellow-500 text-black text-xs rounded-full" x-text="healingPending"></span>
+                        <button @click="sugFilter = 'pending'; sugLimit = 20" 
+                            :class="sugFilter === 'pending' ? 'bg-yellow-500/30 text-yellow-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                            class="px-2.5 py-1 rounded-full text-xs transition">
+                            ⏳ Pending <span class="ml-1 opacity-60" x-text="healingSuggestions.filter(s => s.status === 'pending').length"></span>
                         </button>
-                        <button @click="healingSubTab = 'actions'" 
-                            :class="healingSubTab === 'actions' ? 'bg-dark-700 text-accent-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                            class="px-4 py-2 rounded-lg text-sm transition">
-                            ⚡ Actions
+                        <button @click="sugFilter = 'applied'; sugLimit = 20" 
+                            :class="sugFilter === 'applied' ? 'bg-blue-500/30 text-blue-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                            class="px-2.5 py-1 rounded-full text-xs transition">
+                            ✅ Applied <span class="ml-1 opacity-60" x-text="healingSuggestions.filter(s => s.status === 'applied').length"></span>
+                        </button>
+                        <button @click="sugFilter = 'rejected'; sugLimit = 20" 
+                            :class="sugFilter === 'rejected' ? 'bg-red-500/30 text-red-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                            class="px-2.5 py-1 rounded-full text-xs transition">
+                            ✕ Rejected <span class="ml-1 opacity-60" x-text="healingSuggestions.filter(s => s.status === 'rejected').length"></span>
                         </button>
                     </div>
-                    
-                    <!-- Suggestions Sub-tab -->
-                    <div x-show="healingSubTab === 'suggestions'" class="space-y-3"
-                         x-data="{ sugFilter: 'all', sugLimit: 10 }">
-                        
-                        <!-- Filter chips + count -->
-                        <div class="flex items-center justify-between flex-wrap gap-2">
-                            <div class="flex gap-1 flex-wrap">
-                                <button @click="sugFilter = 'all'; sugLimit = 10" 
-                                    :class="sugFilter === 'all' ? 'bg-dark-600 text-white' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                    class="px-2.5 py-1 rounded-full text-xs transition">
-                                    All <span class="ml-1 opacity-60" x-text="healingSuggestions.length"></span>
-                                </button>
-                                <button @click="sugFilter = 'pending'; sugLimit = 10" 
-                                    :class="sugFilter === 'pending' ? 'bg-yellow-500/30 text-yellow-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                    class="px-2.5 py-1 rounded-full text-xs transition">
-                                    ⏳ Pending <span class="ml-1 opacity-60" x-text="healingSuggestions.filter(s => s.status === 'pending').length"></span>
-                                </button>
-                                <button @click="sugFilter = 'applied'; sugLimit = 10" 
-                                    :class="sugFilter === 'applied' ? 'bg-blue-500/30 text-blue-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                    class="px-2.5 py-1 rounded-full text-xs transition">
-                                    ✅ Applied <span class="ml-1 opacity-60" x-text="healingSuggestions.filter(s => s.status === 'applied').length"></span>
-                                </button>
-                                <button @click="sugFilter = 'rejected'; sugLimit = 10" 
-                                    :class="sugFilter === 'rejected' ? 'bg-red-500/30 text-red-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                    class="px-2.5 py-1 rounded-full text-xs transition">
-                                    ✕ Rejected <span class="ml-1 opacity-60" x-text="healingSuggestions.filter(s => s.status === 'rejected').length"></span>
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <template x-if="healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).length === 0">
-                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
-                                <p class="text-4xl mb-3">✨</p>
-                                <p x-text="sugFilter === 'all' ? 'No suggestions at the moment' : 'No ' + sugFilter + ' suggestions'"></p>
-                                <p class="text-sm mt-1">Everything looks healthy!</p>
-                            </div>
-                        </template>
-                        
-                        <!-- Scrollable container -->
-                        <div class="max-h-[600px] overflow-y-auto space-y-3 pr-1" style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
-                        <template x-for="suggestion in healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).slice(0, sugLimit)" :key="suggestion.id">
-                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
-                                <div class="flex items-start justify-between gap-4">
-                                    <div class="flex-1">
-                                        <div class="flex items-center gap-2 mb-2">
+                </div>
+                
+                <template x-if="healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).length === 0">
+                    <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
+                        <p class="text-4xl mb-3">✨</p>
+                        <p x-text="sugFilter === 'all' ? 'No suggestions at the moment' : 'No ' + sugFilter + ' suggestions'"></p>
+                        <p class="text-sm mt-1">Everything looks healthy!</p>
+                    </div>
+                </template>
+                
+                <!-- Table view for suggestions -->
+                <div x-show="healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).length > 0" class="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="border-b border-dark-600 text-dark-400 text-xs uppercase tracking-wide">
+                                    <th class="text-left px-4 py-3 font-medium">ID</th>
+                                    <th class="text-left px-4 py-3 font-medium">Job</th>
+                                    <th class="text-left px-4 py-3 font-medium">Severity</th>
+                                    <th class="text-left px-4 py-3 font-medium">Category</th>
+                                    <th class="text-left px-4 py-3 font-medium">Title</th>
+                                    <th class="text-left px-4 py-3 font-medium">Target</th>
+                                    <th class="text-left px-4 py-3 font-medium">Status</th>
+                                    <th class="text-left px-4 py-3 font-medium">Created</th>
+                                    <th class="text-right px-4 py-3 font-medium">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="suggestion in healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).slice(0, sugLimit)" :key="suggestion.id">
+                                    <tr class="border-b border-dark-700 hover:bg-dark-700/50 transition group">
+                                        <td class="px-4 py-2.5 font-mono text-xs text-dark-400" x-text="'#' + suggestion.id"></td>
+                                        <td class="px-4 py-2.5 text-dark-200 text-xs" x-text="suggestion.job_id"></td>
+                                        <td class="px-4 py-2.5">
                                             <span class="px-2 py-0.5 rounded text-xs font-medium"
                                                 :class="{
                                                     'bg-red-500/20 text-red-400': suggestion.severity === 'critical',
                                                     'bg-orange-500/20 text-orange-400': suggestion.severity === 'high',
                                                     'bg-yellow-500/20 text-yellow-400': suggestion.severity === 'medium',
                                                     'bg-blue-500/20 text-blue-400': suggestion.severity === 'low'
-                                                }" x-text="suggestion.severity.toUpperCase()"></span>
-                                            <span class="px-2 py-0.5 bg-dark-700 rounded text-xs" x-text="suggestion.category"></span>
-                                            <span class="text-dark-500 text-xs" x-text="suggestion.job_id"></span>
-                                        </div>
-                                        <h4 class="font-medium text-dark-100" x-text="suggestion.title"></h4>
-                                        <p class="text-sm text-dark-400 mt-1" x-text="suggestion.description || ''"></p>
-                                        
-                                        <!-- Current State → Suggested Change -->
-                                        <div x-show="suggestion.current_state || suggestion.suggested_change" class="mt-2 text-xs space-y-1">
-                                            <div x-show="suggestion.current_state" class="flex items-start gap-2">
-                                                <span class="text-red-400 font-medium shrink-0">Current:</span>
-                                                <span class="text-dark-400 font-mono" x-text="suggestion.current_state"></span>
-                                            </div>
-                                            <div x-show="suggestion.suggested_change" class="flex items-start gap-2">
-                                                <span class="text-green-400 font-medium shrink-0">Change:</span>
-                                                <span class="text-dark-300 font-mono" x-text="suggestion.suggested_change"></span>
-                                            </div>
-                                        </div>
-                                        
-                                        <!-- Affected Files -->
-                                        <div x-show="suggestion.affected_files?.length > 0" class="mt-2">
-                                            <span class="text-xs text-dark-500">Affected: </span>
-                                            <template x-for="file in suggestion.affected_files" :key="file">
-                                                <span class="text-xs font-mono text-dark-400 bg-dark-700 px-1 rounded mr-1" x-text="file"></span>
-                                            </template>
-                                        </div>
-                                        
-                                        <!-- Target File -->
-                                        <div x-show="suggestion.target_file" class="mt-2">
-                                            <span class="text-xs text-dark-500">Target: </span>
-                                            <span class="text-xs font-mono text-emerald-400 bg-dark-700 px-1 rounded" x-text="suggestion.target_file"></span>
-                                        </div>
-                                        
-                                        <!-- Proposed Content Preview (expandable diff) -->
-                                        <div x-show="suggestion.proposed_content" class="mt-3" x-data="{ showPreview: false, viewMode: 'diff' }">
-                                            <div class="flex items-center gap-2">
-                                                <button @click="showPreview = !showPreview" 
-                                                    class="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 transition">
-                                                    <span x-text="showPreview ? '▼' : '▶'"></span>
-                                                    <span>👁️ Preview Changes</span>
-                                                </button>
-                                                <template x-if="showPreview && suggestion.current_content">
-                                                    <div class="flex gap-1">
-                                                        <button @click="viewMode = 'diff'" class="text-xs px-2 py-0.5 rounded transition"
-                                                            :class="viewMode === 'diff' ? 'bg-cyan-600 text-white' : 'bg-dark-700 text-dark-400 hover:text-dark-200'">Diff</button>
-                                                        <button @click="viewMode = 'full'" class="text-xs px-2 py-0.5 rounded transition"
-                                                            :class="viewMode === 'full' ? 'bg-cyan-600 text-white' : 'bg-dark-700 text-dark-400 hover:text-dark-200'">Full</button>
-                                                    </div>
-                                                </template>
-                                            </div>
-                                            <div x-show="showPreview" x-transition class="mt-2">
-                                                <!-- Diff view -->
-                                                <template x-if="viewMode === 'diff' && suggestion.current_content">
-                                                    <div class="text-xs font-mono bg-dark-900 border border-dark-600 rounded p-3 overflow-x-auto max-h-80 overflow-y-auto" 
-                                                         x-html="computeDiff(suggestion.current_content, suggestion.proposed_content)"></div>
-                                                </template>
-                                                <!-- Full view (or no current_content available) -->
-                                                <template x-if="viewMode === 'full' || !suggestion.current_content">
-                                                    <pre class="text-xs font-mono bg-dark-900 border border-dark-600 rounded p-3 overflow-x-auto max-h-80 overflow-y-auto text-dark-300 whitespace-pre-wrap"><code x-text="suggestion.proposed_content"></code></pre>
-                                                </template>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Status & Actions -->
-                                    <div class="flex flex-col items-end gap-2">
-                                        <span class="px-2 py-1 rounded text-xs"
-                                            :class="{
-                                                'bg-yellow-500/20 text-yellow-400': suggestion.status === 'pending',
-                                                'bg-green-500/20 text-green-400': suggestion.status === 'approved',
-                                                'bg-red-500/20 text-red-400': suggestion.status === 'rejected',
-                                                'bg-blue-500/20 text-blue-400': suggestion.status === 'applied',
-                                                'bg-dark-600 text-dark-400': suggestion.status === 'failed'
-                                            }" x-text="suggestion.status"></span>
-                                        
-                                        <div x-show="suggestion.status === 'pending'" class="flex gap-1">
-                                            <button @click="approveSuggestion(suggestion.id)" 
-                                                class="px-2 py-1 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded text-xs transition">
-                                                ✓ Approve
-                                            </button>
-                                            <button @click="rejectSuggestion(suggestion.id)" 
-                                                class="px-2 py-1 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded text-xs transition">
-                                                ✕ Reject
-                                            </button>
-                                        </div>
-                                        <div x-show="suggestion.status === 'approved'" class="flex gap-1">
-                                            <button @click="applySuggestion(suggestion.id)" 
-                                                :disabled="applyingSuggestionId !== null"
-                                                :class="applyingSuggestionId === suggestion.id ? 'bg-blue-500/40 cursor-wait' : 'bg-blue-500/20 hover:bg-blue-500/30'"
-                                                class="px-2 py-1 text-blue-400 rounded text-xs transition disabled:opacity-50 disabled:cursor-not-allowed">
-                                                <span x-show="applyingSuggestionId !== suggestion.id">⚡ Apply</span>
-                                                <span x-show="applyingSuggestionId === suggestion.id" class="flex items-center gap-1">
-                                                    <span class="animate-spin">⏳</span> Applying...
-                                                </span>
-                                            </button>
-                                        </div>
-                                        <button @click="viewSuggestionDetails(suggestion.id)" 
-                                            class="px-2 py-1 bg-dark-700 text-dark-300 hover:bg-dark-600 rounded text-xs transition">
-                                            🔍 Details
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </template>
-                        </div><!-- /scrollable container -->
-                        
-                        <!-- Show more button -->
-                        <div x-show="healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).length > sugLimit" 
-                             class="text-center pt-2">
-                            <button @click="sugLimit += 10" 
-                                class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-dark-200 rounded-lg text-sm transition">
-                                Show more (<span x-text="healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).length - sugLimit"></span> remaining)
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <!-- Reviews Sub-tab -->
-                    <div x-show="healingSubTab === 'reviews'" class="space-y-3"
-                         x-data="{ revFilter: 'all', revLimit: 10 }">
-                        
-                        <!-- Filter chips + count -->
-                        <div class="flex items-center gap-1 flex-wrap">
-                            <button @click="revFilter = 'all'; revLimit = 10" 
-                                :class="revFilter === 'all' ? 'bg-dark-600 text-white' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                class="px-2.5 py-1 rounded-full text-xs transition">
-                                All <span class="ml-1 opacity-60" x-text="healingReviews.length"></span>
-                            </button>
-                            <button @click="revFilter = 'completed'; revLimit = 10" 
-                                :class="revFilter === 'completed' ? 'bg-green-500/30 text-green-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                class="px-2.5 py-1 rounded-full text-xs transition">
-                                ✅ Completed <span class="ml-1 opacity-60" x-text="healingReviews.filter(r => r.status === 'completed').length"></span>
-                            </button>
-                            <button @click="revFilter = 'skipped'; revLimit = 10" 
-                                :class="revFilter === 'skipped' ? 'bg-dark-500/30 text-dark-300' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                class="px-2.5 py-1 rounded-full text-xs transition">
-                                ⏭️ Skipped <span class="ml-1 opacity-60" x-text="healingReviews.filter(r => r.status === 'skipped').length"></span>
-                            </button>
-                            <button @click="revFilter = 'failed'; revLimit = 10" 
-                                :class="revFilter === 'failed' ? 'bg-red-500/30 text-red-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                class="px-2.5 py-1 rounded-full text-xs transition">
-                                ❌ Failed <span class="ml-1 opacity-60" x-text="healingReviews.filter(r => r.status === 'failed').length"></span>
-                            </button>
-                        </div>
-                        
-                        <template x-if="healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).length === 0">
-                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
-                                <p class="text-4xl mb-3">📋</p>
-                                <p>No reviews yet</p>
-                                <p class="text-sm mt-1">Trigger a review to analyze job behavior</p>
-                            </div>
-                        </template>
-                        
-                        <div class="max-h-[600px] overflow-y-auto space-y-3 pr-1" style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
-                        <template x-for="review in healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).slice(0, revLimit)" :key="review.id">
-                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
-                                <div class="flex items-center justify-between">
-                                    <div>
-                                        <div class="flex items-center gap-2 mb-1">
-                                            <span class="font-medium" x-text="review.job_id"></span>
+                                                }" x-text="suggestion.severity?.toUpperCase()"></span>
+                                        </td>
+                                        <td class="px-4 py-2.5">
+                                            <span class="px-2 py-0.5 bg-dark-700 rounded text-xs text-dark-300" x-text="suggestion.category"></span>
+                                        </td>
+                                        <td class="px-4 py-2.5 text-dark-100 max-w-[300px]">
+                                            <div class="truncate" x-text="suggestion.title"></div>
+                                            <div class="text-xs text-dark-500 truncate mt-0.5" x-show="suggestion.description" x-text="suggestion.description"></div>
+                                        </td>
+                                        <td class="px-4 py-2.5 text-xs font-mono text-dark-400 max-w-[150px] truncate" x-text="suggestion.target_file || '-'"></td>
+                                        <td class="px-4 py-2.5">
                                             <span class="px-2 py-0.5 rounded text-xs"
                                                 :class="{
-                                                    'bg-blue-500/20 text-blue-400': review.status === 'running',
-                                                    'bg-green-500/20 text-green-400': review.status === 'completed',
-                                                    'bg-red-500/20 text-red-400': review.status === 'failed'
-                                                }" x-text="review.status"></span>
-                                        </div>
-                                        <div class="text-xs text-dark-500">
-                                            Started: <span x-text="formatDate(review.started_at)"></span>
-                                            <span x-show="review.finished_at"> • Finished: <span x-text="formatDate(review.finished_at)"></span></span>
-                                        </div>
-                                        <div x-show="review.status === 'failed' && review.error_message" class="text-xs text-red-400 mt-1">
-                                            ⚠️ <span x-text="review.error_message"></span>
-                                        </div>
-                                    </div>
-                                    <div class="text-right">
-                                        <div class="text-sm">
-                                            <span class="text-dark-400">Runs:</span> <span x-text="review.runs_analyzed"></span>
-                                        </div>
-                                        <div class="text-sm">
-                                            <span class="text-dark-400">Suggestions:</span> 
-                                            <span :class="review.suggestions_count > 0 ? 'text-yellow-400' : ''" x-text="review.suggestions_count"></span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </template>
-                        </div><!-- /scrollable container -->
-                        
-                        <!-- Show more button -->
-                        <div x-show="healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).length > revLimit" 
-                             class="text-center pt-2">
-                            <button @click="revLimit += 10" 
-                                class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-dark-200 rounded-lg text-sm transition">
-                                Show more (<span x-text="healingReviews.filter(r => revFilter === 'all' || r.status === revFilter).length - revLimit"></span> remaining)
-                            </button>
+                                                    'bg-yellow-500/20 text-yellow-400': suggestion.status === 'pending',
+                                                    'bg-green-500/20 text-green-400': suggestion.status === 'approved',
+                                                    'bg-red-500/20 text-red-400': suggestion.status === 'rejected',
+                                                    'bg-blue-500/20 text-blue-400': suggestion.status === 'applied',
+                                                    'bg-dark-600 text-dark-400': suggestion.status === 'failed'
+                                                }" x-text="suggestion.status"></span>
+                                        </td>
+                                        <td class="px-4 py-2.5 text-xs text-dark-400 font-mono whitespace-nowrap" x-text="suggestion.created_at ? formatDate(suggestion.created_at) : '-'"></td>
+                                        <td class="px-4 py-2.5 text-right whitespace-nowrap">
+                                            <div class="flex items-center justify-end gap-1">
+                                                <button x-show="suggestion.status === 'pending'" @click="approveSuggestion(suggestion.id)" 
+                                                    class="px-2 py-1 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded text-xs transition" title="Approve">✓</button>
+                                                <button x-show="suggestion.status === 'pending'" @click="rejectSuggestion(suggestion.id)" 
+                                                    class="px-2 py-1 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded text-xs transition" title="Reject">✕</button>
+                                                <button x-show="suggestion.status === 'approved'" @click="applySuggestion(suggestion.id)" 
+                                                    :disabled="applyingSuggestionId !== null"
+                                                    :class="applyingSuggestionId === suggestion.id ? 'bg-blue-500/40 cursor-wait' : 'bg-blue-500/20 hover:bg-blue-500/30'"
+                                                    class="px-2 py-1 text-blue-400 rounded text-xs transition" title="Apply">
+                                                    <span x-show="applyingSuggestionId !== suggestion.id">⚡</span>
+                                                    <span x-show="applyingSuggestionId === suggestion.id" class="animate-spin">⏳</span>
+                                                </button>
+                                                <button @click="viewSuggestionDetails(suggestion.id)" 
+                                                    class="px-2 py-1 bg-dark-700 text-dark-300 hover:bg-dark-600 rounded text-xs transition" title="Details">🔍</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Show more -->
+                <div x-show="healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).length > sugLimit" class="text-center pt-2">
+                    <button @click="sugLimit += 20" class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-dark-200 rounded-lg text-sm transition">
+                        Show more (<span x-text="healingSuggestions.filter(s => sugFilter === 'all' || s.status === sugFilter).length - sugLimit"></span> remaining)
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Actions Sub-tab (full width table) -->
+            <div x-show="healingSubTab === 'actions'" class="space-y-3"
+                 x-data="{ actFilter: 'all', actLimit: 20 }">
+                
+                <!-- Filter chips -->
+                <div class="flex items-center gap-1 flex-wrap">
+                    <button @click="actFilter = 'all'; actLimit = 20" 
+                        :class="actFilter === 'all' ? 'bg-dark-600 text-white' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                        class="px-2.5 py-1 rounded-full text-xs transition">
+                        All <span class="ml-1 opacity-60" x-text="healingActions.length"></span>
+                    </button>
+                    <button @click="actFilter = 'success'; actLimit = 20" 
+                        :class="actFilter === 'success' ? 'bg-green-500/30 text-green-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                        class="px-2.5 py-1 rounded-full text-xs transition">
+                        ✅ Success <span class="ml-1 opacity-60" x-text="healingActions.filter(a => a.status === 'success').length"></span>
+                    </button>
+                    <button @click="actFilter = 'failed'; actLimit = 20" 
+                        :class="actFilter === 'failed' ? 'bg-red-500/30 text-red-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                        class="px-2.5 py-1 rounded-full text-xs transition">
+                        ❌ Failed <span class="ml-1 opacity-60" x-text="healingActions.filter(a => a.status === 'failed').length"></span>
+                    </button>
+                    <button @click="actFilter = 'rolled_back'; actLimit = 20" 
+                        :class="actFilter === 'rolled_back' ? 'bg-orange-500/30 text-orange-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
+                        class="px-2.5 py-1 rounded-full text-xs transition">
+                        ↩️ Rolled back <span class="ml-1 opacity-60" x-text="healingActions.filter(a => a.status === 'rolled_back').length"></span>
+                    </button>
+                </div>
+                
+                <!-- Pending action banner -->
+                <template x-if="pendingAction">
+                    <div class="bg-dark-800 border border-accent-500/50 rounded-xl p-3 animate-pulse-slow flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <span class="animate-spin text-accent-400">⏳</span>
+                            <span class="text-sm text-dark-200">Applying: </span>
+                            <span class="text-sm font-medium text-dark-100" x-text="pendingAction.title || pendingAction.action_type"></span>
+                            <span class="text-xs text-dark-500" x-text="pendingAction.job_id"></span>
                         </div>
                     </div>
-                    
-                    <!-- Actions Sub-tab -->
-                    <div x-show="healingSubTab === 'actions'" class="space-y-3"
-                         x-data="{ actFilter: 'all', actLimit: 10 }">
-                        
-                        <!-- Filter chips -->
-                        <div class="flex items-center gap-1 flex-wrap">
-                            <button @click="actFilter = 'all'; actLimit = 10" 
-                                :class="actFilter === 'all' ? 'bg-dark-600 text-white' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                class="px-2.5 py-1 rounded-full text-xs transition">
-                                All <span class="ml-1 opacity-60" x-text="healingActions.length"></span>
-                            </button>
-                            <button @click="actFilter = 'success'; actLimit = 10" 
-                                :class="actFilter === 'success' ? 'bg-green-500/30 text-green-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                class="px-2.5 py-1 rounded-full text-xs transition">
-                                ✅ Success <span class="ml-1 opacity-60" x-text="healingActions.filter(a => a.status === 'success').length"></span>
-                            </button>
-                            <button @click="actFilter = 'failed'; actLimit = 10" 
-                                :class="actFilter === 'failed' ? 'bg-red-500/30 text-red-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                class="px-2.5 py-1 rounded-full text-xs transition">
-                                ❌ Failed <span class="ml-1 opacity-60" x-text="healingActions.filter(a => a.status === 'failed').length"></span>
-                            </button>
-                            <button @click="actFilter = 'rolled_back'; actLimit = 10" 
-                                :class="actFilter === 'rolled_back' ? 'bg-orange-500/30 text-orange-400' : 'bg-dark-800 text-dark-400 hover:text-dark-200'"
-                                class="px-2.5 py-1 rounded-full text-xs transition">
-                                ↩️ Rolled back <span class="ml-1 opacity-60" x-text="healingActions.filter(a => a.status === 'rolled_back').length"></span>
-                            </button>
-                        </div>
-                        
-                        <!-- Pending action (currently applying) -->
-                        <template x-if="pendingAction">
-                            <div class="bg-dark-800 border border-accent-500/50 rounded-xl p-4 animate-pulse-slow">
-                                <div class="flex items-center justify-between">
-                                    <div>
-                                        <div class="flex items-center gap-2 mb-1">
-                                            <span class="px-2 py-0.5 bg-dark-700 rounded text-xs font-mono" x-text="pendingAction.action_type"></span>
-                                            <span class="text-dark-500" x-text="pendingAction.job_id"></span>
-                                        </div>
-                                        <div class="text-sm text-dark-300" x-text="pendingAction.title"></div>
-                                        <div class="text-sm text-dark-400" x-show="pendingAction.file_path" x-text="pendingAction.file_path"></div>
-                                        <div class="text-xs text-dark-500" x-text="formatDate(pendingAction.created_at)"></div>
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        <span class="px-2 py-1 rounded text-xs bg-accent-500/20 text-accent-400 flex items-center gap-1">
-                                            <span class="animate-spin">⏳</span> applying...
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        </template>
-                        
-                        <template x-if="healingActions.filter(a => actFilter === 'all' || a.status === actFilter).length === 0 && !pendingAction">
-                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
-                                <p class="text-4xl mb-3">⚡</p>
-                                <p x-text="actFilter === 'all' ? 'No actions taken yet' : 'No ' + actFilter + ' actions'"></p>
-                                <p class="text-sm mt-1">Actions will appear here after suggestions are applied</p>
-                            </div>
-                        </template>
-                        
-                        <div class="max-h-[600px] overflow-y-auto space-y-3 pr-1" style="scrollbar-width: thin; scrollbar-color: #374151 transparent;">
-                        <template x-for="action in healingActions.filter(a => actFilter === 'all' || a.status === actFilter).slice(0, actLimit)" :key="action.id">
-                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
-                                <div class="flex items-center justify-between">
-                                    <div class="flex-1 min-w-0">
-                                        <!-- Suggestion title -->
-                                        <div class="text-sm text-dark-200 mb-1 truncate" x-show="action.suggestion_title" x-text="action.suggestion_title"></div>
-                                        <div class="flex items-center gap-2 mb-1 flex-wrap">
-                                            <span class="text-dark-500 text-xs" x-text="action.job_id"></span>
+                </template>
+                
+                <template x-if="healingActions.filter(a => actFilter === 'all' || a.status === actFilter).length === 0 && !pendingAction">
+                    <div class="bg-dark-800 border border-dark-600 rounded-xl p-8 text-center text-dark-400">
+                        <p class="text-4xl mb-3">⚡</p>
+                        <p x-text="actFilter === 'all' ? 'No actions taken yet' : 'No ' + actFilter + ' actions'"></p>
+                        <p class="text-sm mt-1">Actions will appear here after suggestions are applied</p>
+                    </div>
+                </template>
+                
+                <!-- Table view for actions -->
+                <div x-show="healingActions.filter(a => actFilter === 'all' || a.status === actFilter).length > 0" class="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="border-b border-dark-600 text-dark-400 text-xs uppercase tracking-wide">
+                                    <th class="text-left px-4 py-3 font-medium">ID</th>
+                                    <th class="text-left px-4 py-3 font-medium">Job</th>
+                                    <th class="text-left px-4 py-3 font-medium">Category</th>
+                                    <th class="text-left px-4 py-3 font-medium">Title</th>
+                                    <th class="text-left px-4 py-3 font-medium">Type</th>
+                                    <th class="text-left px-4 py-3 font-medium">File</th>
+                                    <th class="text-left px-4 py-3 font-medium">Status</th>
+                                    <th class="text-left px-4 py-3 font-medium">Duration</th>
+                                    <th class="text-left px-4 py-3 font-medium">Date</th>
+                                    <th class="text-left px-4 py-3 font-medium">Error</th>
+                                    <th class="text-right px-4 py-3 font-medium">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="action in healingActions.filter(a => actFilter === 'all' || a.status === actFilter).slice(0, actLimit)" :key="action.id">
+                                    <tr class="border-b border-dark-700 hover:bg-dark-700/50 transition">
+                                        <td class="px-4 py-2.5 font-mono text-xs text-dark-400" x-text="'#' + action.id"></td>
+                                        <td class="px-4 py-2.5 text-dark-200 text-xs" x-text="action.job_id"></td>
+                                        <td class="px-4 py-2.5">
                                             <span class="px-2 py-0.5 rounded text-xs"
                                                 :class="{
                                                     'bg-purple-500/20 text-purple-400': action.suggestion_category === 'performance',
@@ -2185,45 +2121,42 @@
                                                 }" 
                                                 x-show="action.suggestion_category"
                                                 x-text="action.suggestion_category"></span>
-                                            <span class="text-dark-500 text-xs" x-show="action.execution_duration_ms" x-text="(action.execution_duration_ms / 1000).toFixed(1) + 's'"></span>
-                                        </div>
-                                        <div class="text-xs text-dark-500 truncate" x-show="action.file_path" x-text="action.file_path"></div>
-                                        <div class="text-xs text-dark-500" x-text="formatDate(action.created_at)"></div>
-                                        <!-- Error preview -->
-                                        <div class="text-xs text-red-400 mt-1 truncate" x-show="action.error_message" x-text="action.error_message"></div>
-                                    </div>
-                                    <div class="flex items-center gap-2 flex-shrink-0">
-                                        <button @click="viewActionDetails(action.id)"
-                                            class="px-2 py-1 bg-dark-700 hover:bg-dark-600 rounded text-xs transition text-dark-300">
-                                            📋 Details
-                                        </button>
-                                        <span class="px-2 py-1 rounded text-xs"
-                                            :class="{
-                                                'bg-green-500/20 text-green-400': action.status === 'success',
-                                                'bg-red-500/20 text-red-400': action.status === 'failed',
-                                                'bg-yellow-500/20 text-yellow-400': action.status === 'rolled_back'
-                                            }" x-text="action.status"></span>
-                                        <button x-show="action.can_rollback && action.status === 'success'" 
-                                            @click="rollbackAction(action.id)"
-                                            class="px-2 py-1 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded text-xs transition">
-                                            ↩️ Rollback
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </template>
-                        </div><!-- /scrollable container -->
-                        
-                        <!-- Show more button -->
-                        <div x-show="healingActions.filter(a => actFilter === 'all' || a.status === actFilter).length > actLimit" 
-                             class="text-center pt-2">
-                            <button @click="actLimit += 10" 
-                                class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-dark-200 rounded-lg text-sm transition">
-                                Show more (<span x-text="healingActions.filter(a => actFilter === 'all' || a.status === actFilter).length - actLimit"></span> remaining)
-                            </button>
-                        </div>
+                                        </td>
+                                        <td class="px-4 py-2.5 text-dark-100 max-w-[250px] truncate" x-text="action.suggestion_title || action.action_type"></td>
+                                        <td class="px-4 py-2.5 text-xs font-mono text-dark-400" x-text="action.action_type || '-'"></td>
+                                        <td class="px-4 py-2.5 text-xs font-mono text-dark-400 max-w-[150px] truncate" x-text="action.file_path || '-'"></td>
+                                        <td class="px-4 py-2.5">
+                                            <span class="px-2 py-0.5 rounded text-xs"
+                                                :class="{
+                                                    'bg-green-500/20 text-green-400': action.status === 'success',
+                                                    'bg-red-500/20 text-red-400': action.status === 'failed',
+                                                    'bg-yellow-500/20 text-yellow-400': action.status === 'rolled_back'
+                                                }" x-text="action.status"></span>
+                                        </td>
+                                        <td class="px-4 py-2.5 text-xs text-dark-400" x-text="action.execution_duration_ms ? (action.execution_duration_ms / 1000).toFixed(1) + 's' : '-'"></td>
+                                        <td class="px-4 py-2.5 text-xs text-dark-400 font-mono whitespace-nowrap" x-text="action.created_at ? formatDate(action.created_at) : '-'"></td>
+                                        <td class="px-4 py-2.5 text-xs text-red-400 max-w-[150px] truncate" x-text="action.error_message || ''"></td>
+                                        <td class="px-4 py-2.5 text-right whitespace-nowrap">
+                                            <div class="flex items-center justify-end gap-1">
+                                                <button @click="viewActionDetails(action.id)"
+                                                    class="px-2 py-1 bg-dark-700 hover:bg-dark-600 rounded text-xs transition text-dark-300" title="Details">📋</button>
+                                                <button x-show="action.can_rollback && action.status === 'success'" 
+                                                    @click="rollbackAction(action.id)"
+                                                    class="px-2 py-1 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded text-xs transition" title="Rollback">↩️</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
                     </div>
-                    
+                </div>
+                
+                <!-- Show more -->
+                <div x-show="healingActions.filter(a => actFilter === 'all' || a.status === actFilter).length > actLimit" class="text-center pt-2">
+                    <button @click="actLimit += 20" class="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-dark-400 hover:text-dark-200 rounded-lg text-sm transition">
+                        Show more (<span x-text="healingActions.filter(a => actFilter === 'all' || a.status === actFilter).length - actLimit"></span> remaining)
+                    </button>
                 </div>
             </div>
         </div>
@@ -2280,6 +2213,34 @@
                         <div x-show="selectedSuggestion.expected_impact">
                             <h3 class="text-sm font-medium text-dark-400 mb-2">Expected Impact</h3>
                             <p class="text-dark-200" x-text="selectedSuggestion.expected_impact"></p>
+                        </div>
+                        
+                        <!-- Target File -->
+                        <div x-show="selectedSuggestion.target_file">
+                            <h3 class="text-sm font-medium text-dark-400 mb-2">Target File</h3>
+                            <span class="text-sm font-mono text-emerald-400 bg-dark-700 px-2 py-1 rounded" x-text="selectedSuggestion.target_file"></span>
+                        </div>
+                        
+                        <!-- Proposed Content Preview (diff) -->
+                        <div x-show="selectedSuggestion.proposed_content" x-data="{ showPreview: true, viewMode: 'diff' }">
+                            <div class="flex items-center gap-3 mb-2">
+                                <h3 class="text-sm font-medium text-dark-400">👁️ Proposed Changes</h3>
+                                <div x-show="selectedSuggestion.current_content" class="flex gap-1">
+                                    <button @click="viewMode = 'diff'" class="text-xs px-2 py-0.5 rounded transition"
+                                        :class="viewMode === 'diff' ? 'bg-cyan-600 text-white' : 'bg-dark-700 text-dark-400 hover:text-dark-200'">Diff</button>
+                                    <button @click="viewMode = 'full'" class="text-xs px-2 py-0.5 rounded transition"
+                                        :class="viewMode === 'full' ? 'bg-cyan-600 text-white' : 'bg-dark-700 text-dark-400 hover:text-dark-200'">Full</button>
+                                </div>
+                            </div>
+                            <!-- Diff view -->
+                            <template x-if="viewMode === 'diff' && selectedSuggestion.current_content">
+                                <div class="text-xs font-mono bg-dark-900 border border-dark-600 rounded-lg p-3 overflow-x-auto max-h-96 overflow-y-auto" 
+                                     x-html="computeDiff(selectedSuggestion.current_content, selectedSuggestion.proposed_content)"></div>
+                            </template>
+                            <!-- Full view -->
+                            <template x-if="viewMode === 'full' || !selectedSuggestion.current_content">
+                                <pre class="text-xs font-mono bg-dark-900 border border-dark-600 rounded-lg p-3 overflow-x-auto max-h-96 overflow-y-auto text-dark-300 whitespace-pre-wrap"><code x-text="selectedSuggestion.proposed_content"></code></pre>
+                            </template>
                         </div>
                         
                         <!-- Affected Files -->
@@ -2452,155 +2413,495 @@
         </div>
     </div>
 
-    <!-- Job Detail Modal -->
-    <div x-show="selectedJob" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" @click.self="selectedJob = null">
-        <div class="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-2xl max-h-[80vh] overflow-hidden" @click.stop>
-            <div class="p-4 border-b border-dark-600 flex items-center justify-between">
-                <div>
-                    <h2 class="text-lg font-medium" x-text="selectedJob?.id"></h2>
-                    <p class="text-sm text-dark-400" x-text="selectedJob?.name"></p>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button x-show="selectedJob?.type === 'openclaw'" @click="openPromptEditor(selectedJob.id)" class="p-2 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-orange-400" title="Edit Prompt">📝</button>
-                    <button @click="openEditModal(selectedJob)" class="p-2 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-dark-200" title="Edit Job">✏️</button>
-                    <button @click="selectedJob = null" class="p-2 hover:bg-dark-700 rounded-lg">✕</button>
-                </div>
-            </div>
-            <div class="p-4 overflow-auto max-h-[60vh] scrollbar-thin">
-                <template x-if="selectedJob">
-                    <div class="space-y-4">
-                        <div class="grid grid-cols-2 gap-4">
-                            <div class="bg-dark-700 rounded-lg p-3">
-                                <div class="text-xs text-dark-400 mb-1">Status</div>
-                                <div class="flex items-center gap-2">
-                                    <span class="w-2 h-2 rounded-full" :class="selectedJob.status === 'running' ? 'bg-green-500' : selectedJob.status === 'failed' ? 'bg-red-500' : selectedJob.status === 'planned' ? 'bg-cyan-500' : selectedJob.status === 'disabled' ? 'bg-dark-400' : selectedJob.status === 'queued' ? 'bg-indigo-500' : 'bg-dark-500'"></span>
-                                    <span x-text="selectedJob.status"></span>
-                                    <span x-show="selectedJob.status === 'queued' && selectedJob.queue_status" class="text-indigo-300 text-xs" x-text="'(#' + (selectedJob.queue_status?.position + 1) + ' in ' + selectedJob.queue + ')'"></span>
-                                </div>
-                            </div>
-                            <div class="bg-dark-700 rounded-lg p-3">
-                                <div class="text-xs text-dark-400 mb-1">Type</div>
-                                <span class="text-xs px-2 py-1 rounded-full" :class="getTypeClass(selectedJob.type)" x-text="selectedJob.type"></span>
-                            </div>
-                            <div class="bg-dark-700 rounded-lg p-3">
-                                <div class="text-xs text-dark-400 mb-1">PID</div>
-                                <div x-text="selectedJob.pid || '-'"></div>
-                            </div>
-                            <div class="bg-dark-700 rounded-lg p-3">
-                                <div class="text-xs text-dark-400 mb-1">Restarts</div>
-                                <div x-text="selectedJob.restart_count || 0"></div>
-                            </div>
-                        </div>
-
-                        <div class="bg-dark-700 rounded-lg p-3">
-                            <div class="text-xs text-dark-400 mb-2">Tags</div>
-                            <div class="flex flex-wrap gap-2 items-center">
-                                <template x-for="tag in (selectedJob.tags || [])" :key="tag">
-                                    <span class="tag-badge text-dark-300">
-                                        <span x-text="tag"></span>
-                                        <span class="tag-remove text-dark-500 hover:text-red-400" @click="removeTag(selectedJob.id, tag); selectedJob.tags = selectedJob.tags.filter(t => t !== tag)">×</span>
-                                    </span>
-                                </template>
-                                <button class="tag-add-btn text-dark-400 hover:text-dark-200" @click="openTagInput(selectedJob.id)">+ Add tag</button>
-                            </div>
-                        </div>
-
-                        <div x-show="getWorkflowsForJob(selectedJob.id).length > 0" class="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
-                            <div class="text-xs text-purple-400 mb-2">⛓️ Part of Workflows</div>
-                            <div class="flex flex-wrap gap-2">
-                                <template x-for="wf in getWorkflowsForJob(selectedJob.id)" :key="wf.id">
-                                    <span class="text-xs px-2 py-1 bg-purple-500/20 text-purple-300 rounded cursor-pointer hover:bg-purple-500/30"
-                                        :title="wf.type + ': ' + wf.jobs.join(' → ')"
-                                        @click="currentTab = 'workflows'"
-                                        x-text="wf.name + ' (' + wf.type + ')'">
-                                    </span>
-                                </template>
-                            </div>
-                        </div>
-
-                        <div x-show="selectedJob.depends_on?.length > 0 || selectedJob.dependents?.length > 0" class="bg-dark-700 rounded-lg p-3">
-                            <div class="text-xs text-dark-400 mb-2">Dependencies</div>
-                            <div class="space-y-2">
-                                <div x-show="selectedJob.depends_on?.length > 0">
-                                    <span class="text-xs text-blue-400">Depends on:</span>
-                                    <div class="flex flex-wrap gap-2 mt-1">
-                                        <template x-for="dep in selectedJob.depends_on" :key="dep.job">
-                                            <span class="text-xs px-2 py-1 bg-blue-500/20 text-blue-400 rounded cursor-pointer hover:bg-blue-500/30" @click="selectJobById(dep.job)" x-text="dep.job + ' (' + dep.condition + ')'"></span>
-                                        </template>
+    <!-- Job Detail Full Page -->
+    <div x-show="selectedJob" x-cloak class="min-h-[calc(100vh-64px)]">
+        <template x-if="selectedJob">
+            <div>
+                <!-- Header Bar -->
+                <div class="bg-dark-800 border-b border-dark-600 sticky top-0 z-10">
+                    <div class="max-w-[95vw] mx-auto px-4 py-3">
+                        <div class="flex items-center justify-between flex-wrap gap-3">
+                            <!-- Left: Back + Identity -->
+                            <div class="flex items-center gap-4 min-w-0">
+                                <button @click="selectedJob = null" class="flex items-center gap-1 text-dark-300 hover:text-accent-400 transition text-sm shrink-0">
+                                    <span>←</span> <span>Jobs</span>
+                                </button>
+                                <div class="h-5 w-px bg-dark-600 shrink-0"></div>
+                                <div class="min-w-0">
+                                    <div class="flex items-center gap-3 flex-wrap">
+                                        <h1 class="text-lg font-semibold truncate" x-text="selectedJob.id"></h1>
+                                        <div class="flex items-center gap-2">
+                                            <span class="flex items-center gap-1.5 text-sm px-2.5 py-0.5 rounded-full"
+                                                :class="selectedJob.status === 'running' ? 'bg-green-500/20 text-green-400' : selectedJob.status === 'failed' ? 'bg-red-500/20 text-red-400' : selectedJob.status === 'planned' ? 'bg-cyan-500/20 text-cyan-400' : selectedJob.status === 'disabled' ? 'bg-dark-600 text-dark-400' : selectedJob.status === 'queued' ? 'bg-indigo-500/20 text-indigo-400' : 'bg-dark-600 text-dark-300'">
+                                                <span class="w-2 h-2 rounded-full"
+                                                    :class="selectedJob.status === 'running' ? 'bg-green-500' : selectedJob.status === 'failed' ? 'bg-red-500' : selectedJob.status === 'planned' ? 'bg-cyan-500' : selectedJob.status === 'disabled' ? 'bg-dark-400' : selectedJob.status === 'queued' ? 'bg-indigo-500' : 'bg-dark-500'"></span>
+                                                <span x-text="selectedJob.status"></span>
+                                                <span x-show="selectedJob.status === 'queued' && selectedJob.queue_status" class="text-indigo-300 text-xs" x-text="'(#' + (selectedJob.queue_status?.position + 1) + ' in ' + selectedJob.queue + ')'"></span>
+                                            </span>
+                                            <span class="text-xs px-2 py-1 rounded-full" :class="getTypeClass(selectedJob.type)" x-text="selectedJob.type"></span>
+                                        </div>
                                     </div>
-                                </div>
-                                <div x-show="selectedJob.dependents?.length > 0">
-                                    <span class="text-xs text-green-400">Dependents:</span>
-                                    <div class="flex flex-wrap gap-2 mt-1">
-                                        <template x-for="dep in selectedJob.dependents" :key="dep.job">
-                                            <span class="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded cursor-pointer hover:bg-green-500/30" @click="selectJobById(dep.job)" x-text="dep.job"></span>
-                                        </template>
-                                    </div>
+                                    <p class="text-sm text-dark-400 mt-0.5" x-show="selectedJob.name && selectedJob.name !== selectedJob.id" x-text="selectedJob.name"></p>
                                 </div>
                             </div>
-                        </div>
-
-                        <div class="grid grid-cols-2 gap-4">
-                            <div class="bg-dark-700 rounded-lg p-3">
-                                <div class="text-xs text-dark-400 mb-1">Created</div>
-                                <div x-text="selectedJob.created_at ? formatDateFull(selectedJob.created_at) : '-'"></div>
+                            <!-- Right: Actions -->
+                            <div class="flex items-center gap-1 flex-wrap shrink-0">
+                                <button @click="openEditModal(selectedJob)" class="px-3 py-1.5 text-sm bg-dark-700 hover:bg-dark-600 rounded-lg transition text-dark-300 hover:text-dark-100" title="Edit Job">✏️ Edit</button>
+                                <button x-show="selectedJob.type === 'openclaw'" @click="openPromptEditor(selectedJob.id)" class="px-3 py-1.5 text-sm bg-dark-700 hover:bg-dark-600 rounded-lg transition text-dark-300 hover:text-orange-400" title="Edit Prompt">📝 Prompt</button>
+                                <button @click="viewLogs(selectedJob.id); selectedJob = null" class="px-3 py-1.5 text-sm bg-dark-700 hover:bg-dark-600 rounded-lg transition text-dark-300 hover:text-blue-400" title="View Logs">📋 Logs</button>
+                                <button x-show="selectedJob.self_healing?.business_log?.path" @click="viewBusinessLogs(selectedJob.id)" class="px-3 py-1.5 text-sm bg-dark-700 hover:bg-dark-600 rounded-lg transition text-dark-300 hover:text-amber-400" title="Business Logs">📊 Biz Logs</button>
+                                <button x-show="selectedJob.self_healing?.enabled" @click="triggerJobHealing(selectedJob.id)" class="px-3 py-1.5 text-sm bg-dark-700 hover:bg-dark-600 rounded-lg transition text-dark-300 hover:text-purple-400" title="Trigger Healing">🔮 Heal</button>
+                                <div class="h-5 w-px bg-dark-600 mx-1"></div>
+                                <button @click="startJob(selectedJob.id)" x-show="selectedJob.status !== 'running' && selectedJob.status !== 'queued'"
+                                    class="px-3 py-1.5 text-sm bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-lg transition">▶️ Start</button>
+                                <button @click="forceStartJob(selectedJob.id)" x-show="selectedJob.status === 'queued'"
+                                    class="px-3 py-1.5 text-sm bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 rounded-lg transition">⚡ Force Start</button>
+                                <button @click="stopJob(selectedJob.id)" x-show="selectedJob.status === 'running'"
+                                    class="px-3 py-1.5 text-sm bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">⏹️ Stop</button>
+                                <button @click="restartJob(selectedJob.id)"
+                                    class="px-3 py-1.5 text-sm bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded-lg transition">🔄 Restart</button>
+                                <button @click="forceRunJob(selectedJob.id)" x-show="(selectedJob.schedule || selectedJob.run_at) && selectedJob.status !== 'running'"
+                                    class="px-3 py-1.5 text-sm bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 rounded-lg transition">⚡ Run Now</button>
+                                <button @click="deleteJob(selectedJob.id)"
+                                    class="px-3 py-1.5 text-sm bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded-lg transition">🗑️</button>
                             </div>
-                            <div class="bg-dark-700 rounded-lg p-3">
-                                <div class="text-xs text-dark-400 mb-1">Modified</div>
-                                <div x-text="selectedJob.updated_at ? formatDateFull(selectedJob.updated_at) : '-'"></div>
-                            </div>
-                            <div class="bg-dark-700 rounded-lg p-3">
-                                <div class="text-xs text-dark-400 mb-1">Started At</div>
-                                <div x-text="selectedJob.started_at ? formatDateFull(selectedJob.started_at) : '-'"></div>
-                            </div>
-                            <div class="bg-dark-700 rounded-lg p-3">
-                                <div class="text-xs text-dark-400 mb-1">Next Run</div>
-                                <div x-text="selectedJob.next_run ? formatDateFull(selectedJob.next_run) : '-'"></div>
-                            </div>
-                        </div>
-
-                        <div class="bg-dark-700 rounded-lg p-3">
-                            <div class="text-xs text-dark-400 mb-1">Command</div>
-                            <div class="font-mono text-sm text-dark-200 break-all" x-text="selectedJob.cmd || '-'"></div>
-                        </div>
-
-                        <div x-show="selectedJob.cwd" class="bg-dark-700 rounded-lg p-3">
-                            <div class="text-xs text-dark-400 mb-1">Working Directory</div>
-                            <div class="font-mono text-sm text-dark-200 break-all" x-text="selectedJob.cwd"></div>
-                        </div>
-
-                        <div x-show="selectedJob.schedule" class="bg-dark-700 rounded-lg p-3">
-                            <div class="text-xs text-dark-400 mb-1">Schedule</div>
-                            <div class="font-mono text-sm text-dark-200" x-text="selectedJob.schedule"></div>
-                        </div>
-
-                        <div x-show="selectedJob.run_at" class="bg-dark-700 rounded-lg p-3">
-                            <div class="text-xs text-dark-400 mb-1">Run At (One-shot)</div>
-                            <div class="font-mono text-sm text-dark-200" x-text="formatDateFull(selectedJob.run_at)"></div>
-                        </div>
-
-                        <div class="flex flex-wrap gap-2 pt-4 border-t border-dark-700">
-                            <button @click="startJob(selectedJob.id)" x-show="selectedJob.status !== 'running' && selectedJob.status !== 'queued'"
-                                class="flex-1 min-w-[80px] py-2 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-lg transition">▶️ Start</button>
-                            <button @click="forceStartJob(selectedJob.id)" x-show="selectedJob.status === 'queued'"
-                                class="flex-1 min-w-[80px] py-2 bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 rounded-lg transition" title="Bypass queue and start immediately">⚡ Force Start</button>
-                            <button @click="stopJob(selectedJob.id)" x-show="selectedJob.status === 'running'"
-                                class="flex-1 min-w-[80px] py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">⏹️ Stop</button>
-                            <button @click="forceRunJob(selectedJob.id)" x-show="(selectedJob.schedule || selectedJob.run_at) && selectedJob.status !== 'running'"
-                                class="flex-1 min-w-[80px] py-2 bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 rounded-lg transition" title="Force immediate execution">⚡ Run Now</button>
-                            <button @click="restartJob(selectedJob.id)"
-                                class="flex-1 min-w-[80px] py-2 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 rounded-lg transition">🔄 Restart</button>
-                            <button @click="viewLogs(selectedJob.id); selectedJob = null"
-                                class="flex-1 min-w-[80px] py-2 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition">📜 Logs</button>
-                            <button @click="triggerJobHealing(selectedJob.id)" x-show="selectedJob.self_healing?.enabled"
-                                class="flex-1 min-w-[80px] py-2 bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 rounded-lg transition" title="Trigger Self-Healing Review">🧬 Heal</button>
-                            <button @click="deleteJob(selectedJob.id)"
-                                class="flex-1 min-w-[80px] py-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">🗑️ Delete</button>
                         </div>
                     </div>
-                </template>
+                </div>
+
+                <!-- Detail Content -->
+                <div class="max-w-[95vw] mx-auto px-4 py-6 pb-16">
+                    <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+
+                        <!-- Left Column (3/5) -->
+                        <div class="lg:col-span-3 space-y-6">
+
+                            <!-- Overview -->
+                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-5">
+                                <h3 class="text-sm font-semibold text-dark-300 uppercase tracking-wide mb-4">Overview</h3>
+                                <div class="space-y-3">
+                                    <!-- Disabled warning -->
+                                    <div x-show="selectedJob.enabled === false" class="flex items-center gap-2 px-3 py-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-yellow-400 text-sm">
+                                        <span>⚠️</span>
+                                        <span>This job is disabled</span>
+                                    </div>
+                                    <div x-show="selectedJob.name">
+                                        <div class="text-xs text-dark-400 mb-0.5">Name</div>
+                                        <div class="text-dark-200" x-text="selectedJob.name"></div>
+                                    </div>
+                                    <div x-show="selectedJob.description">
+                                        <div class="text-xs text-dark-400 mb-0.5">Description</div>
+                                        <div class="text-dark-300 text-sm" x-text="selectedJob.description"></div>
+                                    </div>
+                                    <div>
+                                        <div class="text-xs text-dark-400 mb-0.5">Command</div>
+                                        <div class="font-mono text-sm text-dark-200 break-all bg-dark-700 rounded-lg p-3" x-text="selectedJob.cmd || '-'"></div>
+                                    </div>
+                                    <div x-show="selectedJob.cwd">
+                                        <div class="text-xs text-dark-400 mb-0.5">Working Directory</div>
+                                        <div class="font-mono text-sm text-dark-300 break-all" x-text="selectedJob.cwd"></div>
+                                    </div>
+                                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2">
+                                        <div>
+                                            <div class="text-xs text-dark-400 mb-0.5">PID</div>
+                                            <div class="font-mono text-sm" x-text="selectedJob.pid || '-'"></div>
+                                        </div>
+                                        <div>
+                                            <div class="text-xs text-dark-400 mb-0.5">Restarts</div>
+                                            <div class="font-mono text-sm" x-text="selectedJob.restart_count || 0"></div>
+                                        </div>
+                                        <div x-show="selectedJob.queue">
+                                            <div class="text-xs text-dark-400 mb-0.5">Queue</div>
+                                            <div class="text-sm" x-text="selectedJob.queue || '-'"></div>
+                                        </div>
+                                        <div x-show="selectedJob.started_at">
+                                            <div class="text-xs text-dark-400 mb-0.5">Uptime</div>
+                                            <div class="text-sm" x-text="selectedJob.started_at ? formatUptime((Date.now() - new Date(selectedJob.started_at).getTime()) / 1000) : '-'"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Tags -->
+                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-5">
+                                <h3 class="text-sm font-semibold text-dark-300 uppercase tracking-wide mb-3">Tags</h3>
+                                <div class="flex flex-wrap gap-2 items-center">
+                                    <template x-for="tag in (selectedJob.tags || [])" :key="tag">
+                                        <span class="tag-badge text-dark-300">
+                                            <span x-text="tag"></span>
+                                            <span class="tag-remove text-dark-500 hover:text-red-400" @click="removeTag(selectedJob.id, tag); selectedJob.tags = selectedJob.tags.filter(t => t !== tag)">×</span>
+                                        </span>
+                                    </template>
+                                    <button class="tag-add-btn text-dark-400 hover:text-dark-200" @click="openTagInput(selectedJob.id)">+ Add tag</button>
+                                </div>
+                            </div>
+
+                            <!-- Workflows -->
+                            <div x-show="getWorkflowsForJob(selectedJob.id).length > 0" class="bg-dark-800 border border-purple-500/30 rounded-xl p-5">
+                                <h3 class="text-sm font-semibold text-purple-400 uppercase tracking-wide mb-3">⛓️ Workflows</h3>
+                                <div class="flex flex-wrap gap-2">
+                                    <template x-for="wf in getWorkflowsForJob(selectedJob.id)" :key="wf.id">
+                                        <span class="text-xs px-3 py-1.5 bg-purple-500/20 text-purple-300 rounded-lg cursor-pointer hover:bg-purple-500/30"
+                                            :title="wf.type + ': ' + wf.jobs.join(' → ')"
+                                            @click="currentTab = 'workflows'; selectedJob = null"
+                                            x-text="wf.name + ' (' + wf.type + ')'">
+                                        </span>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <!-- Dependencies -->
+                            <div x-show="selectedJob.depends_on?.length > 0 || selectedJob.dependents?.length > 0" class="bg-dark-800 border border-dark-600 rounded-xl p-5">
+                                <h3 class="text-sm font-semibold text-dark-300 uppercase tracking-wide mb-3">Dependencies</h3>
+                                <div class="space-y-3">
+                                    <div x-show="selectedJob.depends_on?.length > 0">
+                                        <span class="text-xs text-blue-400 font-medium">Depends on:</span>
+                                        <div class="flex flex-wrap gap-2 mt-1.5">
+                                            <template x-for="dep in selectedJob.depends_on" :key="dep.job">
+                                                <span class="text-xs px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg cursor-pointer hover:bg-blue-500/30 transition" @click="selectJobById(dep.job)" x-text="dep.job + ' (' + dep.condition + ')'"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div x-show="selectedJob.dependents?.length > 0">
+                                        <span class="text-xs text-green-400 font-medium">Dependents:</span>
+                                        <div class="flex flex-wrap gap-2 mt-1.5">
+                                            <template x-for="dep in selectedJob.dependents" :key="dep.job">
+                                                <span class="text-xs px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg cursor-pointer hover:bg-green-500/30 transition" @click="selectJobById(dep.job)" x-text="dep.job"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Recent Runs -->
+                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-5">
+                                <h3 class="text-sm font-semibold text-dark-300 uppercase tracking-wide mb-3">Recent Runs</h3>
+                                <div x-show="selectedJob.recent_runs?.length > 0" class="space-y-2">
+                                    <template x-for="run in (selectedJob.recent_runs || []).slice(0, 10)" :key="run.id || run.started_at">
+                                        <div class="flex items-center gap-3 bg-dark-700 rounded-lg px-3 py-2 text-sm">
+                                            <span class="w-2 h-2 rounded-full shrink-0"
+                                                :class="run.status === 'success' ? 'bg-green-500' : run.status === 'failed' ? 'bg-red-500' : run.status === 'running' ? 'bg-blue-500 animate-pulse' : 'bg-dark-400'"></span>
+                                            <span class="text-dark-300 font-mono text-xs" x-text="run.started_at ? formatDateFull(run.started_at) : '-'"></span>
+                                            <span class="text-dark-400 text-xs" x-text="run.duration ? (run.duration.toFixed(1) + 's') : '-'"></span>
+                                            <span class="text-dark-400 text-xs" x-show="run.exit_code != null" x-text="'exit: ' + run.exit_code"></span>
+                                            <span class="ml-auto text-xs" :class="run.status === 'success' ? 'text-green-400' : run.status === 'failed' ? 'text-red-400' : 'text-dark-400'" x-text="run.status"></span>
+                                        </div>
+                                    </template>
+                                </div>
+                                <div x-show="!selectedJob.recent_runs?.length" class="text-dark-500 text-sm">No recent runs available</div>
+                            </div>
+                        </div>
+
+                        <!-- Right Column (2/5) -->
+                        <div class="lg:col-span-2 space-y-6">
+
+                            <!-- Timestamps -->
+                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-5">
+                                <h3 class="text-sm font-semibold text-dark-300 uppercase tracking-wide mb-3">Timestamps</h3>
+                                <div class="space-y-2.5">
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-dark-400">Created</span>
+                                        <span class="text-dark-200 font-mono text-xs" x-text="selectedJob.created_at ? formatDateFull(selectedJob.created_at) : '-'"></span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-dark-400">Modified</span>
+                                        <span class="text-dark-200 font-mono text-xs" x-text="selectedJob.updated_at ? formatDateFull(selectedJob.updated_at) : '-'"></span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-dark-400">Started At</span>
+                                        <span class="text-dark-200 font-mono text-xs" x-text="selectedJob.started_at ? formatDateFull(selectedJob.started_at) : '-'"></span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-dark-400">Next Run</span>
+                                        <span class="text-dark-200 font-mono text-xs" x-text="selectedJob.next_run ? formatDateFull(selectedJob.next_run) : '-'"></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Configuration -->
+                            <div class="bg-dark-800 border border-dark-600 rounded-xl p-5">
+                                <h3 class="text-sm font-semibold text-dark-300 uppercase tracking-wide mb-3">Configuration</h3>
+                                <div class="space-y-2.5">
+                                    <div x-show="selectedJob.schedule" class="flex justify-between text-sm">
+                                        <span class="text-dark-400">Schedule</span>
+                                        <span class="font-mono text-dark-200 text-xs" x-text="selectedJob.schedule"></span>
+                                    </div>
+                                    <div x-show="selectedJob.run_at" class="flex justify-between text-sm">
+                                        <span class="text-dark-400">Run At</span>
+                                        <span class="font-mono text-dark-200 text-xs" x-text="selectedJob.run_at ? formatDateFull(selectedJob.run_at) : '-'"></span>
+                                    </div>
+                                    <div x-show="selectedJob.timeout" class="flex justify-between text-sm">
+                                        <span class="text-dark-400">Timeout</span>
+                                        <span class="font-mono text-dark-200 text-xs" x-text="selectedJob.timeout + 's'"></span>
+                                    </div>
+                                    <div x-show="selectedJob.queue" class="flex justify-between text-sm">
+                                        <span class="text-dark-400">Queue</span>
+                                        <span class="text-dark-200 text-xs" x-text="selectedJob.queue"></span>
+                                    </div>
+                                    
+                                    <!-- OpenClaw settings -->
+                                    <template x-if="selectedJob.type === 'openclaw'">
+                                        <div class="pt-2 mt-2 border-t border-dark-600 space-y-2">
+                                            <div class="text-xs text-orange-400 font-medium mb-1">🦞 OpenClaw</div>
+                                            <div x-show="selectedJob.model" class="flex justify-between text-sm">
+                                                <span class="text-dark-400">Model</span>
+                                                <span class="text-dark-200 text-xs" x-text="selectedJob.model"></span>
+                                            </div>
+                                            <div x-show="selectedJob.thinking" class="flex justify-between text-sm">
+                                                <span class="text-dark-400">Thinking</span>
+                                                <span class="text-dark-200 text-xs" x-text="selectedJob.thinking"></span>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    
+                                    <!-- Retry Config -->
+                                    <template x-if="selectedJob.retry">
+                                        <div class="pt-2 mt-2 border-t border-dark-600 space-y-2">
+                                            <div class="text-xs text-dark-400 font-medium mb-1">Retry</div>
+                                            <div class="flex justify-between text-sm">
+                                                <span class="text-dark-400">Enabled</span>
+                                                <span class="text-dark-200 text-xs" x-text="selectedJob.retry?.enabled ? '✅' : '❌'"></span>
+                                            </div>
+                                            <div x-show="selectedJob.retry?.enabled" class="flex justify-between text-sm">
+                                                <span class="text-dark-400">Max Retries</span>
+                                                <span class="text-dark-200 text-xs" x-text="selectedJob.retry?.max_retries || 3"></span>
+                                            </div>
+                                            <div x-show="selectedJob.retry?.enabled" class="flex justify-between text-sm">
+                                                <span class="text-dark-400">Delay</span>
+                                                <span class="text-dark-200 text-xs" x-text="(selectedJob.retry?.delay || 5) + 's'"></span>
+                                            </div>
+                                            <div x-show="selectedJob.retry?.enabled && selectedJob.retry?.backoff" class="flex justify-between text-sm">
+                                                <span class="text-dark-400">Backoff</span>
+                                                <span class="text-dark-200 text-xs" x-text="selectedJob.retry?.backoff"></span>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    
+                                    <!-- Health Check -->
+                                    <template x-if="selectedJob.health_check">
+                                        <div class="pt-2 mt-2 border-t border-dark-600 space-y-2">
+                                            <div class="text-xs text-dark-400 font-medium mb-1">Health Check</div>
+                                            <div x-show="selectedJob.health_check?.type" class="flex justify-between text-sm">
+                                                <span class="text-dark-400">Type</span>
+                                                <span class="text-dark-200 text-xs" x-text="selectedJob.health_check?.type"></span>
+                                            </div>
+                                            <div x-show="selectedJob.health_check?.interval" class="flex justify-between text-sm">
+                                                <span class="text-dark-400">Interval</span>
+                                                <span class="text-dark-200 text-xs" x-text="selectedJob.health_check?.interval + 's'"></span>
+                                            </div>
+                                            <div x-show="selectedJob.health_check?.timeout" class="flex justify-between text-sm">
+                                                <span class="text-dark-400">Timeout</span>
+                                                <span class="text-dark-200 text-xs" x-text="selectedJob.health_check?.timeout + 's'"></span>
+                                            </div>
+                                            <div x-show="selectedJob.health_check?.endpoint" class="flex justify-between text-sm">
+                                                <span class="text-dark-400">Endpoint</span>
+                                                <span class="text-dark-200 text-xs font-mono truncate max-w-[150px]" :title="selectedJob.health_check?.endpoint" x-text="selectedJob.health_check?.endpoint"></span>
+                                            </div>
+                                            <div x-show="selectedJob.health_check?.max_failures" class="flex justify-between text-sm">
+                                                <span class="text-dark-400">Max Failures</span>
+                                                <span class="text-dark-200 text-xs" x-text="selectedJob.health_check?.max_failures"></span>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    
+                                    <!-- Environment Variables -->
+                                    <template x-if="selectedJob.env && Object.keys(selectedJob.env).length > 0">
+                                        <div class="pt-2 mt-2 border-t border-dark-600">
+                                            <div class="text-xs text-dark-400 font-medium mb-2">Environment Variables</div>
+                                            <div class="space-y-1.5 max-h-32 overflow-y-auto scrollbar-thin">
+                                                <template x-for="[key, val] in Object.entries(selectedJob.env || {})" :key="key">
+                                                    <div class="flex gap-2 text-xs">
+                                                        <span class="text-blue-400 font-mono" x-text="key"></span>
+                                                        <span class="text-dark-500">=</span>
+                                                        <span class="text-dark-300 font-mono truncate" :title="val" x-text="String(val).length > 30 ? String(val).slice(0, 30) + '...' : val"></span>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <!-- SLA -->
+                            <div x-show="selectedJob.sla_score != null || selectedJob.sla?.enabled" class="bg-dark-800 border border-dark-600 rounded-xl p-5">
+                                <h3 class="text-sm font-semibold text-dark-300 uppercase tracking-wide mb-3">📊 SLA</h3>
+                                
+                                <!-- Score display (existing) -->
+                                <div x-show="selectedJob.sla_score != null" class="mb-4">
+                                    <div class="flex items-center gap-3 mb-2">
+                                        <span class="text-3xl font-bold" :class="getSLABadgeClass(selectedJob.sla_score, selectedJob.sla_status)" x-text="selectedJob.sla_score?.toFixed(0) + '%'"></span>
+                                        <span x-text="getSLAIcon(selectedJob.sla_status)" class="text-xl"></span>
+                                        <span x-show="selectedJob.sla_trend" x-text="getTrendIcon(selectedJob.sla_trend)" :class="getTrendClass(selectedJob.sla_trend)" class="text-lg"></span>
+                                    </div>
+                                    <div class="text-xs text-dark-400" x-text="'Status: ' + (selectedJob.sla_status || 'unknown')"></div>
+                                </div>
+                                
+                                <!-- SLA Configuration -->
+                                <div x-show="selectedJob.sla" class="space-y-2 text-sm pt-2 border-t border-dark-600">
+                                    <div class="flex justify-between">
+                                        <span class="text-dark-400">Enabled</span>
+                                        <span class="text-dark-200" x-text="selectedJob.sla?.enabled ? '✅' : '❌'"></span>
+                                    </div>
+                                    <div x-show="selectedJob.sla?.success_rate" class="flex justify-between">
+                                        <span class="text-dark-400">Success Rate Target</span>
+                                        <span class="text-dark-200" x-text="selectedJob.sla?.success_rate + '%'"></span>
+                                    </div>
+                                    <div x-show="selectedJob.sla?.schedule_tolerance" class="flex justify-between">
+                                        <span class="text-dark-400">Schedule Tolerance</span>
+                                        <span class="text-dark-200" x-text="selectedJob.sla?.schedule_tolerance + 's'"></span>
+                                    </div>
+                                    <div x-show="selectedJob.sla?.max_duration" class="flex justify-between">
+                                        <span class="text-dark-400">Max Duration</span>
+                                        <span class="text-dark-200" x-text="selectedJob.sla?.max_duration + 's'"></span>
+                                    </div>
+                                    <div x-show="selectedJob.sla?.evaluation_period" class="flex justify-between">
+                                        <span class="text-dark-400">Evaluation Period</span>
+                                        <span class="text-dark-200" x-text="selectedJob.sla?.evaluation_period"></span>
+                                    </div>
+                                    <div x-show="selectedJob.sla?.alert_threshold" class="flex justify-between">
+                                        <span class="text-dark-400">Alert Threshold</span>
+                                        <span class="text-dark-200" x-text="selectedJob.sla?.alert_threshold + '%'"></span>
+                                    </div>
+                                    <div x-show="selectedJob.sla?.alert_on_breach != null" class="flex justify-between">
+                                        <span class="text-dark-400">Alert on Breach</span>
+                                        <span class="text-dark-200" x-text="selectedJob.sla?.alert_on_breach ? '✅' : '❌'"></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Self-Healing -->
+                            <div x-show="selectedJob.self_healing?.enabled" class="bg-dark-800 border border-purple-500/20 rounded-xl p-5">
+                                <h3 class="text-sm font-semibold text-purple-400 uppercase tracking-wide mb-3">🧬 Self-Healing</h3>
+                                <div class="space-y-2 text-sm">
+                                    <!-- Status & Mode -->
+                                    <div class="flex justify-between">
+                                        <span class="text-dark-400">Status</span>
+                                        <span class="text-green-400">Enabled</span>
+                                    </div>
+                                    <div x-show="selectedJob.self_healing?.mode" class="flex justify-between">
+                                        <span class="text-dark-400">Mode</span>
+                                        <span class="text-dark-200" x-text="selectedJob.self_healing?.mode === 'proactive' ? '🟣 Proactive' : selectedJob.self_healing?.mode === 'reactive' ? '🔴 Reactive' : selectedJob.self_healing?.mode"></span>
+                                    </div>
+                                    <div x-show="selectedJob.self_healing?.preset" class="flex justify-between">
+                                        <span class="text-dark-400">Preset</span>
+                                        <span class="text-dark-200 capitalize" x-text="selectedJob.self_healing?.preset"></span>
+                                    </div>
+                                    
+                                    <!-- Review Schedule (for proactive mode) -->
+                                    <template x-if="selectedJob.self_healing?.mode === 'proactive' && selectedJob.self_healing?.review_schedule">
+                                        <div class="pt-2 mt-2 border-t border-dark-600 space-y-2">
+                                            <div class="text-xs text-purple-400 font-medium">📅 Review Schedule</div>
+                                            <div x-show="selectedJob.self_healing?.review_schedule?.frequency" class="flex justify-between">
+                                                <span class="text-dark-400">Frequency</span>
+                                                <span class="text-dark-200 capitalize" x-text="selectedJob.self_healing?.review_schedule?.frequency"></span>
+                                            </div>
+                                            <div x-show="selectedJob.self_healing?.review_schedule?.time" class="flex justify-between">
+                                                <span class="text-dark-400">Time</span>
+                                                <span class="text-dark-200" x-text="selectedJob.self_healing?.review_schedule?.time"></span>
+                                            </div>
+                                            <div x-show="selectedJob.self_healing?.review_schedule?.day != null" class="flex justify-between">
+                                                <span class="text-dark-400">Day</span>
+                                                <span class="text-dark-200" x-text="['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][selectedJob.self_healing?.review_schedule?.day]"></span>
+                                            </div>
+                                            <div x-show="selectedJob.self_healing?.review_schedule?.day_of_month" class="flex justify-between">
+                                                <span class="text-dark-400">Day of Month</span>
+                                                <span class="text-dark-200" x-text="selectedJob.self_healing?.review_schedule?.day_of_month"></span>
+                                            </div>
+                                            <div x-show="selectedJob.self_healing?.review_schedule?.min_runs" class="flex justify-between">
+                                                <span class="text-dark-400">Min Runs</span>
+                                                <span class="text-dark-200" x-text="selectedJob.self_healing?.review_schedule?.min_runs"></span>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    
+                                    <!-- Remediation -->
+                                    <template x-if="selectedJob.self_healing?.remediation">
+                                        <div class="pt-2 mt-2 border-t border-dark-600 space-y-2">
+                                            <div class="text-xs text-dark-400 font-medium">Remediation</div>
+                                            <div x-show="selectedJob.self_healing?.remediation?.max_attempts" class="flex justify-between">
+                                                <span class="text-dark-400">Max Attempts</span>
+                                                <span class="text-dark-200" x-text="selectedJob.self_healing?.remediation?.max_attempts"></span>
+                                            </div>
+                                            <div x-show="selectedJob.self_healing?.remediation?.require_approval != null" class="flex justify-between">
+                                                <span class="text-dark-400">Require Approval</span>
+                                                <span class="text-dark-200" x-text="selectedJob.self_healing?.remediation?.require_approval ? '✅' : '❌'"></span>
+                                            </div>
+                                            <div x-show="selectedJob.self_healing?.remediation?.allowed_actions?.length">
+                                                <div class="text-dark-400 mb-1">Allowed Actions</div>
+                                                <div class="flex flex-wrap gap-1">
+                                                    <template x-for="action in (selectedJob.self_healing?.remediation?.allowed_actions || [])" :key="action">
+                                                        <span class="text-xs px-2 py-0.5 bg-dark-600 text-dark-300 rounded" x-text="action.replace(/_/g, ' ')"></span>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    
+                                    <!-- Suggestions -->
+                                    <template x-if="selectedJob.self_healing?.suggestions">
+                                        <div class="pt-2 mt-2 border-t border-dark-600 space-y-2">
+                                            <div class="text-xs text-dark-400 font-medium">Suggestions</div>
+                                            <div class="flex justify-between">
+                                                <span class="text-dark-400">Auto Apply</span>
+                                                <span class="text-dark-200" x-text="selectedJob.self_healing?.suggestions?.auto_apply ? '✅' : '❌'"></span>
+                                            </div>
+                                            <div x-show="selectedJob.self_healing?.suggestions?.auto_apply && selectedJob.self_healing?.suggestions?.min_severity_for_approval" class="flex justify-between">
+                                                <span class="text-dark-400">Min Severity for Approval</span>
+                                                <span class="text-dark-200 capitalize" x-text="selectedJob.self_healing?.suggestions?.min_severity_for_approval"></span>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    
+                                    <!-- State -->
+                                    <div class="pt-2 mt-2 border-t border-dark-600 space-y-2">
+                                        <div x-show="selectedJob.self_healing?.pending_suggestions" class="flex justify-between">
+                                            <span class="text-dark-400">Pending Suggestions</span>
+                                            <span class="text-yellow-400" x-text="selectedJob.self_healing?.pending_suggestions"></span>
+                                        </div>
+                                        <div x-show="selectedJob.self_healing?.last_review" class="flex justify-between">
+                                            <span class="text-dark-400">Last Review</span>
+                                            <span class="text-dark-300 text-xs" x-text="formatDateFull(selectedJob.self_healing.last_review)"></span>
+                                        </div>
+                                    </div>
+                                    
+                                    <button @click="triggerJobHealing(selectedJob.id)" class="w-full mt-2 py-1.5 text-xs bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 rounded-lg transition">🔮 Trigger Review</button>
+                                </div>
+                            </div>
+
+                            <!-- Business Logs Summary -->
+                            <div x-show="selectedJob.self_healing?.business_log?.path" class="bg-dark-800 border border-dark-600 rounded-xl p-5">
+                                <h3 class="text-sm font-semibold text-amber-400 uppercase tracking-wide mb-3">📊 Business Logs</h3>
+                                <div class="space-y-2 text-sm">
+                                    <div>
+                                        <div class="text-dark-400 text-xs mb-0.5">Path</div>
+                                        <div class="font-mono text-xs text-dark-300 break-all bg-dark-700 rounded px-2 py-1" x-text="selectedJob.self_healing?.business_log?.path"></div>
+                                    </div>
+                                    <div x-show="selectedJob.self_healing?.business_log?.max_lines" class="flex justify-between">
+                                        <span class="text-dark-400">Max Lines</span>
+                                        <span class="text-dark-200" x-text="selectedJob.self_healing?.business_log?.max_lines"></span>
+                                    </div>
+                                    <div x-show="selectedJob.self_healing?.business_log?.summary_path">
+                                        <div class="text-dark-400 text-xs mb-0.5">Summary Path</div>
+                                        <div class="font-mono text-xs text-dark-300 break-all" x-text="selectedJob.self_healing?.business_log?.summary_path"></div>
+                                    </div>
+                                    <div x-show="selectedJob.self_healing?.business_log?.context_prompt" x-data="{ expanded: false }">
+                                        <div class="text-dark-400 text-xs mb-0.5 flex justify-between items-center">
+                                            <span>Context Prompt</span>
+                                            <button type="button" @click="expanded = !expanded" class="text-xs text-accent-400 hover:text-accent-300" x-text="expanded ? 'Collapse' : 'Expand'"></button>
+                                        </div>
+                                        <div class="text-dark-300 text-xs bg-dark-700 rounded px-2 py-1"
+                                            :class="expanded ? '' : 'line-clamp-2'"
+                                            x-text="selectedJob.self_healing?.business_log?.context_prompt">
+                                        </div>
+                                    </div>
+                                </div>
+                                <button @click="viewBusinessLogs(selectedJob.id)" class="w-full mt-3 py-1.5 text-xs bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 rounded-lg transition">View All Business Logs →</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-        </div>
+        </template>
     </div>
 
     <!-- Prompt Editor Modal -->
@@ -4173,7 +4474,10 @@
                             if (updated) this.selectedJob = updated;
                         }
                         
+                        if (this.currentTab === 'runs') await this.loadRuns();
                         if (this.currentTab === 'dlq') await this.loadDlq();
+                        if (this.currentTab === 'workflows') await this.loadWorkflows();
+                        if (this.currentTab === 'healing') await this.loadHealingData();
                         if (this.currentTab === 'config') await this.loadAuthConfig();
                         this.lastUpdate = new Date();
                     } catch (e) {
