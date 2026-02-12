@@ -2345,7 +2345,7 @@
 
                 <!-- Sub-tabs -->
                 <div class="flex items-center gap-1 mb-4 border-b border-dark-600 pb-2">
-                    <template x-for="tab in ['Overview', 'Trades', 'Decisions', 'Equity', 'Events']" :key="tab">
+                    <template x-for="tab in ['Overview', 'Trades', 'Decisions', 'Scans', 'Equity', 'Events']" :key="tab">
                         <button @click="tradingSubTab = tab.toLowerCase()" 
                             :class="tradingSubTab === tab.toLowerCase() ? 'bg-dark-700 text-accent-400' : 'text-dark-300 hover:text-dark-100'"
                             class="px-3 py-1.5 text-sm font-medium rounded-lg transition" x-text="tab">
@@ -2402,48 +2402,85 @@
 
                 <!-- Trades Sub-tab -->
                 <div x-show="tradingSubTab === 'trades'">
-                    <div class="flex gap-2 mb-3">
+                    <div class="flex items-center gap-2 mb-3">
                         <template x-for="f in ['all', 'open', 'closed']" :key="f">
                             <button @click="tradingTradeFilter = f; loadTradingTrades()" 
                                 :class="tradingTradeFilter === f ? 'bg-dark-600 text-dark-100' : 'text-dark-400 hover:text-dark-200'"
                                 class="px-3 py-1 text-xs rounded-lg transition capitalize" x-text="f"></button>
                         </template>
+                        <div class="ml-auto relative">
+                            <button @click="showTradeColumnPicker = !showTradeColumnPicker" 
+                                class="text-dark-400 hover:text-dark-200 text-xs px-2 py-1 rounded border border-dark-600 hover:border-dark-500 transition flex items-center gap-1">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+                                Columns
+                            </button>
+                            <div x-show="showTradeColumnPicker" @click.outside="showTradeColumnPicker = false"
+                                class="absolute right-0 top-8 z-50 bg-dark-700 border border-dark-600 rounded-lg shadow-xl p-2 w-48">
+                                <template x-for="col in allTradeColumns" :key="col.id">
+                                    <label class="flex items-center gap-2 px-2 py-1 hover:bg-dark-600 rounded cursor-pointer text-xs">
+                                        <input type="checkbox" :checked="tradingTradeColumns.includes(col.id)" 
+                                            @change="
+                                                if ($event.target.checked) { tradingTradeColumns.push(col.id) } 
+                                                else { tradingTradeColumns = tradingTradeColumns.filter(c => c !== col.id) }
+                                                localStorage.setItem('tradingTradeColumns', JSON.stringify(tradingTradeColumns))
+                                            "
+                                            class="rounded border-dark-500 bg-dark-800 text-blue-500 focus:ring-0 focus:ring-offset-0">
+                                        <span class="text-dark-200" x-text="col.label"></span>
+                                    </label>
+                                </template>
+                            </div>
+                        </div>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="w-full text-sm">
                             <thead>
                                 <tr class="text-dark-400 text-xs uppercase border-b border-dark-600">
-                                    <th class="py-2 px-3 text-left">Market</th>
-                                    <th class="py-2 px-3 text-left">Side</th>
-                                    <th class="py-2 px-3 text-right">Entry</th>
-                                    <th class="py-2 px-3 text-right">Exit</th>
-                                    <th class="py-2 px-3 text-right">Size</th>
-                                    <th class="py-2 px-3 text-right">PnL</th>
-                                    <th class="py-2 px-3 text-right">PnL%</th>
-                                    <th class="py-2 px-3 text-left">Reason</th>
-                                    <th class="py-2 px-3 text-left">Status</th>
+                                    <th x-show="tradingTradeColumns.includes('market')" class="py-2 px-3 text-left">Market</th>
+                                    <th x-show="tradingTradeColumns.includes('side')" class="py-2 px-3 text-left">Side</th>
+                                    <th x-show="tradingTradeColumns.includes('entry')" class="py-2 px-3 text-right">Entry</th>
+                                    <th x-show="tradingTradeColumns.includes('exit')" class="py-2 px-3 text-right">Exit</th>
+                                    <th x-show="tradingTradeColumns.includes('opened')" class="py-2 px-3 text-left">Opened</th>
+                                    <th x-show="tradingTradeColumns.includes('closed')" class="py-2 px-3 text-left">Closed</th>
+                                    <th x-show="tradingTradeColumns.includes('hold')" class="py-2 px-3 text-right">Hold</th>
+                                    <th x-show="tradingTradeColumns.includes('size')" class="py-2 px-3 text-right">Size</th>
+                                    <th x-show="tradingTradeColumns.includes('pnl')" class="py-2 px-3 text-right">PnL</th>
+                                    <th x-show="tradingTradeColumns.includes('pnl_pct')" class="py-2 px-3 text-right">PnL%</th>
+                                    <th x-show="tradingTradeColumns.includes('reason')" class="py-2 px-3 text-left">Reason</th>
+                                    <th x-show="tradingTradeColumns.includes('status')" class="py-2 px-3 text-left">Status</th>
+                                    <th x-show="tradingTradeColumns.includes('strategy')" class="py-2 px-3 text-left">Strategy</th>
+                                    <th x-show="tradingTradeColumns.includes('target')" class="py-2 px-3 text-right">Target</th>
+                                    <th x-show="tradingTradeColumns.includes('stop')" class="py-2 px-3 text-right">Stop</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <template x-for="trade in tradingTrades" :key="trade.id">
                                     <tr class="border-b border-dark-700 hover:bg-dark-700/30">
-                                        <td class="py-2 px-3 max-w-[200px] truncate" x-text="trade.market"></td>
-                                        <td class="py-2 px-3" x-text="trade.side || '-'"></td>
-                                        <td class="py-2 px-3 text-right tabular-nums" x-text="trade.entry_price != null ? trade.entry_price.toFixed(4) : '-'"></td>
-                                        <td class="py-2 px-3 text-right tabular-nums" x-text="trade.exit_price != null ? trade.exit_price.toFixed(4) : '-'"></td>
-                                        <td class="py-2 px-3 text-right tabular-nums" x-text="trade.size != null ? '$' + trade.size.toFixed(0) : '-'"></td>
-                                        <td class="py-2 px-3 text-right tabular-nums font-medium" 
+                                        <td x-show="tradingTradeColumns.includes('market')" class="py-2 px-3 max-w-[200px] truncate" x-text="trade.market"></td>
+                                        <td x-show="tradingTradeColumns.includes('side')" class="py-2 px-3" x-text="trade.side || '-'"></td>
+                                        <td x-show="tradingTradeColumns.includes('entry')" class="py-2 px-3 text-right tabular-nums" x-text="trade.entry_price != null ? trade.entry_price.toFixed(4) : '-'"></td>
+                                        <td x-show="tradingTradeColumns.includes('exit')" class="py-2 px-3 text-right tabular-nums" x-text="trade.exit_price != null ? trade.exit_price.toFixed(4) : '-'"></td>
+                                        <td x-show="tradingTradeColumns.includes('opened')" class="py-2 px-3 text-xs tabular-nums text-dark-300" 
+                                            x-text="trade.opened_at ? new Date(trade.opened_at).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '-'"></td>
+                                        <td x-show="tradingTradeColumns.includes('closed')" class="py-2 px-3 text-xs tabular-nums text-dark-300" 
+                                            x-text="trade.closed_at ? new Date(trade.closed_at).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '-'"></td>
+                                        <td x-show="tradingTradeColumns.includes('hold')" class="py-2 px-3 text-right text-xs tabular-nums text-dark-400"
+                                            x-text="trade.hold_duration_hours != null ? (trade.hold_duration_hours < 1 ? Math.round(trade.hold_duration_hours * 60) + 'm' : trade.hold_duration_hours.toFixed(1) + 'h') : '-'"></td>
+                                        <td x-show="tradingTradeColumns.includes('size')" class="py-2 px-3 text-right tabular-nums" x-text="trade.size != null ? '$' + trade.size.toFixed(0) : '-'"></td>
+                                        <td x-show="tradingTradeColumns.includes('pnl')" class="py-2 px-3 text-right tabular-nums font-medium" 
                                             :class="(trade.pnl || 0) > 0 ? 'text-green-400' : (trade.pnl || 0) < 0 ? 'text-red-400' : 'text-dark-300'"
                                             x-text="trade.pnl != null ? '$' + trade.pnl.toFixed(2) : '-'"></td>
-                                        <td class="py-2 px-3 text-right tabular-nums" 
+                                        <td x-show="tradingTradeColumns.includes('pnl_pct')" class="py-2 px-3 text-right tabular-nums" 
                                             :class="(trade.pnl_pct || 0) > 0 ? 'text-green-400' : (trade.pnl_pct || 0) < 0 ? 'text-red-400' : 'text-dark-300'"
                                             x-text="trade.pnl_pct != null ? trade.pnl_pct.toFixed(1) + '%' : '-'"></td>
-                                        <td class="py-2 px-3 text-xs text-dark-400" x-text="trade.reason || '-'"></td>
-                                        <td class="py-2 px-3">
+                                        <td x-show="tradingTradeColumns.includes('reason')" class="py-2 px-3 text-xs text-dark-400" x-text="trade.reason || '-'"></td>
+                                        <td x-show="tradingTradeColumns.includes('status')" class="py-2 px-3">
                                             <span class="px-2 py-0.5 rounded-full text-xs"
                                                 :class="trade.status === 'open' ? 'bg-blue-500/20 text-blue-400' : 'bg-dark-600 text-dark-300'"
                                                 x-text="trade.status"></span>
                                         </td>
+                                        <td x-show="tradingTradeColumns.includes('strategy')" class="py-2 px-3 text-xs text-dark-400" x-text="trade.strategy || '-'"></td>
+                                        <td x-show="tradingTradeColumns.includes('target')" class="py-2 px-3 text-right tabular-nums text-xs" x-text="trade.target_price != null ? trade.target_price.toFixed(4) : '-'"></td>
+                                        <td x-show="tradingTradeColumns.includes('stop')" class="py-2 px-3 text-right tabular-nums text-xs" x-text="trade.stop_loss != null ? trade.stop_loss.toFixed(4) : '-'"></td>
                                     </tr>
                                 </template>
                             </tbody>
@@ -2476,6 +2513,55 @@
                         </template>
                     </div>
                     <div x-show="tradingDecisions.length === 0" class="text-center py-8 text-dark-400 text-sm">No decisions found</div>
+                </div>
+
+                <!-- Scans Sub-tab -->
+                <div x-show="tradingSubTab === 'scans'">
+                    <div class="space-y-2 max-h-[60vh] overflow-y-auto scrollbar-thin">
+                        <template x-for="scan in tradingScans" :key="scan.id">
+                            <div class="bg-dark-800 border border-dark-600 rounded-lg p-3">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <span class="text-blue-400 text-sm font-medium">🔍 Scan #<span x-text="scan.id"></span></span>
+                                    <span class="text-xs text-dark-400" x-text="timeAgo(scan.ts)"></span>
+                                    <span class="text-xs text-dark-500" x-text="new Date(scan.ts).toLocaleString()"></span>
+                                </div>
+                                <div class="grid grid-cols-3 gap-3 text-xs">
+                                    <div>
+                                        <span class="text-dark-400">Markets scanned:</span>
+                                        <span class="text-dark-200 ml-1 font-medium" x-text="scan.data?.markets_scanned ?? '—'"></span>
+                                    </div>
+                                    <div>
+                                        <span class="text-dark-400">Opportunities:</span>
+                                        <span class="font-medium ml-1" 
+                                            :class="(scan.data?.opportunities_found || 0) > 0 ? 'text-green-400' : 'text-dark-300'"
+                                            x-text="scan.data?.opportunities_found ?? '—'"></span>
+                                    </div>
+                                    <div>
+                                        <span class="text-dark-400">Duration:</span>
+                                        <span class="text-dark-200 ml-1 font-medium" x-text="scan.data?.duration_ms ? (scan.data.duration_ms / 1000).toFixed(1) + 's' : '—'"></span>
+                                    </div>
+                                </div>
+                                <!-- Decisions taken in this scan (if any) -->
+                                <template x-if="scan._decisions && scan._decisions.length > 0">
+                                    <div class="mt-2 pt-2 border-t border-dark-700">
+                                        <div class="text-xs text-dark-400 mb-1">Decisions in this scan:</div>
+                                        <div class="space-y-1">
+                                            <template x-for="dec in scan._decisions" :key="dec.id">
+                                                <div class="flex items-center gap-2 text-xs">
+                                                    <span class="px-1.5 py-0.5 rounded font-medium"
+                                                        :class="dec.action === 'buy' ? 'bg-green-500/20 text-green-400' : dec.action === 'sell' ? 'bg-red-500/20 text-red-400' : 'bg-dark-700 text-dark-500'"
+                                                        x-text="dec.action.toUpperCase()"></span>
+                                                    <span class="text-dark-300 truncate" x-text="dec.market"></span>
+                                                    <span class="text-dark-500 truncate ml-auto max-w-[40%]" x-text="dec.reason || ''"></span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                    <div x-show="tradingScans.length === 0" class="text-center py-8 text-dark-400 text-sm">No scans found yet</div>
                 </div>
 
                 <!-- Equity Sub-tab -->
@@ -4403,13 +4489,25 @@
                 tradingJobStats: null,
                 tradingTrades: [],
                 tradingDecisions: [],
+                tradingScans: [],
                 tradingEvents: [],
                 tradingEquity: [],
                 tradingTradeFilter: 'all',
                 tradingDecisionFilter: null,
                 tradingEventFilter: null,
                 tradingEquityPeriod: 'all',
-                tradingViewMode: 'cards',
+                tradingViewMode: 'compare',
+                tradingTradeColumns: JSON.parse(localStorage.getItem('tradingTradeColumns') || 'null') || ['market','side','entry','exit','opened','closed','size','pnl','pnl_pct','status'],
+                showTradeColumnPicker: false,
+                allTradeColumns: [
+                    {id:'market', label:'Market'}, {id:'side', label:'Side'}, 
+                    {id:'entry', label:'Entry'}, {id:'exit', label:'Exit'},
+                    {id:'opened', label:'Opened'}, {id:'closed', label:'Closed'},
+                    {id:'hold', label:'Hold Time'},
+                    {id:'size', label:'Size'}, {id:'pnl', label:'PnL'}, {id:'pnl_pct', label:'PnL%'},
+                    {id:'reason', label:'Reason'}, {id:'status', label:'Status'},
+                    {id:'strategy', label:'Strategy'}, {id:'target', label:'Target'}, {id:'stop', label:'Stop Loss'},
+                ],
                 tradingShowAlerts: false,
                 tradingAlerts: [],
                 tradingCompareData: [],
@@ -4567,10 +4665,16 @@
                             this.loadTradingData();
                             if (this.tradingSelectedJob) {
                                 this.loadTradingJobStats();
-                                if (this.tradingSubTab === 'equity' || this.tradingSubTab === 'overview') this.loadTradingEquity();
+                                if (this.tradingSubTab === 'overview' || this.tradingSubTab === 'equity') this.loadTradingEquity();
+                                if (this.tradingSubTab === 'trades') this.loadTradingTrades();
+                                if (this.tradingSubTab === 'decisions') this.loadTradingDecisions();
+                                if (this.tradingSubTab === 'scans') this.loadTradingScans();
+                                if (this.tradingSubTab === 'events') this.loadTradingEvents();
+                            } else if (this.tradingViewMode === 'compare') {
+                                this.loadTradingCompare();
                             }
                         }
-                    }, 30000);
+                    }, 15000);
                     
                     // Auto-refresh healing data when switching to healing tab
                     this.$watch('currentTab', (newTab) => {
@@ -6331,6 +6435,8 @@
                         if (res.ok) {
                             this.tradingOverview = await res.json();
                         }
+                        // Auto-load compare data since it's the default view
+                        await this.loadTradingCompare();
                     } catch (e) { console.error('Failed to load trading data:', e); }
                 },
                 
@@ -6340,6 +6446,7 @@
                     await this.loadTradingJobStats();
                     await this.loadTradingTrades();
                     await this.loadTradingEquity();
+                    await this.loadTradingScans();
                 },
                 
                 async loadTradingJobStats() {
@@ -6376,6 +6483,45 @@
                     } catch (e) { console.error('Failed to load decisions:', e); }
                 },
                 
+                async loadTradingScans() {
+                    if (!this.tradingSelectedJob) return;
+                    try {
+                        // Load scan events
+                        const res = await fetch(`/api/v1/trading/${this.tradingSelectedJob}/events?event_type=scan&limit=100`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            const scans = data.events || [];
+                            
+                            // Load decisions to attach to each scan
+                            const decRes = await fetch(`/api/v1/trading/${this.tradingSelectedJob}/decisions?limit=500`);
+                            let allDecisions = [];
+                            if (decRes.ok) {
+                                const decData = await decRes.json();
+                                allDecisions = decData.decisions || [];
+                            }
+                            
+                            // Parse data field and attach decisions
+                            for (const scan of scans) {
+                                // Normalize data: use parsed_data if available, else parse data string
+                                if (scan.parsed_data) {
+                                    scan.data = scan.parsed_data;
+                                } else if (typeof scan.data === 'string') {
+                                    try { scan.data = JSON.parse(scan.data); } catch(e) { scan.data = {}; }
+                                }
+                                
+                                // Attach decisions within 60s after scan
+                                const scanTime = new Date(scan.ts).getTime();
+                                scan._decisions = allDecisions.filter(d => {
+                                    const decTime = new Date(d.ts).getTime();
+                                    return decTime >= scanTime && decTime < scanTime + 60000;
+                                });
+                            }
+                            
+                            this.tradingScans = scans;
+                        }
+                    } catch (e) { console.error('Failed to load scans:', e); }
+                },
+
                 async loadTradingEvents() {
                     if (!this.tradingSelectedJob) return;
                     const type = this.tradingEventFilter ? `&event_type=${this.tradingEventFilter}` : '';

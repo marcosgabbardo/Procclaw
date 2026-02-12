@@ -1972,7 +1972,7 @@ class Supervisor:
                 else:
                     # Max retries reached - move to DLQ and try self-healing
                     state.retry_attempt = 0
-                    self._dlq.add_entry(
+                    self._dlq.add(
                         job_id=job_id,
                         run_id=last_run.id if last_run else None,
                         error=state.last_error or f"Exit code: {exit_code}",
