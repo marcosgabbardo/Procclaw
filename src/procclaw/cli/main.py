@@ -112,8 +112,10 @@ def daemon_start(
     # Check if already running
     pid = get_daemon_pid()
     if pid:
+        # Exit with 0 to prevent launchd KeepAlive from restarting
+        # Only log on first detection to avoid spam
         console.print(f"[yellow]Daemon is already running (PID: {pid})[/yellow]")
-        raise typer.Exit(1)
+        raise typer.Exit(0)
 
     # Ensure config exists
     create_default_config()

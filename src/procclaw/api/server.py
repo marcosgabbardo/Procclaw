@@ -1606,7 +1606,7 @@ def create_app() -> FastAPI:
         
         # For continuous jobs, auto-start after resume
         from procclaw.models import JobType
-        if job.type == JobType.CONTINUOUS and not supervisor.is_job_running(job_id):
+        if job.type in (JobType.CONTINUOUS, JobType.TRADE) and not supervisor.is_job_running(job_id):
             supervisor.start_job(job_id, trigger="resume")
         
         return ActionResponse(

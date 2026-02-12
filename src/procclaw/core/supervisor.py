@@ -538,9 +538,9 @@ class Supervisor:
                 self._adopt_orphan_process(job_id, state.pid)
                 return False
 
-        # For continuous jobs, kill any orphan processes before starting
+        # For continuous/trade jobs, kill any orphan processes before starting
         # This handles cases where daemon was killed abruptly (kill -9)
-        if job.type == JobType.CONTINUOUS:
+        if job.type in (JobType.CONTINUOUS, JobType.TRADE):
             killed = self._kill_orphan_processes(job_id)
             if killed > 0:
                 logger.info(f"Killed {killed} orphan process(es) for continuous job '{job_id}'")
@@ -1697,6 +1697,8 @@ class Supervisor:
             job: Job configuration
             run_id: Run ID for wrapper tracking (completion markers & heartbeat)
         """
+        import threading
+        
         # Prepare working directory
         cwd = Path(job.cwd).expanduser() if job.cwd else Path.cwd()
         if not cwd.exists():
@@ -1744,16 +1746,68 @@ class Supervisor:
             cmd = wrapped_cmd
             shell = True
 
+        # For trade jobs, use PIPE for stdout so we can intercept and parse events
+        is_trade_job = job.type == JobType.TRADE
+        
         # Spawn process
         process = subprocess.Popen(
             cmd,
             shell=shell,
             cwd=cwd,
             env=env,
-            stdout=stdout_file,
+            stdout=subprocess.PIPE if is_trade_job else stdout_file,
             stderr=stderr_file,
             start_new_session=True,  # Create new process group
         )
+        
+        # For trade jobs, start a reader thread that tees stdout to log file
+        # AND parses trade events
+        if is_trade_job and process.stdout:
+            from procclaw.core.trade_parser import TradeEventParser
+            
+            parser = TradeEventParser(db=self.db, job_id=job_id, run_id=run_id)
+            
+            def _trade_stdout_reader(
+                proc_stdout,
+                log_file,
+                trade_parser: TradeEventParser,
+                jid: str,
+            ):
+                """Read stdout line by line, log and parse trade events."""
+                try:
+                    for raw_line in iter(proc_stdout.readline, b""):
+                        try:
+                            line = raw_line.decode("utf-8", errors="replace")
+                        except Exception:
+                            line = str(raw_line)
+                        
+                        # Always write to log file
+                        try:
+                            log_file.write(line)
+                            log_file.flush()
+                        except Exception:
+                            pass
+                        
+                        # Try to parse as trade event
+                        try:
+                            trade_parser.parse_line(line)
+                        except Exception as e:
+                            logger.debug(f"Trade parser error for {jid}: {e}")
+                except Exception as e:
+                    logger.warning(f"Trade stdout reader error for {jid}: {e}")
+                finally:
+                    try:
+                        proc_stdout.close()
+                    except Exception:
+                        pass
+            
+            reader_thread = threading.Thread(
+                target=_trade_stdout_reader,
+                args=(process.stdout, stdout_file, parser, job_id),
+                daemon=True,
+                name=f"trade-reader-{job_id}",
+            )
+            reader_thread.start()
 
         return ProcessHandle(job_id, process, stdout_file, stderr_file, run_id=run_id)
 
@@ -2594,28 +2648,29 @@ class Supervisor:
         # Clean up zombie runs from previous session (runs marked as running but process is dead)
         self._cleanup_zombie_runs()
 
-        # Auto-start enabled continuous jobs
-        for job_id, job in self.jobs.get_jobs_by_type(JobType.CONTINUOUS).items():
-            if job.enabled:
-                # Skip if already adopted by _cleanup_zombie_runs
-                if job_id in self._processes and self._processes[job_id].is_running():
-                    logger.debug(f"Continuous job '{job_id}' already adopted, skipping auto-start")
-                    continue
+        # Auto-start enabled continuous and trade jobs
+        for job_type in (JobType.CONTINUOUS, JobType.TRADE):
+            for job_id, job in self.jobs.get_jobs_by_type(job_type).items():
+                if job.enabled:
+                    # Skip if already adopted by _cleanup_zombie_runs
+                    if job_id in self._processes and self._processes[job_id].is_running():
+                        logger.debug(f"{job_type.value} job '{job_id}' already adopted, skipping auto-start")
+                        continue
                     
-                state = self.db.get_state(job_id)
-                # Skip paused jobs
-                if state and state.paused:
-                    logger.info(f"Skipping paused continuous job '{job_id}'")
-                    continue
-                # Check if already running from previous session (belt and suspenders)
-                if state and state.pid and self.check_pid(state.pid):
-                    if job_id not in self._processes:
-                        logger.info(f"Job '{job_id}' still running from previous session (PID {state.pid}), adopting")
-                        self._adopt_orphan_process(job_id, state.pid)
-                    continue
-                # Not running - start it
-                logger.info(f"Auto-starting continuous job '{job_id}'")
-                self.start_job(job_id, trigger="auto")
+                    state = self.db.get_state(job_id)
+                    # Skip paused jobs
+                    if state and state.paused:
+                        logger.info(f"Skipping paused {job_type.value} job '{job_id}'")
+                        continue
+                    # Check if already running from previous session (belt and suspenders)
+                    if state and state.pid and self.check_pid(state.pid):
+                        if job_id not in self._processes:
+                            logger.info(f"Job '{job_id}' still running from previous session (PID {state.pid}), adopting")
+                            self._adopt_orphan_process(job_id, state.pid)
+                        continue
+                    # Not running - start it
+                    logger.info(f"Auto-starting {job_type.value} job '{job_id}'")
+                    self.start_job(job_id, trigger="auto")
 
         # Start API server
         from procclaw.api.server import run_server
