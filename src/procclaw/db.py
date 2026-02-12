@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS job_state (
     last_exit_code INTEGER,
     last_error TEXT,
     next_run TEXT,
-    next_retry TEXT
+    next_retry TEXT,
+    paused INTEGER DEFAULT 0
 );
 
 -- Run history

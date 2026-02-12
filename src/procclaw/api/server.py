@@ -2111,14 +2111,12 @@ def create_app() -> FastAPI:
         from procclaw.config import DEFAULT_JOBS_DIR, load_jobs
         
         try:
-            jobs = load_jobs()
+            jobs_config = load_jobs()
             # Build a combined view for the YAML editor
             combined = {}
-            for job_id, job_config in jobs.items():
+            for job_id, job_config in jobs_config.jobs.items():
                 if hasattr(job_config, 'model_dump'):
-                    combined[job_id] = job_config.model_dump(exclude_none=True)
-                elif hasattr(job_config, 'dict'):
-                    combined[job_id] = job_config.dict(exclude_none=True)
+                    combined[job_id] = job_config.model_dump(mode="json", exclude_none=True)
                 else:
                     combined[job_id] = dict(job_config) if not isinstance(job_config, dict) else job_config
             content = yaml.dump(combined, default_flow_style=False, sort_keys=False, allow_unicode=True)
@@ -2147,7 +2145,7 @@ def create_app() -> FastAPI:
         
         # Get current job ids to detect deletions
         try:
-            current_jobs = set(load_jobs().keys())
+            current_jobs = set(load_jobs().jobs.keys())
         except Exception:
             current_jobs = set()
         

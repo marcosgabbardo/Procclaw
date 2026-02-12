@@ -18,7 +18,7 @@ from rich.table import Table
 from procclaw import __version__
 from procclaw.config import (
     DEFAULT_CONFIG_DIR,
-    DEFAULT_JOBS_FILE,
+    DEFAULT_JOBS_DIR,
     DEFAULT_LOGS_DIR,
     DEFAULT_PID_FILE,
     create_default_config,
@@ -387,7 +387,7 @@ def list_jobs(
 
     if not jobs.jobs:
         console.print("[yellow]No jobs configured[/yellow]")
-        console.print(f"Add jobs to: {DEFAULT_JOBS_FILE}")
+        console.print(f"Add jobs to: {DEFAULT_JOBS_DIR}/")
         return
 
     # Create table
@@ -803,9 +803,9 @@ def show_config(
             raise typer.Exit(1)
     else:
         console.print(f"[dim]Config directory:[/dim] {DEFAULT_CONFIG_DIR}")
-        console.print(f"[dim]Jobs file:[/dim] {DEFAULT_JOBS_FILE}")
+        console.print(f"[dim]Jobs dir:[/dim] {DEFAULT_JOBS_DIR}/")
 
-        if DEFAULT_JOBS_FILE.exists():
+        if DEFAULT_JOBS_DIR.exists():
             console.print("\n[dim]Jobs:[/dim]")
             jobs = load_jobs()
             for job_id in jobs.jobs:
@@ -817,7 +817,7 @@ def init_config() -> None:
     """Initialize ProcClaw configuration."""
     create_default_config()
     console.print(f"[green]✓ Created configuration at {DEFAULT_CONFIG_DIR}[/green]")
-    console.print(f"\nEdit {DEFAULT_JOBS_FILE} to add your jobs.")
+    console.print(f"\nAdd job files to: {DEFAULT_JOBS_DIR}/")
 
 
 @app.command("version")

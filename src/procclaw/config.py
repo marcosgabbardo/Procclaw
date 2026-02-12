@@ -313,7 +313,7 @@ def save_jobs(jobs: JobsConfig, jobs_path: Path | None = None) -> None:
     ensure_config_dir()
 
     for job_id, job in jobs.jobs.items():
-        job_dict = job.model_dump(exclude_defaults=True)
+        job_dict = job.model_dump(mode="json", exclude_none=True)
         job_file = jobs_dir / f"{job_id}.yaml"
         
         with open(job_file, "w") as f:
@@ -333,9 +333,9 @@ def save_job(job_id: str, job_config: dict | JobConfig, jobs_path: Path | None =
     jobs_dir = jobs_path or DEFAULT_JOBS_DIR
     ensure_config_dir()
     
-    # Convert JobConfig to dict if needed
+    # Convert JobConfig to dict if needed (mode="json" ensures enums are serialized as strings)
     if hasattr(job_config, 'model_dump'):
-        job_dict = job_config.model_dump(exclude_defaults=True)
+        job_dict = job_config.model_dump(mode="json", exclude_none=True)
     else:
         job_dict = dict(job_config)
     
