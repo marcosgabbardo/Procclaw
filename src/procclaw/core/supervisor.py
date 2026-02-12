@@ -14,7 +14,16 @@ from typing import Any
 import psutil
 from loguru import logger
 
-from procclaw.config import DEFAULT_LOGS_DIR, ensure_config_dir, load_config, load_jobs
+from procclaw.config import (
+    DEFAULT_LOGS_DIR,
+    DEFAULT_JOBS_DIR,
+    ensure_config_dir,
+    load_config,
+    load_jobs,
+    save_job,
+    delete_job_file,
+    get_job_file_path,
+)
 from procclaw.db import Database
 from procclaw.models import (
     HealingStatus,
@@ -800,23 +809,21 @@ class Supervisor:
         if not job:
             return False
         
-        from procclaw.config import DEFAULT_JOBS_FILE
-        
-        jobs_file = DEFAULT_JOBS_FILE
-        if not jobs_file.exists():
+        job_file = get_job_file_path(job_id)
+        if not job_file.exists():
             return False
         
         try:
-            with open(jobs_file) as f:
+            with open(job_file) as f:
                 config = yaml.safe_load(f)
             
-            if "jobs" not in config or job_id not in config["jobs"]:
+            if not isinstance(config, dict):
                 return False
             
-            config["jobs"][job_id]["enabled"] = enabled
+            config["enabled"] = enabled
             
-            with open(jobs_file, "w") as f:
-                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            with open(job_file, "w") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
             
             # Reload config
             self.reload_jobs()
@@ -839,9 +846,6 @@ class Supervisor:
         Returns:
             True if the job was deleted
         """
-        import yaml
-        from procclaw.config import DEFAULT_JOBS_FILE
-        
         job = self.jobs.get_job(job_id)
         if not job:
             return False
@@ -853,24 +857,11 @@ class Supervisor:
         # Finalize any pending runs for this job
         self._finalize_job_runs(job_id)
         
-        # Remove from jobs config
-        jobs_file = DEFAULT_JOBS_FILE
-        if not jobs_file.exists():
-            return False
-        
+        # Delete the job file
         try:
-            with open(jobs_file) as f:
-                config = yaml.safe_load(f)
-            
-            if "jobs" not in config or job_id not in config["jobs"]:
+            deleted = delete_job_file(job_id)
+            if not deleted:
                 return False
-            
-            # Remove the job
-            del config["jobs"][job_id]
-            
-            # Write back
-            with open(jobs_file, "w") as f:
-                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
             
             # Reload config
             self.reload_jobs()
@@ -893,14 +884,13 @@ class Supervisor:
             True if the job was updated
         """
         import yaml
-        from procclaw.config import DEFAULT_JOBS_FILE
         
         job = self.jobs.get_job(job_id)
         if not job:
             return False
         
-        jobs_file = DEFAULT_JOBS_FILE
-        if not jobs_file.exists():
+        job_file = get_job_file_path(job_id)
+        if not job_file.exists():
             return False
         
         # Allowed fields to update
@@ -914,33 +904,33 @@ class Supervisor:
         }
         
         try:
-            with open(jobs_file) as f:
+            with open(job_file) as f:
                 config = yaml.safe_load(f)
             
-            if "jobs" not in config or job_id not in config["jobs"]:
+            if not isinstance(config, dict):
                 return False
             
             # Apply updates
             for key, value in updates.items():
                 if key in allowed_fields:
-                    config["jobs"][job_id][key] = value
+                    config[key] = value
             
             # Auto-set enabled_at when self_healing is enabled
             if "self_healing" in updates:
                 sh = updates["self_healing"]
                 if isinstance(sh, dict) and sh.get("enabled"):
                     # Only set if not already present
-                    existing_sh = config["jobs"][job_id].get("self_healing", {})
+                    existing_sh = config.get("self_healing", {})
                     if not existing_sh.get("enabled_at"):
-                        config["jobs"][job_id]["self_healing"]["enabled_at"] = datetime.now().isoformat()
+                        config["self_healing"]["enabled_at"] = datetime.now().isoformat()
             
             # Track modification time in metadata
-            if "_metadata" not in config["jobs"][job_id]:
-                config["jobs"][job_id]["_metadata"] = {}
-            config["jobs"][job_id]["_metadata"]["updated_at"] = datetime.now().isoformat()
+            if "_metadata" not in config:
+                config["_metadata"] = {}
+            config["_metadata"]["updated_at"] = datetime.now().isoformat()
             
-            with open(jobs_file, "w") as f:
-                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            with open(job_file, "w") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
             
             # Reload config
             self.reload_jobs()
@@ -1352,7 +1342,6 @@ class Supervisor:
             True if the tag was added
         """
         import yaml
-        from procclaw.config import DEFAULT_JOBS_FILE
         
         job = self.jobs.get_job(job_id)
         if not job:
@@ -1361,24 +1350,24 @@ class Supervisor:
         if tag in job.tags:
             return True  # Already has tag
         
-        jobs_file = DEFAULT_JOBS_FILE
-        if not jobs_file.exists():
+        job_file = get_job_file_path(job_id)
+        if not job_file.exists():
             return False
         
         try:
-            with open(jobs_file) as f:
+            with open(job_file) as f:
                 config = yaml.safe_load(f)
             
-            if "jobs" not in config or job_id not in config["jobs"]:
+            if not isinstance(config, dict):
                 return False
             
-            tags = config["jobs"][job_id].get("tags", [])
+            tags = config.get("tags", [])
             if tag not in tags:
                 tags.append(tag)
-                config["jobs"][job_id]["tags"] = tags
+                config["tags"] = tags
             
-            with open(jobs_file, "w") as f:
-                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            with open(job_file, "w") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
             
             self.reload_jobs()
             logger.info(f"Added tag '{tag}' to job '{job_id}'")
@@ -1399,7 +1388,6 @@ class Supervisor:
             True if the tag was removed
         """
         import yaml
-        from procclaw.config import DEFAULT_JOBS_FILE
         
         job = self.jobs.get_job(job_id)
         if not job:
@@ -1408,24 +1396,24 @@ class Supervisor:
         if tag not in job.tags:
             return True  # Doesn't have tag
         
-        jobs_file = DEFAULT_JOBS_FILE
-        if not jobs_file.exists():
+        job_file = get_job_file_path(job_id)
+        if not job_file.exists():
             return False
         
         try:
-            with open(jobs_file) as f:
+            with open(job_file) as f:
                 config = yaml.safe_load(f)
             
-            if "jobs" not in config or job_id not in config["jobs"]:
+            if not isinstance(config, dict):
                 return False
             
-            tags = config["jobs"][job_id].get("tags", [])
+            tags = config.get("tags", [])
             if tag in tags:
                 tags.remove(tag)
-                config["jobs"][job_id]["tags"] = tags
+                config["tags"] = tags
             
-            with open(jobs_file, "w") as f:
-                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            with open(job_file, "w") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
             
             self.reload_jobs()
             logger.info(f"Removed tag '{tag}' from job '{job_id}'")
@@ -1515,18 +1503,19 @@ class Supervisor:
                         "condition": dep.condition.value,
                     })
         
-        # Get metadata from YAML (created_at, updated_at)
+        # Get metadata from job file (created_at, updated_at)
         import yaml
-        from procclaw.config import DEFAULT_JOBS_FILE
         created_at = None
         updated_at = None
         try:
-            with open(DEFAULT_JOBS_FILE) as f:
-                config = yaml.safe_load(f)
-            if config and "jobs" in config and job_id in config["jobs"]:
-                metadata = config["jobs"][job_id].get("_metadata", {})
-                created_at = metadata.get("created_at")
-                updated_at = metadata.get("updated_at")
+            job_file = get_job_file_path(job_id)
+            if job_file.exists():
+                with open(job_file) as f:
+                    config = yaml.safe_load(f)
+                if config and isinstance(config, dict):
+                    metadata = config.get("_metadata", {})
+                    created_at = metadata.get("created_at")
+                    updated_at = metadata.get("updated_at")
         except Exception:
             pass
         

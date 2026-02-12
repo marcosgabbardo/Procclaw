@@ -31,6 +31,7 @@ from procclaw.models import (
     JobRun,
     SelfHealingConfig,
 )
+from procclaw.config import DEFAULT_JOBS_DIR, get_job_file_path
 
 if TYPE_CHECKING:
     from procclaw.db import Database
@@ -669,7 +670,7 @@ Output your analysis in JSON format:
 ### Rules for proposed_content:
 1. **MUST be complete** - the entire file content, not just a snippet
 2. **MUST be ready to apply** - no placeholders, no "..." or "[rest of file]"
-3. For config changes to jobs.yaml, include ONLY the affected job section
+3. For job config changes, target ~/.procclaw/jobs/{{job_id}}.yaml (each job has its own file)
 4. For prompts (.md), include the full prompt text
 5. For scripts (.py, .sh), include the full script
 6. If no file change needed (just a config suggestion), set target_file and proposed_content to null
@@ -815,7 +816,7 @@ CRITICAL RULES:
 ### Rules for proposed_content:
 1. MUST be complete - the entire file content, not just a snippet
 2. MUST be ready to apply - no placeholders, no "..." or "[rest of file]"
-3. For config changes to jobs.yaml, include ONLY the affected job section
+3. For job config changes, target ~/.procclaw/jobs/{{job_id}}.yaml (each job has its own file)
 4. For scripts (.py, .sh), include the full script with changes clearly commented
 5. If no file change needed (just an observation), set target_file and proposed_content to null
 """
@@ -1157,21 +1158,15 @@ CRITICAL RULES:
     def _read_current_content(self, target_file: str | None, job_id: str = "") -> str | None:
         """Read current content of a target file for diff display.
         
-        For jobs.yaml, extracts only the specific job section so diffs
-        are scoped to the relevant job instead of showing the entire file.
+        For job config files in jobs/ directory, reads the file directly.
+        Each job has its own file: ~/.procclaw/jobs/{job_id}.yaml
         """
         if not target_file:
             return None
         try:
             expanded = Path(target_file).expanduser()
             if expanded.exists() and expanded.is_file():
-                content = expanded.read_text()
-                # For jobs.yaml, extract only the job section
-                if job_id and expanded.name == "jobs.yaml":
-                    section, _, _ = self._extract_job_section_from_yaml(content, job_id)
-                    if section:
-                        return section
-                return content
+                return expanded.read_text()
         except Exception:
             pass
         return None
@@ -1190,9 +1185,13 @@ CRITICAL RULES:
         if not job:
             return False, f"Job {job_id} not found"
         
-        # jobs.yaml is always allowed (we'll isolate the section)
-        if file_name == "jobs.yaml":
-            return True, None
+        # Job config file in jobs/ directory: {job_id}.yaml is valid for that job
+        if file_path_obj.parent == DEFAULT_JOBS_DIR:
+            expected_name = f"{job_id}.yaml"
+            if file_name == expected_name:
+                return True, None
+            else:
+                return False, f"Job file {file_name} does not match job {job_id} (expected {expected_name})"
         
         # Check if it's the job's script
         if job.cmd:
@@ -1247,83 +1246,6 @@ CRITICAL RULES:
         
         return False, f"File {file_path} is not associated with job {job_id}"
 
-    def _extract_job_section_from_yaml(self, content: str, job_id: str) -> tuple[str | None, int, int]:
-        """Extract just the job section from jobs.yaml.
-        
-        Returns:
-            (job_section_yaml, start_line, end_line)
-        """
-        try:
-            # Parse YAML
-            data = yaml.safe_load(content)
-            if not isinstance(data, dict):
-                return None, 0, 0
-            
-            # Handle both formats: {jobs: {id: config}} and {id: config}
-            jobs_dict = data.get("jobs", data)
-            if not isinstance(jobs_dict, dict):
-                return None, 0, 0
-            
-            if job_id not in jobs_dict:
-                return None, 0, 0
-            
-            # Serialize just this job's config
-            job_section = {job_id: jobs_dict[job_id]}
-            job_yaml = yaml.dump(job_section, default_flow_style=False, sort_keys=False)
-            
-            # Find line numbers (approximate)
-            lines = content.split('\n')
-            start_line = 0
-            end_line = len(lines)
-            
-            for i, line in enumerate(lines):
-                if line.startswith(f"{job_id}:"):
-                    start_line = i
-                    # Find next top-level key
-                    for j in range(i + 1, len(lines)):
-                        if lines[j] and not lines[j][0].isspace() and not lines[j].startswith('#'):
-                            end_line = j
-                            break
-                    break
-            
-            return job_yaml, start_line, end_line
-            
-        except Exception as e:
-            logger.warning(f"Failed to extract job section: {e}")
-            return None, 0, 0
-
-    def _merge_job_section_to_yaml(self, original_content: str, job_id: str, new_job_yaml: str) -> str:
-        """Merge the modified job section back into the full jobs.yaml."""
-        try:
-            # Parse both
-            original_data = yaml.safe_load(original_content)
-            new_job_data = yaml.safe_load(new_job_yaml)
-            
-            if not isinstance(original_data, dict) or not isinstance(new_job_data, dict):
-                raise ValueError("Invalid YAML structure")
-            
-            # Get the new job config
-            if job_id in new_job_data:
-                new_config = new_job_data[job_id]
-            else:
-                # AI might have returned without the key
-                new_config = new_job_data
-            
-            # Handle both formats: {jobs: {id: config}} and {id: config}
-            if "jobs" in original_data and isinstance(original_data["jobs"], dict):
-                # Format: jobs: { id: config }
-                original_data["jobs"][job_id] = new_config
-            else:
-                # Format: { id: config }
-                original_data[job_id] = new_config
-            
-            # Serialize back
-            return yaml.dump(original_data, default_flow_style=False, sort_keys=False, allow_unicode=True)
-            
-        except Exception as e:
-            logger.error(f"Failed to merge job section: {e}")
-            raise
-
     async def _apply_pregenerated_content(
         self,
         job_id: str,
@@ -1336,10 +1258,12 @@ CRITICAL RULES:
         the analysis phase. The content was shown to the user for review,
         and now we just apply it directly.
         
+        Each job has its own config file: ~/.procclaw/jobs/{job_id}.yaml
+        No special merging needed - just write the file directly.
+        
         SECURITY: Same file validation as _apply_change_with_ai.
         """
         file_path_obj = Path(file_path).expanduser()
-        file_name = file_path_obj.name
         
         if not file_path_obj.exists():
             return {"success": False, "error": f"File not found: {file_path}"}
@@ -1356,27 +1280,16 @@ CRITICAL RULES:
         except Exception as e:
             return {"success": False, "error": f"Cannot read file: {e}"}
         
-        # SPECIAL HANDLING: For jobs.yaml, merge the section back FIRST
-        is_jobs_yaml = file_name == "jobs.yaml"
-        final_content = new_content
-        
-        if is_jobs_yaml:
-            try:
-                final_content = self._merge_job_section_to_yaml(original_content, job_id, new_content)
-                logger.info(f"Merged job section: {len(new_content)} chars -> {len(final_content)} chars")
-            except Exception as e:
-                return {"success": False, "error": f"Failed to merge job section: {e}"}
-        
-        # SAFETY: Check for suspicious content reduction (AFTER merge for jobs.yaml)
-        if len(final_content.strip()) < len(original_content.strip()) * 0.5:
+        # SAFETY: Check for suspicious content reduction
+        if len(new_content.strip()) < len(original_content.strip()) * 0.5:
             return {
                 "success": False,
-                "error": f"Content reduced by more than 50% ({len(original_content)} -> {len(final_content)}). Blocked for safety."
+                "error": f"Content reduced by more than 50% ({len(original_content)} -> {len(new_content)}). Blocked for safety."
             }
         
-        # Write the new content
+        # Write the new content directly
         try:
-            file_path_obj.write_text(final_content)
+            file_path_obj.write_text(new_content)
             logger.info(f"Applied pre-generated content to {file_path}")
         except Exception as e:
             return {"success": False, "error": f"Failed to write file: {e}"}
@@ -1385,7 +1298,7 @@ CRITICAL RULES:
             "success": True,
             "file_path": str(file_path_obj),
             "original_content": original_content,
-            "new_content": final_content,
+            "new_content": new_content,
         }
 
     async def _apply_change_with_ai(
@@ -1396,6 +1309,9 @@ CRITICAL RULES:
     ) -> dict:
         """Use AI to apply a suggested change to a file.
         
+        Each job has its own config file: ~/.procclaw/jobs/{job_id}.yaml
+        No special section extraction/merging needed.
+        
         SECURITY: This method validates that the file belongs to the specified job
         and only allows modifications within the job's scope.
         """
@@ -1404,7 +1320,6 @@ CRITICAL RULES:
             return {"success": True}  # No file to change
         
         file_path_obj = Path(file_path).expanduser()
-        file_name = file_path_obj.name
         
         if not file_path_obj.exists():
             return {"success": False, "error": f"File not found: {file_path}"}
@@ -1421,18 +1336,6 @@ CRITICAL RULES:
         except Exception as e:
             return {"success": False, "error": f"Cannot read file: {e}"}
         
-        # SPECIAL HANDLING: For jobs.yaml, only send the job's section
-        is_jobs_yaml = file_name == "jobs.yaml"
-        content_for_ai = original_content
-        
-        if is_jobs_yaml:
-            job_section, _, _ = self._extract_job_section_from_yaml(original_content, job_id)
-            if job_section:
-                content_for_ai = job_section
-                logger.info(f"Isolated job section for {job_id} ({len(job_section)} chars)")
-            else:
-                return {"success": False, "error": f"Job {job_id} not found in jobs.yaml"}
-        
         # Determine file type for appropriate prompt
         file_ext = file_path_obj.suffix.lower()
         is_yaml_file = file_ext in ('.yaml', '.yml')
@@ -1440,8 +1343,8 @@ CRITICAL RULES:
         
         # Use larger limit for content (10KB should cover most files)
         content_limit = 10000
-        truncated = len(content_for_ai) > content_limit
-        content_to_send = content_for_ai[:content_limit]
+        truncated = len(original_content) > content_limit
+        content_to_send = original_content[:content_limit]
         
         if is_yaml_file:
             file_type_instruction = "YAML configuration"
@@ -1526,7 +1429,7 @@ CRITICAL RULES:
             
             # SAFETY CHECK: Prevent significant content loss (truncation)
             # Allow up to 20% reduction for cleanup, but flag anything more
-            original_len = len(content_for_ai)
+            original_len = len(original_content)
             new_len = len(new_content)
             if new_len < original_len * 0.5:  # More than 50% reduction
                 reduction_pct = round((1 - new_len / original_len) * 100)
@@ -1536,29 +1439,18 @@ CRITICAL RULES:
                     "error": f"Content reduced by {reduction_pct}% ({original_len} -> {new_len} chars). This looks like truncation. Aborting to prevent data loss."
                 }
             
-            # For jobs.yaml, merge the job section back into the full file
-            final_content = new_content
-            if is_jobs_yaml:
-                try:
-                    final_content = self._merge_job_section_to_yaml(
-                        original_content, job_id, new_content
-                    )
-                    logger.info(f"Merged job {job_id} section back to jobs.yaml")
-                except Exception as e:
-                    return {"success": False, "error": f"Failed to merge job section: {e}"}
-            
-            if final_content == original_content:
+            if new_content == original_content:
                 logger.warning("AI returned unchanged content")
                 return {"success": False, "error": "AI returned unchanged content (no modifications made)"}
             
-            # Write new content
-            file_path_obj.write_text(final_content)
+            # Write new content directly
+            file_path_obj.write_text(new_content)
             
             return {
                 "success": True,
                 "file_path": str(file_path_obj),
                 "original_content": original_content,
-                "new_content": final_content,
+                "new_content": new_content,
             }
             
         except asyncio.TimeoutError:

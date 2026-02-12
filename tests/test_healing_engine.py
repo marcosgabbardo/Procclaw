@@ -771,12 +771,21 @@ class TestJobScopeValidation:
         
         return engine, mock_supervisor, mock_job
 
-    def test_validate_jobs_yaml_allowed(self, engine_with_job):
-        """jobs.yaml is always allowed (will be isolated)."""
+    def test_validate_job_config_file_allowed(self, engine_with_job):
+        """Job's own config file in jobs/ directory is allowed."""
         engine, _, _ = engine_with_job
-        is_valid, error = engine._validate_file_for_job("my-job", "~/.procclaw/jobs.yaml")
+        # Each job has its own file: ~/.procclaw/jobs/{job_id}.yaml
+        is_valid, error = engine._validate_file_for_job("my-job", "~/.procclaw/jobs/my-job.yaml")
         assert is_valid is True
         assert error is None
+    
+    def test_validate_other_job_config_file_blocked(self, engine_with_job):
+        """Another job's config file is blocked."""
+        engine, _, _ = engine_with_job
+        # Trying to access another job's config file should be blocked
+        is_valid, error = engine._validate_file_for_job("my-job", "~/.procclaw/jobs/other-job.yaml")
+        assert is_valid is False
+        assert "does not match" in error
 
     def test_validate_job_script_allowed(self, engine_with_job, tmp_path):
         """Job's own script is allowed."""
@@ -823,161 +832,6 @@ class TestJobScopeValidation:
         assert is_valid is False
         assert "not found" in error
 
-    def test_extract_job_section_from_yaml(self, engine_with_job):
-        """Extract only the specific job's section from jobs.yaml."""
-        engine, _, _ = engine_with_job
-        
-        yaml_content = """job-a:
-  name: Job A
-  cmd: echo a
-  schedule: "0 * * * *"
-
-my-job:
-  name: My Job
-  cmd: python3 script.py
-  type: scheduled
-
-job-b:
-  name: Job B
-  cmd: echo b
-"""
-        section, start, end = engine._extract_job_section_from_yaml(yaml_content, "my-job")
-        
-        assert section is not None
-        assert "my-job:" in section
-        assert "My Job" in section
-        assert "job-a" not in section
-        assert "job-b" not in section
-
-    def test_extract_job_section_not_found(self, engine_with_job):
-        """Returns None if job not in YAML."""
-        engine, _, _ = engine_with_job
-        
-        yaml_content = """other-job:
-  name: Other
-  cmd: echo other
-"""
-        section, _, _ = engine._extract_job_section_from_yaml(yaml_content, "my-job")
-        assert section is None
-
-    def test_merge_job_section_back(self, engine_with_job):
-        """Merge modified job section back without affecting other jobs."""
-        engine, _, _ = engine_with_job
-        
-        original = """job-a:
-  name: Job A
-  cmd: echo a
-
-my-job:
-  name: My Job
-  cmd: python3 script.py
-
-job-b:
-  name: Job B
-  cmd: echo b
-"""
-        modified_section = """my-job:
-  name: My Job (Updated)
-  cmd: python3 script.py
-  timeout: 60
-"""
-        result = engine._merge_job_section_to_yaml(original, "my-job", modified_section)
-        
-        import yaml
-        parsed = yaml.safe_load(result)
-        
-        # my-job should be updated
-        assert parsed["my-job"]["name"] == "My Job (Updated)"
-        assert parsed["my-job"]["timeout"] == 60
-        
-        # Other jobs should be unchanged
-        assert parsed["job-a"]["name"] == "Job A"
-        assert parsed["job-b"]["name"] == "Job B"
-        assert "timeout" not in parsed["job-a"]
-        assert "timeout" not in parsed["job-b"]
-
-    def test_merge_preserves_all_jobs(self, engine_with_job):
-        """Merge doesn't remove any existing jobs."""
-        engine, _, _ = engine_with_job
-        
-        original = """first:
-  cmd: echo 1
-second:
-  cmd: echo 2
-third:
-  cmd: echo 3
-"""
-        modified = """second:
-  cmd: echo 2
-  new_field: value
-"""
-        result = engine._merge_job_section_to_yaml(original, "second", modified)
-        
-        import yaml
-        parsed = yaml.safe_load(result)
-        
-        assert len(parsed) == 3
-        assert "first" in parsed
-        assert "second" in parsed
-        assert "third" in parsed
-        assert parsed["second"]["new_field"] == "value"
-
-    def test_extract_with_jobs_wrapper(self, engine_with_job):
-        """Extract works with jobs.yaml format: jobs: { id: config }."""
-        engine, _, _ = engine_with_job
-        
-        yaml_content = """jobs:
-  job-a:
-    name: Job A
-    cmd: echo a
-  my-job:
-    name: My Job
-    cmd: python3 script.py
-  job-b:
-    name: Job B
-    cmd: echo b
-"""
-        section, _, _ = engine._extract_job_section_from_yaml(yaml_content, "my-job")
-        
-        assert section is not None
-        assert "my-job:" in section
-        assert "My Job" in section
-        assert "job-a" not in section
-        assert "job-b" not in section
-
-    def test_merge_with_jobs_wrapper(self, engine_with_job):
-        """Merge works with jobs.yaml format: jobs: { id: config }."""
-        engine, _, _ = engine_with_job
-        
-        original = """jobs:
-  job-a:
-    name: Job A
-    cmd: echo a
-  my-job:
-    name: My Job
-    cmd: python3 script.py
-  job-b:
-    name: Job B
-    cmd: echo b
-"""
-        modified_section = """my-job:
-  name: My Job (Updated)
-  cmd: python3 script.py
-  timeout: 60
-"""
-        result = engine._merge_job_section_to_yaml(original, "my-job", modified_section)
-        
-        import yaml
-        parsed = yaml.safe_load(result)
-        
-        # Structure should be preserved
-        assert "jobs" in parsed
-        assert len(parsed["jobs"]) == 3
-        
-        # my-job should be updated
-        assert parsed["jobs"]["my-job"]["name"] == "My Job (Updated)"
-        assert parsed["jobs"]["my-job"]["timeout"] == 60
-        
-        # Other jobs should be unchanged
-        assert parsed["jobs"]["job-a"]["name"] == "Job A"
-        assert parsed["jobs"]["job-b"]["name"] == "Job B"
+    # Note: Tests for _extract_job_section_from_yaml and _merge_job_section_to_yaml
+    # have been removed as those methods are no longer needed with the new
+    # individual job files structure (each job has its own file in jobs/ directory)

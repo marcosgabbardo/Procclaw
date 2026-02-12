@@ -74,6 +74,10 @@ class MockSupervisor:
         self.config = MockConfig()
         self._self_healer = MagicMock()
         self._healing_engine = MockHealingEngine(db)
+    
+    def is_job_running(self, job_id: str) -> bool:
+        """Mock: no jobs are running."""
+        return False
 
 
 @pytest.fixture

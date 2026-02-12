@@ -464,9 +464,8 @@ def create_app() -> FastAPI:
         job_data: dict,
         _auth: bool = Depends(verify_token),
     ):
-        """Create a new job by adding to jobs.yaml."""
-        import yaml
-        from procclaw.config import DEFAULT_JOBS_FILE
+        """Create a new job by saving individual job file."""
+        from procclaw.config import save_job
         from datetime import datetime
         
         supervisor = get_supervisor()
@@ -533,22 +532,8 @@ def create_app() -> FastAPI:
             "updated_at": datetime.now().isoformat(),
         }
         
-        # Read current config
-        try:
-            with open(DEFAULT_JOBS_FILE, "r") as f:
-                config = yaml.safe_load(f) or {}
-        except FileNotFoundError:
-            config = {}
-        
-        if "jobs" not in config:
-            config["jobs"] = {}
-        
-        # Add new job
-        config["jobs"][job_id] = job_config
-        
-        # Write back
-        with open(DEFAULT_JOBS_FILE, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        # Save individual job file
+        save_job(job_id, job_config)
         
         # Reload config
         supervisor.reload_jobs()
@@ -2121,24 +2106,34 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/config/jobs")
     async def get_jobs_yaml(_auth: bool = Depends(verify_token)):
-        """Get the full jobs.yaml content."""
-        from procclaw.config import DEFAULT_JOBS_FILE
+        """Get all jobs as a combined YAML (virtual view of individual files)."""
+        import yaml
+        from procclaw.config import DEFAULT_JOBS_DIR, load_jobs
+        
         try:
-            with open(DEFAULT_JOBS_FILE, "r") as f:
-                content = f.read()
-            return {"content": content, "path": str(DEFAULT_JOBS_FILE)}
-        except FileNotFoundError:
-            return {"content": "jobs: {}\n", "path": str(DEFAULT_JOBS_FILE)}
+            jobs = load_jobs()
+            # Build a combined view for the YAML editor
+            combined = {}
+            for job_id, job_config in jobs.items():
+                if hasattr(job_config, 'model_dump'):
+                    combined[job_id] = job_config.model_dump(exclude_none=True)
+                elif hasattr(job_config, 'dict'):
+                    combined[job_id] = job_config.dict(exclude_none=True)
+                else:
+                    combined[job_id] = dict(job_config) if not isinstance(job_config, dict) else job_config
+            content = yaml.dump(combined, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            return {"content": content, "path": str(DEFAULT_JOBS_DIR)}
+        except Exception:
+            return {"content": "{}\n", "path": str(DEFAULT_JOBS_DIR)}
 
     @app.put("/api/v1/config/jobs")
     async def update_jobs_yaml(
         data: dict,
         _auth: bool = Depends(verify_token),
     ):
-        """Update the full jobs.yaml content."""
+        """Update jobs from combined YAML — saves each job as individual file."""
         import yaml
-        from procclaw.config import DEFAULT_JOBS_FILE
-        from datetime import datetime
+        from procclaw.config import DEFAULT_JOBS_DIR, save_job, delete_job_file, load_jobs
         
         content = data.get("content", "")
         
@@ -2150,18 +2145,22 @@ def create_app() -> FastAPI:
         except yaml.YAMLError as e:
             raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
         
-        # Backup current file
-        backup_path = DEFAULT_JOBS_FILE.with_suffix(".yaml.bak")
+        # Get current job ids to detect deletions
         try:
-            if DEFAULT_JOBS_FILE.exists():
-                import shutil
-                shutil.copy(DEFAULT_JOBS_FILE, backup_path)
+            current_jobs = set(load_jobs().keys())
         except Exception:
-            pass
+            current_jobs = set()
         
-        # Write new content
-        with open(DEFAULT_JOBS_FILE, "w") as f:
-            f.write(content)
+        new_jobs = set(parsed.keys())
+        
+        # Save each job individually
+        for job_id, job_config in parsed.items():
+            if isinstance(job_config, dict):
+                save_job(job_id, job_config)
+        
+        # Delete jobs that were removed from YAML
+        for removed_id in current_jobs - new_jobs:
+            delete_job_file(removed_id)
         
         # Reload config
         supervisor = get_supervisor()
@@ -2169,8 +2168,7 @@ def create_app() -> FastAPI:
         
         return {
             "success": True, 
-            "message": "Configuration updated and reloaded",
-            "backup": str(backup_path),
+            "message": f"Configuration updated ({len(new_jobs)} jobs saved)",
         }
 
     # Auth Config Endpoints
@@ -3051,7 +3049,7 @@ def create_app() -> FastAPI:
     ):
         """Update SLA configuration for a job."""
         import yaml
-        from procclaw.config import DEFAULT_JOBS_FILE
+        from procclaw.config import DEFAULT_JOBS_DIR, save_job
         
         supervisor = get_supervisor()
         job = supervisor.jobs.get_job(job_id)
@@ -3059,19 +3057,17 @@ def create_app() -> FastAPI:
         if not job:
             raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
         
-        # Load current YAML
+        # Load current job file
+        job_file = DEFAULT_JOBS_DIR / f"{job_id}.yaml"
         try:
-            with open(DEFAULT_JOBS_FILE, "r") as f:
-                jobs_yaml = yaml.safe_load(f) or {}
+            with open(job_file, "r") as f:
+                job_config = yaml.safe_load(f) or {}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to read jobs.yaml: {e}")
-        
-        if job_id not in jobs_yaml:
-            raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found in jobs.yaml")
+            raise HTTPException(status_code=500, detail=f"Failed to read job config: {e}")
         
         # Update SLA config
         sla_config = data.get("sla", data)
-        jobs_yaml[job_id]["sla"] = {
+        job_config["sla"] = {
             "enabled": sla_config.get("enabled", False),
             "success_rate": sla_config.get("success_rate", 95.0),
             "schedule_tolerance": sla_config.get("schedule_tolerance", 300),
@@ -3082,14 +3078,13 @@ def create_app() -> FastAPI:
         }
         
         # Remove None values
-        jobs_yaml[job_id]["sla"] = {k: v for k, v in jobs_yaml[job_id]["sla"].items() if v is not None}
+        job_config["sla"] = {k: v for k, v in job_config["sla"].items() if v is not None}
         
-        # Write back
+        # Save job file
         try:
-            with open(DEFAULT_JOBS_FILE, "w") as f:
-                yaml.dump(jobs_yaml, f, default_flow_style=False, sort_keys=False)
+            save_job(job_id, job_config)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to write jobs.yaml: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to save job config: {e}")
         
         # Reload
         supervisor.reload_jobs()
@@ -3097,7 +3092,7 @@ def create_app() -> FastAPI:
         return {
             "success": True,
             "job_id": job_id,
-            "sla": jobs_yaml[job_id]["sla"],
+            "sla": job_config["sla"],
         }
 
     @app.get("/api/v1/jobs/{job_id}/sla/history")
