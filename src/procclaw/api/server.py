@@ -3494,6 +3494,91 @@ def create_app() -> FastAPI:
         else:
             return {"job_id": job_id, "type": what, "data": data, "total": len(data)}
 
+    @app.get("/api/v1/trading/alerts")
+    async def trading_alerts(
+        _auth: bool = Depends(verify_token),
+    ):
+        """Get pending trade alerts from the alerts file."""
+        import os
+        from pathlib import Path
+
+        alerts_file = Path(os.path.expanduser("~/.openclaw/workspace/memory/procclaw-pending-alerts.md"))
+        if not alerts_file.exists():
+            return {"alerts": [], "raw": ""}
+        content = alerts_file.read_text()
+        # Parse alert lines
+        alerts = []
+        for line in content.split("\n"):
+            line = line.strip()
+            if line.startswith("- ") and ("**" in line):
+                alerts.append(line[2:])  # strip "- " prefix
+        return {"alerts": alerts, "raw": content}
+
+    @app.post("/api/v1/trading/alerts/clear")
+    async def clear_trading_alerts(
+        _auth: bool = Depends(verify_token),
+    ):
+        """Clear pending trade alerts."""
+        import os
+        from pathlib import Path
+
+        alerts_file = Path(os.path.expanduser("~/.openclaw/workspace/memory/procclaw-pending-alerts.md"))
+        if alerts_file.exists():
+            alerts_file.write_text("# ProcClaw Pending Alerts\n\n_No pending alerts._\n")
+        return {"status": "cleared"}
+
+    @app.post("/api/v1/trading/recalculate")
+    async def trading_recalculate(
+        _auth: bool = Depends(verify_token),
+    ):
+        """Recalculate all trade job stats and check for alerts."""
+        from procclaw.core.trade_analytics import TradeAnalytics
+
+        supervisor = get_supervisor()
+        analytics = TradeAnalytics(supervisor.db)
+        count = analytics.recalculate_all()
+        return {"recalculated": count}
+
+    @app.post("/api/v1/trading/cleanup")
+    async def trading_cleanup(
+        days: int = Query(30, description="Delete events older than N days"),
+        _auth: bool = Depends(verify_token),
+    ):
+        """Clean up old trade events for data retention."""
+        from datetime import datetime, timedelta, timezone
+
+        supervisor = get_supervisor()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        
+        try:
+            with supervisor.db._connect() as conn:
+                # Delete old events (keep trades and stats)
+                result = conn.execute(
+                    "DELETE FROM trade_events WHERE ts < ? AND event_type IN ('scan', 'portfolio')",
+                    (cutoff,)
+                )
+                events_deleted = result.rowcount
+                
+                # Delete old portfolio snapshots (keep 1 per day)
+                result2 = conn.execute(
+                    """DELETE FROM portfolio_snapshots WHERE id NOT IN (
+                        SELECT MIN(id) FROM portfolio_snapshots 
+                        WHERE ts < ? GROUP BY job_id, date(ts)
+                    ) AND ts < ?""",
+                    (cutoff, cutoff)
+                )
+                snapshots_deleted = result2.rowcount
+                
+                conn.commit()
+                
+            return {
+                "events_deleted": events_deleted,
+                "snapshots_deleted": snapshots_deleted,
+                "cutoff": cutoff,
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     return app
 
 

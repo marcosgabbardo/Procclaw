@@ -2198,8 +2198,85 @@
                 </div>
             </div>
 
+            <!-- Action Bar -->
+            <div x-show="!tradingSelectedJob" class="flex items-center gap-3 mb-4">
+                <button @click="tradingViewMode = tradingViewMode === 'compare' ? 'cards' : 'compare'; if(tradingViewMode === 'compare') loadTradingCompare()"
+                    :class="tradingViewMode === 'compare' ? 'bg-accent-600 text-white' : 'bg-dark-700 text-dark-300 hover:text-dark-100'"
+                    class="px-3 py-1.5 text-xs rounded-lg transition flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                    Compare
+                </button>
+                <button @click="tradingShowAlerts = !tradingShowAlerts; if(tradingShowAlerts) loadTradingAlerts()"
+                    :class="tradingShowAlerts ? 'bg-yellow-600/20 text-yellow-400 border-yellow-600/50' : 'bg-dark-700 text-dark-300 hover:text-dark-100'"
+                    class="px-3 py-1.5 text-xs rounded-lg transition flex items-center gap-1.5 border border-transparent">
+                    🔔 Alerts
+                    <span x-show="tradingAlerts.length > 0" class="bg-red-500 text-white text-[10px] px-1.5 rounded-full" x-text="tradingAlerts.length"></span>
+                </button>
+                <button @click="triggerTradingRecalculate()"
+                    class="px-3 py-1.5 text-xs rounded-lg bg-dark-700 text-dark-300 hover:text-dark-100 transition flex items-center gap-1.5">
+                    🔄 Recalculate
+                </button>
+            </div>
+
+            <!-- Alerts Panel -->
+            <div x-show="tradingShowAlerts && tradingAlerts.length > 0" x-cloak
+                class="mb-4 bg-yellow-900/10 border border-yellow-600/30 rounded-xl p-4">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-medium text-yellow-400">🔔 Pending Trade Alerts</h3>
+                    <button @click="clearTradingAlerts()" class="text-xs text-dark-400 hover:text-dark-200 transition">Clear All</button>
+                </div>
+                <div class="space-y-1.5 max-h-48 overflow-y-auto scrollbar-thin">
+                    <template x-for="(alert, idx) in tradingAlerts" :key="idx">
+                        <div class="text-sm text-dark-200 py-1 border-b border-dark-700/50 last:border-0" x-html="alert.replace(/\*\*(.*?)\*\*/g, '<strong class=\'text-dark-100\'>$1</strong>').replace(/_(.*?)_/g, '<em>$1</em>')"></div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Comparison Table View -->
+            <div x-show="!tradingSelectedJob && tradingViewMode === 'compare'" x-cloak>
+                <h2 class="text-lg font-semibold text-dark-100 mb-3">Strategy Comparison</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-dark-400 text-xs uppercase">
+                                <th class="px-3 py-2">Strategy</th>
+                                <th class="px-3 py-2 text-right">Capital</th>
+                                <th class="px-3 py-2 text-right">PnL</th>
+                                <th class="px-3 py-2 text-right">PnL %</th>
+                                <th class="px-3 py-2 text-right">Win Rate</th>
+                                <th class="px-3 py-2 text-right">Trades</th>
+                                <th class="px-3 py-2 text-right">Open</th>
+                                <th class="px-3 py-2 text-right">Profit Factor</th>
+                                <th class="px-3 py-2 text-right">Sharpe</th>
+                                <th class="px-3 py-2 text-right">Max DD</th>
+                                <th class="px-3 py-2 text-right">Avg Hold</th>
+                                <th class="px-3 py-2 text-right">Scans</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="s in tradingCompareData" :key="s.job_id">
+                                <tr @click="selectTradingJob(s.job_id)" class="border-t border-dark-700 hover:bg-dark-700/50 cursor-pointer transition">
+                                    <td class="px-3 py-2 font-medium text-dark-100 max-w-[200px] truncate" x-text="s.name"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="'$' + (s.current_capital || 0).toFixed(0)"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums" :class="(s.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'" x-text="'$' + (s.total_pnl || 0).toFixed(2)"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums" :class="(s.total_pnl_pct || 0) >= 0 ? 'text-green-400' : 'text-red-400'" x-text="(s.total_pnl_pct || 0).toFixed(1) + '%'"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="(s.win_rate || 0).toFixed(0) + '%'"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="s.total_trades || 0"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="s.open_trades || 0"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="(s.profit_factor || 0).toFixed(2)"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="(s.sharpe_ratio || 0).toFixed(2)"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums text-red-400" x-text="(s.max_drawdown_pct || 0).toFixed(1) + '%'"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums text-dark-300" x-text="(s.avg_hold_hours || 0).toFixed(0) + 'h'"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums text-dark-300" x-text="s.scans_total || 0"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
             <!-- Strategy Cards (no detail selected) -->
-            <div x-show="!tradingSelectedJob">
+            <div x-show="!tradingSelectedJob && tradingViewMode === 'cards'">
                 <h2 class="text-lg font-semibold text-dark-100 mb-3">Strategy Performance</h2>
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <template x-for="strat in (tradingOverview.strategies || [])" :key="strat.job_id">
@@ -2243,10 +2320,31 @@
                     </button>
                     <h2 class="text-lg font-semibold text-dark-100" x-text="tradingJobStats?.name || tradingSelectedJob"></h2>
                     <span class="w-2 h-2 rounded-full" :class="tradingJobStats?.status === 'running' ? 'bg-green-500' : 'bg-dark-500'"></span>
+                    <div class="ml-auto flex items-center gap-2">
+                        <div class="relative" x-data="{ exportOpen: false }">
+                            <button @click="exportOpen = !exportOpen" class="px-3 py-1.5 text-xs rounded-lg bg-dark-700 text-dark-300 hover:text-dark-100 transition flex items-center gap-1">
+                                📥 Export
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                            </button>
+                            <div x-show="exportOpen" @click.away="exportOpen = false" x-cloak
+                                class="absolute right-0 mt-1 w-48 bg-dark-700 border border-dark-600 rounded-lg shadow-xl z-50 py-1">
+                                <template x-for="what in ['trades', 'decisions', 'events']" :key="what">
+                                    <div class="px-1">
+                                        <a :href="'/api/v1/trading/' + tradingSelectedJob + '/export?what=' + what + '&format=csv'"
+                                            class="block px-3 py-1.5 text-xs text-dark-200 hover:bg-dark-600 rounded transition capitalize"
+                                            x-text="what + ' (CSV)'" target="_blank"></a>
+                                        <a :href="'/api/v1/trading/' + tradingSelectedJob + '/export?what=' + what + '&format=json'"
+                                            class="block px-3 py-1.5 text-xs text-dark-200 hover:bg-dark-600 rounded transition capitalize"
+                                            x-text="what + ' (JSON)'" target="_blank"></a>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Sub-tabs -->
-                <div class="flex gap-1 mb-4 border-b border-dark-600 pb-2">
+                <div class="flex items-center gap-1 mb-4 border-b border-dark-600 pb-2">
                     <template x-for="tab in ['Overview', 'Trades', 'Decisions', 'Equity', 'Events']" :key="tab">
                         <button @click="tradingSubTab = tab.toLowerCase()" 
                             :class="tradingSubTab === tab.toLowerCase() ? 'bg-dark-700 text-accent-400' : 'text-dark-300 hover:text-dark-100'"
@@ -2296,7 +2394,9 @@
                     <!-- Equity curve mini -->
                     <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
                         <h3 class="text-sm font-medium text-dark-300 mb-3">Equity Curve</h3>
-                        <canvas id="equityChart" height="200"></canvas>
+                        <div style="position:relative; height:200px; width:100%">
+                            <canvas id="equityChart"></canvas>
+                        </div>
                     </div>
                 </div>
 
@@ -2388,7 +2488,9 @@
                         </template>
                     </div>
                     <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
-                        <canvas id="equityChartFull" height="350"></canvas>
+                        <div style="position:relative; height:350px; width:100%">
+                            <canvas id="equityChartFull"></canvas>
+                        </div>
                     </div>
                 </div>
 
@@ -4307,6 +4409,10 @@
                 tradingDecisionFilter: null,
                 tradingEventFilter: null,
                 tradingEquityPeriod: 'all',
+                tradingViewMode: 'cards',
+                tradingShowAlerts: false,
+                tradingAlerts: [],
+                tradingCompareData: [],
                 _equityChart: null,
                 _equityChartFull: null,
                 
@@ -4473,6 +4579,7 @@
                         }
                         if (newTab === 'trading') {
                             this.loadTradingData();
+                            this.loadTradingAlerts();
                         }
                     });
                     
@@ -6393,6 +6500,46 @@
                         }
                     });
                     } // end for loop over targets
+                },
+
+                async loadTradingAlerts() {
+                    try {
+                        const res = await fetch('/api/v1/trading/alerts');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.tradingAlerts = data.alerts || [];
+                        }
+                    } catch (e) { console.error('Failed to load alerts:', e); }
+                },
+
+                async clearTradingAlerts() {
+                    try {
+                        await fetch('/api/v1/trading/alerts/clear', { method: 'POST' });
+                        this.tradingAlerts = [];
+                        this.tradingShowAlerts = false;
+                    } catch (e) { console.error('Failed to clear alerts:', e); }
+                },
+
+                async loadTradingCompare() {
+                    const jobIds = (this.tradingOverview.strategies || []).map(s => s.job_id).join(',');
+                    if (!jobIds) return;
+                    try {
+                        const res = await fetch(`/api/v1/trading/compare?jobs=${jobIds}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.tradingCompareData = data.jobs || [];
+                        }
+                    } catch (e) { console.error('Failed to load compare data:', e); }
+                },
+
+                async triggerTradingRecalculate() {
+                    try {
+                        const res = await fetch('/api/v1/trading/recalculate', { method: 'POST' });
+                        if (res.ok) {
+                            await this.loadTradingData();
+                            if (this.tradingViewMode === 'compare') await this.loadTradingCompare();
+                        }
+                    } catch (e) { console.error('Failed to recalculate:', e); }
                 },
 
                 // Workflows

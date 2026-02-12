@@ -2,20 +2,30 @@
 
 Calculates trading metrics from stored events and trades.
 Updates trade_job_stats after each event cycle.
+Generates alerts for significant trade events.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import os
 import statistics
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
 if TYPE_CHECKING:
     from procclaw.db import Database
+
+# Alert thresholds
+ALERT_PNL_THRESHOLD = 50.0  # Alert on trades with PnL > $50
+ALERT_DRAWDOWN_THRESHOLD = 10.0  # Alert on drawdown > 10%
+ALERT_WIN_STREAK_THRESHOLD = 5  # Alert on 5+ consecutive wins
+ALERT_LOSS_STREAK_THRESHOLD = 3  # Alert on 3+ consecutive losses
+ALERTS_FILE = Path(os.path.expanduser("~/.openclaw/workspace/memory/procclaw-pending-alerts.md"))
 
 
 class TradeAnalytics:
@@ -38,28 +48,39 @@ class TradeAnalytics:
         closed_trades = self.db.get_all_trades_for_stats(job_id)
         open_trades = self.db.get_trades(job_id, status="open", limit=1000)
 
-        # Get latest portfolio snapshot
-        snapshots = self.db.get_portfolio_snapshots(job_id, limit=1)
+        # Get latest portfolio snapshot (most recent by ts)
         latest_snapshot = None
-        if snapshots:
-            # get_portfolio_snapshots orders by ts ASC, so get last
-            all_snaps = self.db.get_portfolio_snapshots(job_id, limit=10000)
-            if all_snaps:
-                latest_snapshot = all_snaps[-1]
+        try:
+            with self.db._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM portfolio_snapshots WHERE job_id = ? ORDER BY ts DESC LIMIT 1",
+                    (job_id,),
+                ).fetchone()
+                if row:
+                    latest_snapshot = dict(row)
+        except Exception:
+            pass
 
         # Get scan event counts
         scan_count = self.db.get_trade_events_count(job_id, event_type="scan")
         decision_count = self.db.get_trade_events_count(job_id, event_type="decision")
 
-        # Calculate opportunities found from scan events
+        # Calculate opportunities found from scan events (efficient: sum in SQL where possible)
         opportunities_found = 0
-        scan_events = self.db.get_trade_events(job_id, event_type="scan", limit=10000)
-        for se in scan_events:
-            try:
-                data = json.loads(se["data"])
-                opportunities_found += data.get("opportunities_found", 0)
-            except (json.JSONDecodeError, KeyError):
-                pass
+        try:
+            with self.db._connect() as conn:
+                cursor = conn.execute(
+                    "SELECT data FROM trade_events WHERE job_id = ? AND event_type = 'scan'",
+                    (job_id,),
+                )
+                for row in cursor:
+                    try:
+                        d = json.loads(row["data"])
+                        opportunities_found += d.get("opportunities_found", 0)
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+        except Exception:
+            pass
 
         # Basic counts
         total_closed = len(closed_trades)
@@ -124,8 +145,16 @@ class TradeAnalytics:
 
         # Last scan/trade timestamps
         last_scan_at = None
-        if scan_events:
-            last_scan_at = scan_events[0].get("ts")  # Most recent (DESC order)
+        try:
+            with self.db._connect() as conn:
+                row = conn.execute(
+                    "SELECT ts FROM trade_events WHERE job_id = ? AND event_type = 'scan' ORDER BY ts DESC LIMIT 1",
+                    (job_id,),
+                ).fetchone()
+                if row:
+                    last_scan_at = row["ts"]
+        except Exception:
+            pass
 
         last_trade_at = None
         if closed_trades:
@@ -164,7 +193,112 @@ class TradeAnalytics:
         # Save to DB
         self.db.upsert_trade_job_stats(job_id, stats)
 
+        # Check for alert-worthy conditions
+        try:
+            self._check_alerts(job_id, stats, closed_trades)
+        except Exception as e:
+            logger.debug(f"Alert check failed for {job_id}: {e}")
+
         return stats
+
+    def _check_alerts(self, job_id: str, stats: dict, closed_trades: list) -> None:
+        """Check for alert-worthy conditions and write to pending alerts file."""
+        alerts: list[str] = []
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+        # 1. Big individual trade PnL (check most recent trades only)
+        recent = closed_trades[-5:] if closed_trades else []
+        for t in recent:
+            pnl = t.get("pnl") or 0
+            if abs(pnl) >= ALERT_PNL_THRESHOLD:
+                emoji = "🟢" if pnl > 0 else "🔴"
+                alerts.append(
+                    f"{emoji} **Big Trade** [{job_id}]: "
+                    f"${pnl:+.2f} ({t.get('pnl_pct', 0):+.1f}%) on "
+                    f"_{t.get('market', 'unknown')}_"
+                )
+
+        # 2. Drawdown alert
+        dd = stats.get("max_drawdown_pct", 0)
+        if dd >= ALERT_DRAWDOWN_THRESHOLD:
+            alerts.append(
+                f"⚠️ **Drawdown Alert** [{job_id}]: "
+                f"{dd:.1f}% drawdown (capital: ${stats.get('current_capital', 0):.2f})"
+            )
+
+        # 3. Win/Loss streaks
+        if len(closed_trades) >= ALERT_WIN_STREAK_THRESHOLD:
+            streak = 0
+            for t in reversed(closed_trades):
+                if (t.get("pnl") or 0) > 0:
+                    streak += 1
+                else:
+                    break
+            if streak >= ALERT_WIN_STREAK_THRESHOLD:
+                alerts.append(
+                    f"🔥 **Win Streak** [{job_id}]: {streak} consecutive wins! "
+                    f"WR: {stats.get('win_rate', 0):.1f}%"
+                )
+
+        if len(closed_trades) >= ALERT_LOSS_STREAK_THRESHOLD:
+            streak = 0
+            for t in reversed(closed_trades):
+                if (t.get("pnl") or 0) < 0:
+                    streak += 1
+                else:
+                    break
+            if streak >= ALERT_LOSS_STREAK_THRESHOLD:
+                alerts.append(
+                    f"💀 **Loss Streak** [{job_id}]: {streak} consecutive losses. "
+                    f"Total PnL: ${stats.get('total_pnl', 0):.2f}"
+                )
+
+        # 4. Milestone alerts (first trade, PnL milestones)
+        total_trades = stats.get("total_trades", 0)
+        total_pnl = stats.get("total_pnl", 0)
+        if total_trades == 1:
+            alerts.append(f"🎯 **First Trade Closed** [{job_id}]: PnL ${total_pnl:+.2f}")
+        elif total_pnl >= 100 and total_trades > 0:
+            pnl_pct = stats.get("total_pnl_pct", 0)
+            alerts.append(
+                f"💰 **$100+ Profit** [{job_id}]: ${total_pnl:.2f} "
+                f"({pnl_pct:+.1f}%) over {total_trades} trades"
+            )
+
+        if alerts:
+            self._write_alerts(alerts, now)
+
+    def _write_alerts(self, alerts: list[str], timestamp: str) -> None:
+        """Append alerts to the pending alerts markdown file."""
+        try:
+            ALERTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+            # Read existing content
+            existing = ""
+            if ALERTS_FILE.exists():
+                existing = ALERTS_FILE.read_text()
+
+            # Build new alert block
+            block = f"\n## 📈 Trade Alert — {timestamp}\n\n"
+            for alert in alerts:
+                block += f"- {alert}\n"
+            block += "\n"
+
+            # Append to top of file (most recent first)
+            if existing.strip():
+                # Insert after the first line (title) if it exists
+                lines = existing.split("\n", 1)
+                if lines[0].startswith("# "):
+                    new_content = lines[0] + "\n" + block + (lines[1] if len(lines) > 1 else "")
+                else:
+                    new_content = block + existing
+            else:
+                new_content = "# ProcClaw Pending Alerts\n" + block
+
+            ALERTS_FILE.write_text(new_content)
+            logger.info(f"Wrote {len(alerts)} trade alert(s) to {ALERTS_FILE}")
+        except Exception as e:
+            logger.warning(f"Failed to write trade alerts: {e}")
 
     def _calculate_max_drawdown(self, job_id: str) -> float:
         """Calculate max drawdown percentage from portfolio snapshots."""
