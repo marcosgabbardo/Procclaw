@@ -2480,6 +2480,22 @@ class Database:
             cursor = conn.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_latest_portfolio_snapshots(self) -> list[dict]:
+        """Get the most recent portfolio snapshot for every trade job."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT ps.* FROM portfolio_snapshots ps
+                INNER JOIN (
+                    SELECT job_id, MAX(id) as max_id
+                    FROM portfolio_snapshots
+                    GROUP BY job_id
+                ) latest ON ps.id = latest.max_id
+                ORDER BY ps.job_id
+                """
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
     def upsert_trade_job_stats(self, job_id: str, stats: dict) -> None:
         """Insert or update trade job stats."""
         with self._connect() as conn:

@@ -3346,6 +3346,38 @@ def create_app() -> FastAPI:
         totals["win_rate"] = (totals["wins"] / total_completed * 100) if total_completed > 0 else 0
         totals["strategies_count"] = len(trade_jobs)
 
+        # Enrich with latest portfolio snapshots (unrealized PnL, capital, invested)
+        latest_snaps = supervisor.db.get_latest_portfolio_snapshots()
+        snap_map = {s["job_id"]: s for s in latest_snaps}
+
+        totals["unrealized_pnl"] = 0
+        totals["invested"] = 0
+        totals["cash"] = 0
+        totals["initial_capital"] = 0
+        totals["current_capital"] = 0
+
+        for entry in results:
+            snap = snap_map.get(entry["job_id"])
+            if snap:
+                entry["unrealized_pnl"] = snap.get("unrealized_pnl") or 0
+                entry["invested"] = snap.get("invested") or 0
+                entry["cash"] = snap.get("cash") or 0
+                entry["initial_capital_snap"] = snap.get("initial_capital") or 0
+                entry["current_capital_snap"] = snap.get("current_capital") or 0
+                entry["last_tick"] = snap.get("ts")
+                totals["unrealized_pnl"] += entry["unrealized_pnl"]
+                totals["invested"] += entry["invested"]
+                totals["cash"] += entry.get("cash", 0)
+                totals["initial_capital"] += entry.get("initial_capital_snap", 0)
+                totals["current_capital"] += entry.get("current_capital_snap", 0)
+            else:
+                entry["unrealized_pnl"] = 0
+                entry["invested"] = 0
+                entry["cash"] = 0
+                entry["last_tick"] = None
+
+        totals["total_equity"] = totals["current_capital"] + totals["unrealized_pnl"]
+
         return {
             "totals": totals,
             "strategies": results,
@@ -3448,11 +3480,27 @@ def create_app() -> FastAPI:
             stats = supervisor.db.get_trade_job_stats(job_id)
             if stats:
                 job = supervisor.jobs.get_job(job_id)
+                state = supervisor.db.get_state(job_id)
                 results.append({
                     "job_id": job_id,
                     "name": job.name if job else job_id,
+                    "status": state.status.value if state else "stopped",
                     **stats,
                 })
+
+        # Enrich with latest portfolio snapshots
+        latest_snaps = supervisor.db.get_latest_portfolio_snapshots()
+        snap_map = {s["job_id"]: s for s in latest_snaps}
+        for entry in results:
+            snap = snap_map.get(entry["job_id"])
+            if snap:
+                entry["unrealized_pnl"] = snap.get("unrealized_pnl") or 0
+                entry["invested"] = snap.get("invested") or 0
+                entry["cash"] = snap.get("cash") or 0
+            else:
+                entry["unrealized_pnl"] = 0
+                entry["invested"] = 0
+                entry["cash"] = 0
 
         return {"jobs": results, "total": len(results)}
 

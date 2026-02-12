@@ -2198,6 +2198,44 @@
                 </div>
             </div>
 
+            <!-- Portfolio / Unrealized PnL Cards -->
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                    <div class="text-xs text-dark-400 uppercase tracking-wide mb-1">💰 Initial Capital</div>
+                    <div class="text-xl font-semibold tabular-nums text-dark-100"
+                        x-text="'$' + (tradingOverview.totals?.initial_capital || 0).toFixed(2)"></div>
+                </div>
+                <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                    <div class="text-xs text-dark-400 uppercase tracking-wide mb-1">📊 Invested</div>
+                    <div class="text-xl font-semibold tabular-nums text-blue-400"
+                        x-text="'$' + (tradingOverview.totals?.invested || 0).toFixed(2)"></div>
+                    <div class="text-xs text-dark-400" 
+                        x-text="tradingOverview.totals?.initial_capital > 0 ? ((tradingOverview.totals?.invested || 0) / tradingOverview.totals.initial_capital * 100).toFixed(1) + '% deployed' : ''"></div>
+                </div>
+                <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                    <div class="text-xs text-dark-400 uppercase tracking-wide mb-1">💵 Cash</div>
+                    <div class="text-xl font-semibold tabular-nums text-dark-100"
+                        x-text="'$' + (tradingOverview.totals?.cash || 0).toFixed(2)"></div>
+                </div>
+                <div class="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                    <div class="text-xs text-dark-400 uppercase tracking-wide mb-1">📈 Unrealized PnL</div>
+                    <div class="text-xl font-semibold tabular-nums"
+                        :class="(tradingOverview.totals?.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'"
+                        x-text="'$' + (tradingOverview.totals?.unrealized_pnl || 0).toFixed(2)"></div>
+                    <div class="text-xs" 
+                        :class="(tradingOverview.totals?.unrealized_pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'"
+                        x-text="tradingOverview.totals?.invested > 0 ? ((tradingOverview.totals?.unrealized_pnl || 0) / tradingOverview.totals.invested * 100).toFixed(2) + '%' : '0%'"></div>
+                </div>
+                <div class="bg-dark-800 border border-accent-500/50 rounded-xl p-4">
+                    <div class="text-xs text-dark-400 uppercase tracking-wide mb-1">🏦 Total Equity</div>
+                    <div class="text-xl font-semibold tabular-nums text-accent-400"
+                        x-text="'$' + (tradingOverview.totals?.total_equity || 0).toFixed(2)"></div>
+                    <div class="text-xs"
+                        :class="(tradingOverview.totals?.total_equity || 0) >= (tradingOverview.totals?.initial_capital || 0) ? 'text-green-600' : 'text-red-600'"
+                        x-text="tradingOverview.totals?.initial_capital > 0 ? (((tradingOverview.totals?.total_equity || 0) - tradingOverview.totals.initial_capital) / tradingOverview.totals.initial_capital * 100).toFixed(2) + '% return' : ''"></div>
+                </div>
+            </div>
+
             <!-- Action Bar -->
             <div x-show="!tradingSelectedJob" class="flex items-center gap-3 mb-4">
                 <button @click="tradingViewMode = tradingViewMode === 'compare' ? 'cards' : 'compare'; if(tradingViewMode === 'compare') loadTradingCompare()"
@@ -2241,33 +2279,38 @@
                             <tr class="text-left text-dark-400 text-xs uppercase">
                                 <th class="px-3 py-2">Strategy</th>
                                 <th class="px-3 py-2 text-right">Capital</th>
-                                <th class="px-3 py-2 text-right">PnL</th>
+                                <th class="px-3 py-2 text-right">Invested</th>
+                                <th class="px-3 py-2 text-right">Cash</th>
+                                <th class="px-3 py-2 text-right">Unreal. PnL</th>
+                                <th class="px-3 py-2 text-right">Real. PnL</th>
                                 <th class="px-3 py-2 text-right">PnL %</th>
                                 <th class="px-3 py-2 text-right">Win Rate</th>
                                 <th class="px-3 py-2 text-right">Trades</th>
                                 <th class="px-3 py-2 text-right">Open</th>
-                                <th class="px-3 py-2 text-right">Profit Factor</th>
-                                <th class="px-3 py-2 text-right">Sharpe</th>
+                                <th class="px-3 py-2 text-right">P.F.</th>
                                 <th class="px-3 py-2 text-right">Max DD</th>
-                                <th class="px-3 py-2 text-right">Avg Hold</th>
-                                <th class="px-3 py-2 text-right">Scans</th>
                             </tr>
                         </thead>
                         <tbody>
                             <template x-for="s in tradingCompareData" :key="s.job_id">
                                 <tr @click="selectTradingJob(s.job_id)" class="border-t border-dark-700 hover:bg-dark-700/50 cursor-pointer transition">
-                                    <td class="px-3 py-2 font-medium text-dark-100 max-w-[200px] truncate" x-text="s.name"></td>
+                                    <td class="px-3 py-2 font-medium text-dark-100 max-w-[200px] truncate">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" :class="s.status === 'running' ? 'bg-green-500' : 'bg-dark-500'"></span>
+                                            <span x-text="s.name"></span>
+                                        </div>
+                                    </td>
                                     <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="'$' + (s.current_capital || 0).toFixed(0)"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums text-blue-400" x-text="'$' + (s.invested || 0).toFixed(0)"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums text-dark-300" x-text="'$' + (s.cash || 0).toFixed(0)"></td>
+                                    <td class="px-3 py-2 text-right tabular-nums" :class="(s.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'" x-text="'$' + (s.unrealized_pnl || 0).toFixed(2)"></td>
                                     <td class="px-3 py-2 text-right tabular-nums" :class="(s.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'" x-text="'$' + (s.total_pnl || 0).toFixed(2)"></td>
                                     <td class="px-3 py-2 text-right tabular-nums" :class="(s.total_pnl_pct || 0) >= 0 ? 'text-green-400' : 'text-red-400'" x-text="(s.total_pnl_pct || 0).toFixed(1) + '%'"></td>
                                     <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="(s.win_rate || 0).toFixed(0) + '%'"></td>
                                     <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="s.total_trades || 0"></td>
                                     <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="s.open_trades || 0"></td>
                                     <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="(s.profit_factor || 0).toFixed(2)"></td>
-                                    <td class="px-3 py-2 text-right tabular-nums text-dark-200" x-text="(s.sharpe_ratio || 0).toFixed(2)"></td>
                                     <td class="px-3 py-2 text-right tabular-nums text-red-400" x-text="(s.max_drawdown_pct || 0).toFixed(1) + '%'"></td>
-                                    <td class="px-3 py-2 text-right tabular-nums text-dark-300" x-text="(s.avg_hold_hours || 0).toFixed(0) + 'h'"></td>
-                                    <td class="px-3 py-2 text-right tabular-nums text-dark-300" x-text="s.scans_total || 0"></td>
                                 </tr>
                             </template>
                         </tbody>
@@ -2289,10 +2332,13 @@
                             <div class="text-xl font-semibold tabular-nums mb-1" 
                                 :class="(strat.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'"
                                 x-text="'$' + (strat.total_pnl || 0).toFixed(2) + ' (' + (strat.total_pnl_pct || 0).toFixed(1) + '%)'"></div>
+                            <div class="text-sm tabular-nums mb-1" 
+                                :class="(strat.unrealized_pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'"
+                                x-text="'Unrealized: $' + (strat.unrealized_pnl || 0).toFixed(2)"></div>
                             <div class="flex items-center gap-3 text-xs text-dark-400 mb-2">
                                 <span x-text="'WR: ' + (strat.win_rate || 0).toFixed(0) + '%'"></span>
                                 <span x-text="(strat.total_trades || 0) + ' trades'"></span>
-                                <span x-text="(strat.open_trades || 0) + ' open'"></span>
+                                <span x-text="'$' + (strat.invested || 0).toFixed(0) + ' invested'"></span>
                             </div>
                             <!-- Win rate bar -->
                             <div class="w-full h-1.5 bg-dark-600 rounded-full overflow-hidden">
