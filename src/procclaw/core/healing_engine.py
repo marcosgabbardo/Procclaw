@@ -587,7 +587,7 @@ class HealingEngine:
             except Exception:
                 pass
             
-            suggestions = self._parse_ai_response(result, config)
+            suggestions = self._parse_ai_response(result, config, job_id=context.job_id)
             logger.info(f"Parsed {len(suggestions)} suggestions from AI response")
             return suggestions
         except Exception as e:
@@ -866,6 +866,7 @@ CRITICAL RULES:
         self,
         response: str,
         config: SelfHealingConfig,
+        job_id: str = "",
     ) -> list[SuggestionData]:
         """Parse AI response into suggestions."""
         
@@ -980,7 +981,7 @@ CRITICAL RULES:
                     affected_files=s.get("affected_files"),
                     auto_apply=auto_apply,
                     proposed_content=s.get("proposed_content"),
-                    current_content=self._read_current_content(s.get("target_file")),
+                    current_content=self._read_current_content(s.get("target_file"), job_id=job_id),
                     target_file=s.get("target_file"),
                 ))
             
@@ -1153,15 +1154,24 @@ CRITICAL RULES:
             
             return {"success": False, "action_id": action_id, "error": str(e)}
     
-    @staticmethod
-    def _read_current_content(target_file: str | None) -> str | None:
-        """Read current content of a target file for diff display."""
+    def _read_current_content(self, target_file: str | None, job_id: str = "") -> str | None:
+        """Read current content of a target file for diff display.
+        
+        For jobs.yaml, extracts only the specific job section so diffs
+        are scoped to the relevant job instead of showing the entire file.
+        """
         if not target_file:
             return None
         try:
             expanded = Path(target_file).expanduser()
             if expanded.exists() and expanded.is_file():
-                return expanded.read_text()
+                content = expanded.read_text()
+                # For jobs.yaml, extract only the job section
+                if job_id and expanded.name == "jobs.yaml":
+                    section, _, _ = self._extract_job_section_from_yaml(content, job_id)
+                    if section:
+                        return section
+                return content
         except Exception:
             pass
         return None
