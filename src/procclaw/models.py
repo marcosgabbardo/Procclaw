@@ -18,7 +18,6 @@ class JobType(str, Enum):
     MANUAL = "manual"
     ONESHOT = "oneshot"  # Run once at specific datetime, then auto-disable
     OPENCLAW = "openclaw"  # Jobs linked to OpenClaw (depend on AI/cron integration)
-    TRADE = "trade"  # Trading bot - continuous + trade event protocol parsing
     # Composite types
     CHAIN = "chain"  # Sequential execution (A → B → C)
     GROUP = "group"  # Parallel execution (A + B + C)
@@ -516,13 +515,6 @@ HEALING_FORBIDDEN_PATHS_ALWAYS: list[str] = [
 ]
 
 
-class TradeConfig(BaseModel):
-    """Trading job configuration."""
-
-    initial_capital: float = 1000.0
-    currency: str = "USD"
-
-
 class JobDependency(BaseModel):
     """Dependency on another job."""
 
@@ -643,9 +635,6 @@ class JobConfig(BaseModel):
 
     # SLA (Service Level Agreement)
     sla: SLAConfig = Field(default_factory=SLAConfig)
-
-    # Trade job configuration (for type=trade)
-    trade_config: TradeConfig = Field(default_factory=TradeConfig)
 
     # Metadata
     tags: list[str] = Field(default_factory=list)
